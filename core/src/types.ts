@@ -4,7 +4,6 @@ export type { AdiabaticDB } from "./db";
 export type { Guard, EventInput, GuardOptions } from "./guard";
 export type { WorkingTree, WorkingTreeOptions } from "./working-tree";
 export type { AppManifest, LoadedApp, AppRegistry } from "./app-loader";
-export type { SandboxManager, SandboxMessage, SandboxResponse, AppSandbox } from "./sandbox";
 export type { RenderOutput, RenderResult, RenderError } from "./renderer";
 
 // System API type — what apps see through the bridge

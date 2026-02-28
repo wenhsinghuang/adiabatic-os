@@ -5,7 +5,6 @@ import { Guard } from "./guard";
 import { WorkingTree } from "./working-tree";
 import { loadApps } from "./app-loader";
 import { renderMDX } from "./renderer";
-import { bundleApp } from "./app-bundler-server";
 import { readdir, readFile } from "fs/promises";
 
 // Adiabatic OS — HTTP server entry point
@@ -135,26 +134,6 @@ const server = Bun.serve({
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           return json({ error: message }, 500);
-        }
-      }
-
-      // -- App Bundle (serve bundled app code for browser) --
-      const bundleMatch = path.match(/^\/api\/apps\/([^/]+)\/bundle$/);
-      if (bundleMatch && method === "GET") {
-        const appId = decodeURIComponent(bundleMatch[1]);
-        const app = registry.apps.get(appId);
-        if (!app) return json({ error: "app not found" }, 404);
-        try {
-          const code = await bundleApp(app.entryPoint, app.dir);
-          return new Response(code, {
-            headers: {
-              "Content-Type": "application/javascript",
-              "Access-Control-Allow-Origin": "*",
-            },
-          });
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          return json({ error: `Bundle failed: ${message}` }, 500);
         }
       }
 
