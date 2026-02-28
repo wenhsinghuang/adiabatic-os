@@ -1,4 +1,4 @@
-# Syntropy OS — Full Implementation Plan
+# Adiabatic OS — Full Implementation Plan
 
 從零建立完整 OS runtime：DB + Guard + Working Tree + App Sandbox + MDX Renderer + HTTP Server。
 
@@ -7,7 +7,7 @@
 ## 預期結果
 
 ```
-syntropy-os/
+adiabatic-os/
 ├── CLAUDE.md                         ← AI 擴展系統的 conventions
 ├── package.json
 ├── tsconfig.json

@@ -1,4 +1,4 @@
-# 202602140700 Syntropy OS — Scope Definition
+# 202602140700 Adiabatic OS — Scope Definition
 
 系統的五個 scope，各自職責與邊界。
 
@@ -33,7 +33,7 @@ Optimizer。OS 的目的層。
 - **Constraint:** 不能刪資料，只能 reorganize / promote / merge / restructure
 - **核心 trade-off:** 拿結構熵當貨幣，買語意清晰度和交互順暢度
 
-Optimizer 的維度和權重是 two-way door（implementation detail，可進化）。但 Entropy Engineering 本身是 OS 不可移除的部分 — 卸載它 = 系統不再越用越好 = 不是 Syntropy。
+Optimizer 的維度和權重是 two-way door（implementation detail，可進化）。但 Entropy Engineering 本身是 OS 不可移除的部分 — 卸載它 = 系統不再越用越好 = 不是 Adiabatic。
 
 ### 3. Apps
 

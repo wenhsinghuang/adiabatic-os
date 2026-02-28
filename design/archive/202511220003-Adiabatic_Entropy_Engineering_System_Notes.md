@@ -1,5 +1,5 @@
-好，來把整個「我腦中那套 Syntropy + 熵工程」完整攤開給你看一遍 👇  
-（這篇你可以直接存成 `Syntropy_Entropy_Engineering_System_Notes.md` 之類的）
+好，來把整個「我腦中那套 Adiabatic + 熵工程」完整攤開給你看一遍 👇  
+（這篇你可以直接存成 `Adiabatic_Entropy_Engineering_System_Notes.md` 之類的）
 
 ---
 
@@ -133,7 +133,7 @@
     
 - Live Docs 裡經過你 & Companion 清洗過的內容
     
-- 有段落、有標題、有穩定專有名詞（Syntropy, entropy metrics, Architect, Context Layer…）
+- 有段落、有標題、有穩定專有名詞（Adiabatic, entropy metrics, Architect, Context Layer…）
     
 
 **為什麼這層是「真正的土壤」：**
@@ -354,7 +354,7 @@
             
         - 難做 merge / de-duplicate / global reasoning
             
-3. **Syntropy 要做的是「整體熵管理」，而不是單一 app**
+3. **Adiabatic 要做的是「整體熵管理」，而不是單一 app**
     
     - 你希望某個概念在全系統有一致的結構（tasks 就是 tasks）
         
@@ -387,14 +387,14 @@
     - event log 的壓縮形態  
         → 不是今天長什麼樣子的前端、也不是這一代 LLM 的 prompt hack。**
         
-4. **Syntropy 的 moat 在於：  
+4. **Adiabatic 的 moat 在於：  
     「熵工程 + schema / view 演化機制」，  
     而不是「我比別人多幾個 feature」。**
     
 
 ---
 
-# 八、對 Syntropy 的實作含義（短版 Roadmap 角度）
+# 八、對 Adiabatic 的實作含義（短版 Roadmap 角度）
 
 這些哲學，會直接變成很具體的技術選擇（你其實已經在做了）：
 
@@ -443,11 +443,11 @@
 
 如果你願意，我下一步可以幫你把：
 
-- **《The Philosophy of Syntropy》補一章：  
+- **《The Philosophy of Adiabatic》補一章：  
     `Raw vs Semantic Unstructured vs Structured`**
     
 - 順便把「promote / entropy / schema 演化」畫一張 ASCII or Mermaid 圖，  
-    直接變成外人也看得懂的「Syntropy OS 熵工程白皮書 v1」。
+    直接變成外人也看得懂的「Adiabatic OS 熵工程白皮書 v1」。
 
 ----
 
@@ -604,7 +604,7 @@
 
 ### Step 1：分層觀察 – 每一層看哪種熵為主
 
-對 Syntropy 來說，大致是這樣：
+對 Adiabatic 來說，大致是這樣：
 
 |Layer|主要關注熵|為什麼|
 |---|---|---|
@@ -727,7 +727,7 @@
 
 舉個你系統裡的具體 move：
 
-#### 🔁 例子：Notion Dump → Syntropy
+#### 🔁 例子：Notion Dump → Adiabatic
 
 1. 一開始：Notion export → 變成 raw MD / JSON
     
@@ -786,6 +786,6 @@
 
 如果你願意，下一步我可以幫你把這三種熵直接變成：
 
-- 一套「Syntropy 熵指標」草案（例如每層的 heuristic / signal）
+- 一套「Adiabatic 熵指標」草案（例如每層的 heuristic / signal）
     
 - 再對應到 Optimizer / Architect 的具體任務（例如「每晚跑一次 schema 合併建議」、「每週提出 3 個 promote 建議」）。

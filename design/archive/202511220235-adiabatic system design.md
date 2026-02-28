@@ -1,6 +1,6 @@
 
 Problem: live doc 的 edit event / version 可能要特別處理
-[[202511220244-Syntropy D1 Live Doc high level]]
+[[202511220244-Adiabatic D1 Live Doc high level]]
 
 [[frgkth]]
 
@@ -31,7 +31,7 @@ Problem: live doc 的 edit event / version 可能要特別處理
 
 ### 1.1 Runtime 拆層
 
-**每個 user = 一個 Syntropy Capsule**：
+**每個 user = 一個 Adiabatic Capsule**：
 
 - **LibSQL / SQLite DB**（sqld）
     
@@ -46,7 +46,7 @@ Problem: live doc 的 edit event / version 可能要特別處理
 
 - Fly.io：`1 container + 1 volume` per user（或 per paid workspace）
     
-- Local dev：一顆 `syntropy.db` + local Next.js
+- Local dev：一顆 `adiabatic.db` + local Next.js
     
 
 > 🧠 _哲學 context_：  
@@ -672,7 +672,7 @@ Guard + App runtime 根據這個 manifest：
 - 第一個 D0→D2 adapter（ActivityWatch → `focus_sessions`）
     
 
-寫成一份「Syntropy Capsule MVP 技術規格 + 任務拆解」。
+寫成一份「Adiabatic Capsule MVP 技術規格 + 任務拆解」。
 
 
 ---

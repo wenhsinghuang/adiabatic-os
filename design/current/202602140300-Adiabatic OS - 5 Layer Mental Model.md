@@ -1,4 +1,4 @@
-# 202602140300 Syntropy OS — 5-Layer Mental Model
+# 202602140300 Adiabatic OS — 5-Layer Mental Model
 
 整個系統的 mental model，由上到下五層。
 
@@ -49,7 +49,7 @@
 │  │  Universal read. Scoped write.                          │    │
 │  └────────────────────────────────────────────────────────┘    │
 │                                                                │
-│  @syntropy/core (OS kernel)                   ← Protected      │
+│  @adiabatic/core (OS kernel)                   ← Protected      │
 │  Guard · DB · Server · Sync · Optimizer                        │
 │  用戶不碰，npm package                                         │
 │                                                                │
@@ -135,7 +135,7 @@ This week I focused 32 hours, mood averaged 7.2/10...
 
 這讓用戶可以在 view layer 自由組合，而 app layer 維持完全隔離。MDX page 是「黏合劑」— 把各 app 的 output 黏在一起呈現，但 app 之間零耦合。
 
-這個設計我們沒有在其他系統上看過。Notion 的 page 只能 embed Notion block。VS Code 的 extension 不能自由 compose。Syntropy 的 page 是真正的 universal composition surface。
+這個設計我們沒有在其他系統上看過。Notion 的 page 只能 embed Notion block。VS Code 的 extension 不能自由 compose。Adiabatic 的 page 是真正的 universal composition surface。
 
 
 

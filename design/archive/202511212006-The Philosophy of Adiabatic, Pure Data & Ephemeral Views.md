@@ -1,4 +1,4 @@
-這是一份關於 **Syntropy OS 核心哲學** 的完整論述文檔。
+這是一份關於 **Adiabatic OS 核心哲學** 的完整論述文檔。
 
 這篇文檔確立了為什麼我們不走 Notion (Block-based) 或 Heptabase (Spatial-first) 的老路，以及為什麼 **「純粹數據 (Pure Data) + 生成式視圖 (Generative Views)」** 才是 AI 時代的終極解答。
 
@@ -6,7 +6,7 @@
 
 ---
 
-# The Philosophy of Syntropy: Pure Data & Ephemeral Views
+# The Philosophy of Adiabatic: Pure Data & Ephemeral Views
 
 Date: 2025-11-21
 
@@ -22,7 +22,7 @@ Status: Core Doctrine
 
 我們認為：**Block-based (Notion)** 與 **Spatial (Heptabase)** 作為人類思考的輔助介面極具價值，但作為**底層數據結構 (Storage Format)** 是過時且有害的。
 
-Syntropy 的核心哲學是：**保持數據的絕對純粹 (Pure Data)，讓介面成為用完即丟的投影 (Ephemeral Projections)。**
+Adiabatic 的核心哲學是：**保持數據的絕對純粹 (Pure Data)，讓介面成為用完即丟的投影 (Ephemeral Projections)。**
 
 ---
 
@@ -48,7 +48,7 @@ Syntropy 的核心哲學是：**保持數據的絕對純粹 (Pure Data)，讓介
 - **As Data (Bad):** 座標 (x, y) 往往只代表「當下的整理意圖」，而非知識本身的屬性。將「視覺位置」固化為「數據屬性」，是對底層知識庫的污染。
     
 
-> Syntropy 的觀點：
+> Adiabatic 的觀點：
 > 
 > 不要為了喝牛奶（使用白板功能）而養一頭牛（維護複雜的 Spatial Database）。
 
@@ -76,7 +76,7 @@ Syntropy 的核心哲學是：**保持數據的絕對純粹 (Pure Data)，讓介
 - 它是程式邏輯的原生語言。
     
 
-Syntropy 的堅持：
+Adiabatic 的堅持：
 
 無論上層應用多麼花俏，底層永遠只有 Text (MDX) 和 Tables (SQL)。這種「數據潔癖」是系統能夠長存 (Future-proof) 的關鍵。
 
@@ -92,7 +92,7 @@ Syntropy 的堅持：
 
 - **傳統軟體 (SaaS):** 工程師預判你需要一個 Kanban View，於是花了半年開發，並強迫你維護 `Status` 欄位。
     
-- Syntropy (AI OS): 1. 你告訴系統：「幫我梳理這些筆記的時序關係。」
+- Adiabatic (AI OS): 1. 你告訴系統：「幫我梳理這些筆記的時序關係。」
     
     2. Architect Agent 讀取純文字，理解語意。
     
@@ -123,7 +123,7 @@ Syntropy 的堅持：
 - 當精力耗盡，系統就會變成「數位墳場」。
     
 
-**Syntropy 的解法：**
+**Adiabatic 的解法：**
 
 - 用戶只需負責輸入 **Raw Data** (Write text, log data)。
     
@@ -138,7 +138,7 @@ Syntropy 的堅持：
 
 ## 6. Summary
 
-**Syntropy 不做更好的 Notion，也不做更好的 Heptabase。**
+**Adiabatic 不做更好的 Notion，也不做更好的 Heptabase。**
 
 我們正在建造一個 **Runtime Environment (運行環境)**，它允許：
 

@@ -1,4 +1,4 @@
-# 202602140017 Syntropy OS — Consolidated Design Doc
+# 202602140017 Adiabatic OS — Consolidated Design Doc
 
 Compiled from 11 design notes (Aug–Nov 2025) + architecture review sessions (Feb 2026).
 
@@ -34,9 +34,9 @@ MDX 統一了 doc 和 frontend — 一個 page 就是一份 MDX，差別只在 t
 
 注意：D1 doc content 同時是 data（存在 docs table）也透過 page render 呈現。Page 是 D1 content 的 view + edit 入口，但 content 本身在 D1 layer 持久存在。
 
-**跟 Notion 的差異：** Notion 也說「everything is a page」，但 Notion 的 page IS data（耦合）— 刪 page 就丟 data，view 類型限定 5 種，data 鎖在私有 block model。Syntropy 的 page 是 data 的投影（分離）— 刪 page data 還在，view 類型無限（任何 React component），data 是開放格式（SQLite + MDX）。Notion 有類似的哲學直覺，但作為上一代產品，view 和 data 的耦合是根本限制。
+**跟 Notion 的差異：** Notion 也說「everything is a page」，但 Notion 的 page IS data（耦合）— 刪 page 就丟 data，view 類型限定 5 種，data 鎖在私有 block model。Adiabatic 的 page 是 data 的投影（分離）— 刪 page data 還在，view 類型無限（任何 React component），data 是開放格式（SQLite + MDX）。Notion 有類似的哲學直覺，但作為上一代產品，view 和 data 的耦合是根本限制。
 
-**但 MDX 統一的只是 view layer。** App 不只是 frontend — 用戶的 personal system 可以有自己的 backend logic（cron jobs, API routes, ETL pipelines, automations）。這些 backend 邏輯住在 codebase 裡，由用戶通過 Claude Code 開發和維護。Syntropy 是 OS，用戶在上面 build 完整的 full-stack applications。（詳見 §6 演化段落）
+**但 MDX 統一的只是 view layer。** App 不只是 frontend — 用戶的 personal system 可以有自己的 backend logic（cron jobs, API routes, ETL pipelines, automations）。這些 backend 邏輯住在 codebase 裡，由用戶通過 Claude Code 開發和維護。Adiabatic 是 OS，用戶在上面 build 完整的 full-stack applications。（詳見 §6 演化段落）
 
 ### 我們不做的事
 
@@ -94,7 +94,7 @@ Promote 的唯一正當理由：「這個結構能大幅降低語意熵或交互
 
 #### 理論基礎
 
-Syntropy 的 entropy 本質上是 **Shannon information entropy 的 domain-specific application** — 測量「在個人系統中找到和理解資訊的不確定性」。
+Adiabatic 的 entropy 本質上是 **Shannon information entropy 的 domain-specific application** — 測量「在個人系統中找到和理解資訊的不確定性」。
 
 Shannon Entropy: `H(X) = -Σ p(xᵢ) log₂ p(xᵢ)`
 
@@ -275,12 +275,12 @@ Merge（重複的 table → 合併 schema）
 
 ## 4. System Architecture
 
-### Runtime: Syntropy Capsule
+### Runtime: Adiabatic Capsule
 
 每個 user = 一個 Capsule。Capsule 不是一台 server，是**一份 portable runtime 的多個 replica**。
 
 ```
-┌─ Syntropy Runtime (一份 codebase) ─────────────────────┐
+┌─ Adiabatic Runtime (一份 codebase) ─────────────────────┐
 │                                                         │
 │  Bun (single process)                                   │
 │  ├─ HTTP server (API)                                   │
@@ -288,7 +288,7 @@ Merge（重複的 table → 合併 schema）
 │  ├─ Background workers (crons, connectors, ETL)         │
 │  └─ App backends (user-installed + user-written)        │
 │                                                         │
-│  LibSQL (/data/syntropy.db)                             │
+│  LibSQL (/data/adiabatic.db)                             │
 │  ├─ D0: events                                          │
 │  ├─ D1: docs                                            │
 │  ├─ D2: user tables                                     │
@@ -301,7 +301,7 @@ Merge（重複的 table → 合併 schema）
 ```
 ┌─ Desktop (Tauri) ──────────┐     ┌─ Fly.io ────────────────┐
 │                             │     │                          │
-│  Syntropy Runtime           │     │  Syntropy Runtime        │
+│  Adiabatic Runtime           │     │  Adiabatic Runtime        │
 │  (同一份 code)              │     │  (同一份 code)           │
 │                             │     │                          │
 │  + Tauri UI shell           │sync │  + Always-on (24/7)     │
@@ -417,7 +417,7 @@ Permanent（Architect 封裝成 App + 建立正式 Schema）
 
 分享的是 App + Manifest，不是資料。安裝時 Architect 檢查用戶 DB 是否有對應 entity。
 
-### 20260214 演化：Everything is a View + Syntropy as OS
+### 20260214 演化：Everything is a View + Adiabatic as OS
 
 > 核心 insight：MDX 統一了 doc 和 frontend（view layer）。但 app 不只是 frontend — 用戶的 personal system 是完整的 full-stack project。
 
@@ -441,9 +441,9 @@ App = View layer + Backend logic + D2 schema
 └── D2 schema            ← app 需要的 table 結構
 ```
 
-用戶通過 Claude Code 開發 backend logic，這是他們 personal system 的一部分。Syntropy 提供 runtime（DB + Guard + Editor + Optimizer），用戶在上面 build 自己的 full-stack applications。
+用戶通過 Claude Code 開發 backend logic，這是他們 personal system 的一部分。Adiabatic 提供 runtime（DB + Guard + Editor + Optimizer），用戶在上面 build 自己的 full-stack applications。
 
-**所以 Syntropy 是 OS，不是 app。** 就像 OS 跟 application 的關係 — 提供 data layer + editor + conventions，用戶在上面蓋自己的系統。
+**所以 Adiabatic 是 OS，不是 app。** 就像 OS 跟 application 的關係 — 提供 data layer + editor + conventions，用戶在上面蓋自己的系統。
 
 **Editor 設計 — View/Source 雙模式：**
 
@@ -607,8 +607,8 @@ Solopreneurs / 會用 Claude Code 構建 personal system 的人
 ### 公司與命名
 
 - 公司: Adiabatic Inc. (github.com/adiabatic-dev)
-- 產品: Syntropy OS, 簡稱 Syn
-- Repo: syntropy-os
+- 產品: Adiabatic OS, 簡稱 Syn
+- Repo: adiabatic-os
 
 ### GTM 策略
 
@@ -625,12 +625,12 @@ Solopreneurs / 會用 Claude Code 構建 personal system 的人
 
 ### 競爭分析
 
-| 維度 | 最接近的競品 | Syntropy 的差異 |
+| 維度 | 最接近的競品 | Adiabatic 的差異 |
 |------|------------|----------------|
-| Local-first | Anytype | Syntropy 有 AI-generated views, SQL data layer |
-| Per-user container | Deta Space (已關) | Syntropy 有殺手應用（entropy engineering） |
-| AI 生成 app | v0.dev, Lovable | Syntropy 有 persistent personal data layer |
-| Knowledge management | Obsidian | Syntropy 有 structured data (D2) + AI agents |
+| Local-first | Anytype | Adiabatic 有 AI-generated views, SQL data layer |
+| Per-user container | Deta Space (已關) | Adiabatic 有殺手應用（entropy engineering） |
+| AI 生成 app | v0.dev, Lovable | Adiabatic 有 persistent personal data layer |
+| Knowledge management | Obsidian | Adiabatic 有 structured data (D2) + AI agents |
 
 ### 真正的差異化
 
@@ -655,7 +655,7 @@ Solopreneurs / 會用 Claude Code 構建 personal system 的人
 極簡起步：
 
 ```
-syntropy/
+adiabatic/
 ├── CLAUDE.md              ← 最重要：讓 AI 能直接擴展系統
 ├── fly.toml
 ├── Dockerfile
@@ -665,11 +665,11 @@ syntropy/
 │   ├── db.ts              ← SQLite init (events + docs)
 │   └── guard.ts           ← 所有寫入的唯一路徑
 └── /data/
-    └── syntropy.db
+    └── adiabatic.db
 ```
 
 1. `bun init` + HTTP server
-2. `syntropy.db` init（events + docs 兩張表）
+2. `adiabatic.db` init（events + docs 兩張表）
 3. Guard v0（一個 write function，現在只記 D0 event）
 4. Dockerfile + fly.toml → `fly deploy`
 5. Litestream → R2 backup（D1 就要做，Fly volume 不可靠）

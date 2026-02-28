@@ -12,15 +12,15 @@ https://gemini.google.com/app/a7fbc1d4d0219194?utm_source=deepmind.google&utm_me
 https://gemini.google.com/app/377c16720f75398c?utm_source=deepmind.google&utm_medium=referral&utm_campaign=gdm&utm_content=
 https://chatgpt.com/c/69216177-e594-8333-be37-282c59cf0648 BEST conversation ever
 
-[[202511212006-The Philosophy of Syntropy, Pure Data & Ephemeral Views]]
+[[202511212006-The Philosophy of Adiabatic, Pure Data & Ephemeral Views]]
 
 [[202511211933-sythrophy entity relation]]
 
 [[202511212340-sythrophy 資料的沈澱]]
 
-[[202511220003-Syntropy_Entropy_Engineering_System_Notes]]
+[[202511220003-Adiabatic_Entropy_Engineering_System_Notes]]
 
-[[202511220123-Syntropy data connector, integration high level design]]
+[[202511220123-Adiabatic data connector, integration high level design]]
 
 
 
@@ -104,7 +104,7 @@ Problem: 個人系統的 entropy 管理
 * 感覺要有 worker 功能 run workflow?
 * Name
 	* entropy?
-	* 公司: Syntropy 產品: Syntropy 簡稱: Syn
+	* 公司: Adiabatic 產品: Adiabatic 簡稱: Syn
 
 Position: All-in-one workspace
 強大且易維護
