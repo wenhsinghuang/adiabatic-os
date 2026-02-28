@@ -6,6 +6,7 @@ import { WorkingTree } from "./working-tree";
 import { loadApps } from "./app-loader";
 import { renderMDX } from "./renderer";
 import { bundleApp } from "./app-bundler-server";
+import { readdir, readFile } from "fs/promises";
 
 // Adiabatic OS — HTTP server entry point
 // All routes go through here. Guard is the only write path.
@@ -32,7 +33,7 @@ console.log(`[adiabatic] Apps loaded: ${[...registry.apps.keys()].join(", ") || 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-App-Id",
 };
 
 function json(data: unknown, status = 200): Response {
@@ -115,6 +116,26 @@ const server = Bun.serve({
           entryPoint: a.entryPoint,
         }));
         return json({ apps });
+      }
+
+      // -- App Source (serve raw source files for WebContainer) --
+      const sourceMatch = path.match(/^\/api\/apps\/([^/]+)\/source$/);
+      if (sourceMatch && method === "GET") {
+        const appId = decodeURIComponent(sourceMatch[1]);
+        const app = registry.apps.get(appId);
+        if (!app) return json({ error: "app not found" }, 404);
+        try {
+          const files: Record<string, string> = {};
+          const entries = await readdir(app.dir);
+          for (const entry of entries) {
+            const content = await readFile(join(app.dir, entry), "utf8");
+            files[entry] = content;
+          }
+          return json(files);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json({ error: message }, 500);
+        }
       }
 
       // -- App Bundle (serve bundled app code for browser) --

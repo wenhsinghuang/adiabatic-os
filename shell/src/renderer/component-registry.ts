@@ -2,11 +2,12 @@
 //
 // Flow:
 //   1. Fetch app list from core → build name→appId index
-//   2. When a component is needed, dynamically import the app's bundled module
+//   2. When a component is needed, load its app's bundle from WebContainer
 //   3. Extract the named export → return as React component
 //
-// D1 approach: apps are bundled by esbuild into browser-compatible ES modules.
-// The registry lazy-loads each app's bundle on first component reference.
+// Apps run inside a WebContainer (WASM sandbox). The bundle is produced by
+// esbuild inside the container and served via the bridge-server.
+// System.* calls from components route through the bridge-server to core Guard.
 
 import type { ComponentType } from "react";
 import type { AppInfo } from "../lib/api";
@@ -30,6 +31,16 @@ const appIndex = new Map<string, AppInfo>();
 // Per-app system bridges (cached)
 const bridgeCache = new Map<string, System>();
 
+// Module loader: provided by sandbox/app-bundler.ts
+let moduleLoader: ((appId: string, entryPoint: string) => Promise<Record<string, unknown>>) | null =
+  null;
+
+export function setModuleLoader(
+  loader: (appId: string, entryPoint: string) => Promise<Record<string, unknown>>,
+): void {
+  moduleLoader = loader;
+}
+
 // Register apps from core's /api/apps response.
 export function registerApps(apps: AppInfo[]): void {
   componentIndex.clear();
@@ -42,24 +53,12 @@ export function registerApps(apps: AppInfo[]): void {
   }
 }
 
-// Get all known component names.
 export function getRegisteredComponentNames(): string[] {
   return [...componentIndex.keys()];
 }
 
-// Check if a component name is registered.
 export function isRegisteredComponent(name: string): boolean {
   return componentIndex.has(name);
-}
-
-// Load an app module. D1: uses a module loader function provided at init.
-// The loader takes an app's entry point path and returns the module exports.
-let moduleLoader: ((appId: string, entryPoint: string) => Promise<Record<string, unknown>>) | null = null;
-
-export function setModuleLoader(
-  loader: (appId: string, entryPoint: string) => Promise<Record<string, unknown>>,
-): void {
-  moduleLoader = loader;
 }
 
 async function loadAppModule(appId: string): Promise<Record<string, unknown>> {
@@ -68,10 +67,7 @@ async function loadAppModule(appId: string): Promise<Record<string, unknown>> {
 
   const app = appIndex.get(appId);
   if (!app) throw new Error(`App not found: ${appId}`);
-
-  if (!moduleLoader) {
-    throw new Error("Module loader not initialized. Call setModuleLoader() first.");
-  }
+  if (!moduleLoader) throw new Error("Module loader not initialized");
 
   const mod = await moduleLoader(appId, app.entryPoint);
   moduleCache.set(appId, mod);
@@ -108,7 +104,10 @@ export async function resolveComponent(
       system: getSystemBridge(appId),
     };
   } catch (err) {
-    console.error(`[registry] Failed to load component "${componentName}" from app "${appId}":`, err);
+    console.error(
+      `[registry] Failed to load component "${componentName}" from app "${appId}":`,
+      err,
+    );
     return null;
   }
 }
@@ -116,4 +115,5 @@ export async function resolveComponent(
 // Invalidate cache for an app (e.g. after hot-reload).
 export function invalidateApp(appId: string): void {
   moduleCache.delete(appId);
+  bridgeCache.delete(appId);
 }
