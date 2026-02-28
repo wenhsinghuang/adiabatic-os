@@ -1,5 +1,5 @@
 {
   "name": "adiabatic-os",
   "private": true,
-  "workspaces": ["core"]
+  "workspaces": ["core", "shell"]
 }

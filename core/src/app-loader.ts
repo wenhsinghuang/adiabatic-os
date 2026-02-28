@@ -9,6 +9,7 @@ export interface AppManifest {
   permissions: {
     write: string[]; // D2 tables this app can write to
   };
+  components: string[]; // exported React component names (e.g. ["FocusChart", "FocusStats"])
 }
 
 export interface LoadedApp {
@@ -21,6 +22,7 @@ export interface AppRegistry {
   apps: Map<string, LoadedApp>;
   getPermissions(appId: string): string[];
   hasWritePermission(appId: string, table: string): boolean;
+  resolveComponent(componentName: string): { appId: string; entryPoint: string } | null;
 }
 
 export async function loadApps(appsDir: string): Promise<AppRegistry> {
@@ -56,6 +58,7 @@ export async function loadApps(appsDir: string): Promise<AppRegistry> {
 
       manifest.permissions ??= { write: [] };
       manifest.permissions.write ??= [];
+      manifest.components ??= [];
 
       apps.set(manifest.id, {
         manifest,
@@ -71,6 +74,14 @@ export async function loadApps(appsDir: string): Promise<AppRegistry> {
 }
 
 function createRegistry(apps: Map<string, LoadedApp>): AppRegistry {
+  // Build reverse index: componentName → appId
+  const componentIndex = new Map<string, string>();
+  for (const [appId, app] of apps) {
+    for (const comp of app.manifest.components) {
+      componentIndex.set(comp, appId);
+    }
+  }
+
   return {
     apps,
     getPermissions(appId: string): string[] {
@@ -79,6 +90,13 @@ function createRegistry(apps: Map<string, LoadedApp>): AppRegistry {
     hasWritePermission(appId: string, table: string): boolean {
       const perms = apps.get(appId)?.manifest.permissions.write ?? [];
       return perms.includes(table);
+    },
+    resolveComponent(componentName: string): { appId: string; entryPoint: string } | null {
+      const appId = componentIndex.get(componentName);
+      if (!appId) return null;
+      const app = apps.get(appId);
+      if (!app) return null;
+      return { appId, entryPoint: app.entryPoint };
     },
   };
 }

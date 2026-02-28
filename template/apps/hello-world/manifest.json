@@ -3,5 +3,6 @@
   "name": "Hello World",
   "permissions": {
     "write": ["greetings"]
-  }
+  },
+  "components": ["HelloWorld"]
 }

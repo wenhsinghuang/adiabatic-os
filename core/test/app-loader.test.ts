@@ -69,4 +69,41 @@ describe("App Loader", () => {
     const registry = await loadApps(join(workspace, "nonexistent"));
     expect(registry.apps.size).toBe(0);
   });
+
+  test("resolves component to app", async () => {
+    const appDir = join(appsDir, "focus");
+    mkdirSync(appDir);
+    writeFileSync(
+      join(appDir, "manifest.json"),
+      JSON.stringify({
+        id: "focus",
+        name: "Focus",
+        permissions: { write: [] },
+        components: ["FocusChart", "FocusStats"],
+      }),
+    );
+    writeFileSync(join(appDir, "index.tsx"), "export function FocusChart() {}");
+
+    const registry = await loadApps(appsDir);
+    const resolved = registry.resolveComponent("FocusChart");
+    expect(resolved).toBeTruthy();
+    expect(resolved!.appId).toBe("focus");
+    expect(resolved!.entryPoint).toContain("index.tsx");
+
+    expect(registry.resolveComponent("FocusStats")?.appId).toBe("focus");
+    expect(registry.resolveComponent("Unknown")).toBeNull();
+  });
+
+  test("defaults components to empty array when missing", async () => {
+    const appDir = join(appsDir, "legacy");
+    mkdirSync(appDir);
+    writeFileSync(
+      join(appDir, "manifest.json"),
+      JSON.stringify({ id: "legacy", name: "Legacy", permissions: { write: [] } }),
+    );
+
+    const registry = await loadApps(appsDir);
+    const app = registry.apps.get("legacy");
+    expect(app?.manifest.components).toEqual([]);
+  });
 });
