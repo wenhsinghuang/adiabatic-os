@@ -8,7 +8,7 @@
 
 ## 0. 先定義一句話版本
 
-> **一個 connector =「把外部世界的一條 event，轉成 Syntropy L0 event」的 adapter。**  
+> **一個 connector =「把外部世界的一條 event，轉成 Adiabatic L0 event」的 adapter。**  
 > 其它所有事（結構化、關聯、App、分析）全部交給內部系統做。
 
 這意味著：
@@ -93,7 +93,7 @@ type RawEvent = {
   source: string;          // 'google_calendar'
   external_id: string;     // event id / message id / file path ...
   occurred_at: string;     // 真實世界的時間
-  received_at: string;     // 寫入 Syntropy 的時間
+  received_at: string;     // 寫入 Adiabatic 的時間
   kind: string;            // 'calendar.event.created' | 'window.focus' ...
   payload: any;            // 原始 JSON，盡量完整
 };

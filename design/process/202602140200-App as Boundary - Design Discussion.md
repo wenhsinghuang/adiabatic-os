@@ -139,11 +139,11 @@ App 是可分享的 atomic unit：Code + Manifest。
 
 ## 8. OS vs App 分離
 
-Syntropy runtime (@syntropy/core) 是 npm package，用戶不碰：
+Adiabatic runtime (@adiabatic/core) 是 npm package，用戶不碰：
 
 ```
-syntropy/
-├── node_modules/@syntropy/core/  ← OS（protected）
+adiabatic/
+├── node_modules/@adiabatic/core/  ← OS（protected）
 │   ├── guard.ts
 │   ├── db.ts
 │   ├── server.ts
@@ -153,11 +153,11 @@ syntropy/
 │   ├── focus-tracker/
 │   └── mood-logger/
 ├── pages/                         ← MDX
-└── data/syntropy.db
+└── data/adiabatic.db
 ```
 
 三層 isolation：
-1. **OS 層**：@syntropy/core，用戶完全不碰
+1. **OS 層**：@adiabatic/core，用戶完全不碰
 2. **App 層**：每個 app 有自己的 sandbox（manifest enforce by Guard）
 3. **Data 層**：system owns all tables，app 只有被 grant 的 write permission
 

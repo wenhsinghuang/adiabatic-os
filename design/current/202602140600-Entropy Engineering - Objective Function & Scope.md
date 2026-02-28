@@ -8,7 +8,7 @@ Optimizer 的 objective function 設計，以及 Entropy Engineering 和 Utility
 
 **在持續增長的資料量下維持低 entropy。**
 
-所有現有工具的共同失敗：資料越多越亂。Notion 筆記腐爛、file system 變垃圾場、各工具資料隔離。Syntropy 反轉這個趨勢：用越久越有序。
+所有現有工具的共同失敗：資料越多越亂。Notion 筆記腐爛、file system 變垃圾場、各工具資料隔離。Adiabatic 反轉這個趨勢：用越久越有序。
 
 不是筆記軟體、不是 app platform、不是 AI assistant。是讓個人資料可持續累積的基礎設施。
 
@@ -79,8 +79,8 @@ Interaction entropy → 做事順嗎（efficiency）
 
 ### Uninstall Test
 
-- 卸載 Utility Intelligence → 系統仍維持低 entropy → 仍是 Syntropy ✓
-- 卸載 Entropy Engineering → 系統不再越用越好 → 不是 Syntropy ✗
+- 卸載 Utility Intelligence → 系統仍維持低 entropy → 仍是 Adiabatic ✓
+- 卸載 Entropy Engineering → 系統不再越用越好 → 不是 Adiabatic ✗
 
 ### Utility Intelligence 為什麼是 App
 

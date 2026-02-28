@@ -1,4 +1,4 @@
-# 202602140330 Syntropy OS — Open Questions
+# 202602140330 Adiabatic OS — Open Questions
 
 設計過程中浮現但尚未解決的問題。
 
@@ -19,7 +19,7 @@ Interaction entropy 需要量化 friction（完成一件事幾步、花多久）
 
 目前這三個操作全靠 Optimizer 出建議 → Claude Code 手動寫 migration。每次都是 custom work。
 
-如果這是 entropy engineering 的核心操作，可能應該是 `@syntropy/core` 的 first-class API：
+如果這是 entropy engineering 的核心操作，可能應該是 `@adiabatic/core` 的 first-class API：
 
 ```
 system.promote({ concept, source, schema, assign_to_app })

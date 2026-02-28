@@ -35,13 +35,13 @@
 ----
 
 
-這是一份最終定案的 **Syntropy OS 實體關係圖 (Entity-Relationship Mapping)**。
+這是一份最終定案的 **Adiabatic OS 實體關係圖 (Entity-Relationship Mapping)**。
 
 這張圖將我們討論過的 **權限模型**、**Agent 角色** 以及 **Meta/App/Content 分層** 全部整合在一起，定義了這個系統的物理定律。
 
 ---
 
-### 🗺️ The Syntropy OS Architecture
+### 🗺️ The Adiabatic OS Architecture
 
 我們將系統中的實體分為三個維度：**資產 (Assets)**、**結構 (Structure)**、**智能 (Intelligence)**。
 
