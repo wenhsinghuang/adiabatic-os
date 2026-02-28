@@ -39,6 +39,7 @@ adiabatic-os/                              ← dev repo
 │
 ├── template/                              ← 用戶 workspace 初始模板
 │   ├── CLAUDE.md                          ← 給用戶 workspace 的 AI conventions
+│   ├── .adiabatic/                        ← runtime 資料夾（DB 在這裡）
 │   ├── apps/
 │   │   └── hello-world/                   ← 示範 app
 │   │       ├── manifest.json              ← 權限宣告
@@ -54,11 +55,11 @@ adiabatic-os/                              ← dev repo
 ```
 ~/Adiabatic/                               ← 用戶的 workspace
 ├── CLAUDE.md                              ← conventions（從 template 複製）
+├── .adiabatic/
+│   └── adiabatic.db                       ← 用戶的資料（runtime 管理，跟 workspace 綁定）
 ├── apps/                                  ← 用戶的 app（Claude Code 在這裡寫）
 │   └── hello-world/
-├── pages/                                 ← working tree（.mdx，runtime 自動同步）
-└── data/
-    └── adiabatic.db                       ← 用戶的資料（runtime 管理）
+└── pages/                                 ← working tree（.mdx，runtime 自動同步）
 ```
 
 ### 做完可以驗證的行為
@@ -101,7 +102,7 @@ adiabatic-os/                              ← dev repo
 - workspace root: package.json, tsconfig.json
 - core/package.json（@adiabatic/core）
 - 依賴：mdx-bundler, @mdx-js/mdx, esbuild
-- 更新 .gitignore（data/, node_modules/）
+- 更新 .gitignore（.adiabatic/, node_modules/）
 
 ### Step 2: template/CLAUDE.md
 - 給用戶 workspace 的 AI conventions
@@ -143,7 +144,7 @@ adiabatic-os/                              ← dev repo
 ### Step 10: HTTP Server（core/src/index.ts）
 - Bun.serve，所有 routes
 - JSON request/response
-- 啟動時接收 workspace path 參數（知道用戶的 apps/, pages/, data/ 在哪）
+- 啟動時接收 workspace path 參數（知道用戶的 apps/, pages/, .adiabatic/ 在哪）
 
 ### Step 11: 示範 App（template/apps/hello-world/）
 - manifest.json：宣告 app id, name, write permissions
