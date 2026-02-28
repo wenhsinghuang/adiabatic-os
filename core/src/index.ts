@@ -1,0 +1,131 @@
+import { join } from "path";
+import { mkdir } from "fs/promises";
+import { openDB } from "./db";
+import { Guard } from "./guard";
+import { WorkingTree } from "./working-tree";
+import { loadApps } from "./app-loader";
+import { renderMDX } from "./renderer";
+
+// Adiabatic OS — HTTP server entry point
+// All routes go through here. Guard is the only write path.
+
+const workspacePath = process.argv[2] || process.cwd();
+const pagesDir = join(workspacePath, "pages");
+const appsDir = join(workspacePath, "apps");
+const adiabaticDir = join(workspacePath, ".adiabatic");
+
+// Ensure .adiabatic/ exists
+await mkdir(adiabaticDir, { recursive: true });
+
+// Boot
+const { db, close: closeDB } = openDB(workspacePath);
+const guard = new Guard({ db, source: "system:server" });
+const registry = await loadApps(appsDir);
+const workingTree = new WorkingTree({ guard, pagesDir });
+await workingTree.start();
+
+console.log(`[adiabatic] Workspace: ${workspacePath}`);
+console.log(`[adiabatic] Apps loaded: ${[...registry.apps.keys()].join(", ") || "(none)"}`);
+
+// JSON helpers
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+async function readBody<T>(req: Request): Promise<T> {
+  return (await req.json()) as T;
+}
+
+// Routes
+const server = Bun.serve({
+  port: 3000,
+  async fetch(req) {
+    const url = new URL(req.url);
+    const path = url.pathname;
+    const method = req.method;
+
+    try {
+      // -- Docs --
+      if (path === "/api/docs" && method === "POST") {
+        const body = await readBody<{ id: string; content: string; metadata?: Record<string, unknown> }>(req);
+        guard.writeDoc(body.id, body.content, body.metadata);
+        return json({ ok: true, id: body.id });
+      }
+
+      if (path.startsWith("/api/docs/") && method === "GET") {
+        const docId = decodeURIComponent(path.slice("/api/docs/".length));
+        const doc = guard.queryOne("SELECT * FROM docs WHERE id = ?", [docId]);
+        if (!doc) return json({ error: "not found" }, 404);
+        return json(doc);
+      }
+
+      if (path.startsWith("/api/docs/") && method === "DELETE") {
+        const docId = decodeURIComponent(path.slice("/api/docs/".length));
+        const deleted = guard.deleteDoc(docId);
+        if (!deleted) return json({ error: "not found" }, 404);
+        return json({ ok: true });
+      }
+
+      // -- Events --
+      if (path === "/api/events" && method === "POST") {
+        const body = await readBody<{
+          source: string; type: string; startedAt: number;
+          endedAt?: number; externalId?: string; payload: Record<string, unknown>;
+        }>(req);
+        const id = guard.writeEvent(body);
+        return json({ ok: true, id });
+      }
+
+      // -- Query (read-only SQL) --
+      if (path === "/api/query" && method === "POST") {
+        const body = await readBody<{ sql: string; params?: unknown[] }>(req);
+        const rows = guard.query(body.sql, body.params);
+        return json({ rows });
+      }
+
+      // -- Write (D2 DML + auto D0 log) --
+      if (path === "/api/write" && method === "POST") {
+        const body = await readBody<{ sql: string; params?: unknown[] }>(req);
+        guard.write(body.sql, body.params);
+        return json({ ok: true });
+      }
+
+      // -- Apps --
+      if (path === "/api/apps" && method === "GET") {
+        const apps = [...registry.apps.values()].map((a) => ({
+          id: a.manifest.id,
+          name: a.manifest.name,
+          permissions: a.manifest.permissions,
+        }));
+        return json({ apps });
+      }
+
+      // -- Render (MDX → compiled JS) --
+      if (path === "/api/render" && method === "POST") {
+        const body = await readBody<{ mdx: string }>(req);
+        const result = await renderMDX(body.mdx);
+        if (result.error) return json({ error: result.error }, 400);
+        return json({ code: result.code });
+      }
+
+      return json({ error: "not found" }, 404);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[adiabatic] Error: ${message}`);
+      return json({ error: message }, 500);
+    }
+  },
+});
+
+console.log(`[adiabatic] Server running on http://localhost:${server.port}`);
+
+// Graceful shutdown
+process.on("SIGINT", () => {
+  console.log("\n[adiabatic] Shutting down...");
+  workingTree.stop();
+  closeDB();
+  process.exit(0);
+});

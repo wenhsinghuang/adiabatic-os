@@ -1,0 +1,7 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "permissions": {
+    "write": ["greetings"]
+  }
+}
