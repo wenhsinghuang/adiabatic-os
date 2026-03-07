@@ -1,0 +1,72 @@
+.shell {
+  display: grid;
+  grid-template-rows: var(--titlebar-height) 1fr;
+  grid-template-columns: var(--activity-bar-width) auto 4px 1fr;
+  grid-template-areas:
+    "titlebar titlebar titlebar titlebar"
+    "activity sidebar splitter main";
+  height: 100vh;
+  overflow: hidden;
+}
+
+.titleBar {
+  grid-area: titlebar;
+}
+
+.activityBar {
+  grid-area: activity;
+}
+
+.sidebar {
+  grid-area: sidebar;
+  overflow: auto;
+}
+
+.sidebarSplitter {
+  grid-area: splitter;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.sidebarSplitter:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.tabBar {
+  flex-shrink: 0;
+}
+
+.content {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.terminalSplitter {
+  flex-shrink: 0;
+  height: 4px;
+  cursor: row-resize;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.terminalSplitter:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.terminal {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border);
+  min-height: 100px;
+  max-height: 50vh;
+  overflow: hidden;
+}

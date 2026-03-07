@@ -1,47 +1,71 @@
-// Root App — layout with sidebar, top bar, and page view.
-// Boots the WebContainer sandbox and initializes the component registry on mount.
+// Root App — VS Code-inspired layout with sidebar, tabs, content, and terminal.
+// Boots the WebContainer sandbox on mount.
 
-import { useState, useEffect } from "react";
-import { Sidebar } from "./components/Sidebar";
-import { TopBar } from "./components/TopBar";
-import { PageView, type EditorMode } from "./editor/PageView";
+import { useState, useEffect, useCallback } from "react";
+import { Shell } from "./layout/Shell";
+import { TitleBar } from "./layout/TitleBar";
+import { TabBar } from "./layout/TabBar";
+import { ActivityBar, type Panel } from "./layout/ActivityBar";
+import { PagesPanel } from "./components/PagesPanel";
+import { AppsPanel } from "./components/AppsPanel";
+import { DataPanel } from "./components/DataPanel";
+import { ContentArea } from "./content/ContentArea";
+import { TerminalPanel } from "./content/TerminalPanel";
+import { useTabs } from "./hooks/useTabs";
 import { listApps } from "./lib/api";
-import { registerApps, setModuleLoader } from "./renderer/component-registry";
 import { boot, loadApps, startBridgeServer } from "./sandbox/webcontainer";
-import { appModuleLoader } from "./sandbox/app-bundler";
+import "./styles/global.css";
 
 export function App() {
-  const [docId, setDocId] = useState<string | null>("welcome");
-  const [mode, setMode] = useState<EditorMode>("view");
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("Booting sandbox...");
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [activePanel, setActivePanel] = useState<Panel>("pages");
+
+  const {
+    tabs,
+    activeTabId,
+    activeTab,
+    openTab,
+    openAppFileTab,
+    openTableTab,
+    openActivityTab,
+    closeTab,
+    setActiveTab,
+    toggleSource,
+  } = useTabs("welcome");
+
+  const handleToggleTerminal = useCallback(() => {
+    setShowTerminal((prev) => !prev);
+  }, []);
+
+  const handleDeleteDoc = useCallback(
+    (id: string) => {
+      closeTab(id);
+    },
+    [closeTab],
+  );
+
+  const handleRenameDoc = useCallback(
+    (oldId: string, newId: string) => {
+      closeTab(oldId);
+      openTab(newId);
+    },
+    [closeTab, openTab],
+  );
 
   useEffect(() => {
     async function init() {
       try {
-        // 1. Boot WebContainer (WASM sandbox)
         setStatus("Booting sandbox...");
         await boot();
 
-        // 2. Fetch app list from core
         setStatus("Loading apps...");
         const { apps } = await listApps();
-
-        // 3. Load app source into WebContainer + bundle
         await loadApps(apps);
 
-        // 4. Start bridge server inside WebContainer
         setStatus("Starting bridge server...");
         await startBridgeServer();
-
-        // 5. Wire up module loader + register components
-        setModuleLoader(appModuleLoader);
-        registerApps(apps);
-
-        console.log(
-          "[app] Sandbox ready. Components:",
-          apps.flatMap((a) => a.components),
-        );
       } catch (err) {
         console.error("[app] Sandbox init failed:", err);
         setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -60,31 +84,81 @@ export function App() {
           alignItems: "center",
           justifyContent: "center",
           height: "100vh",
-          color: "#999",
+          background: "#1e1e1e",
+          color: "#888",
           flexDirection: "column",
-          gap: "8px",
+          gap: "12px",
         }}
       >
-        <div style={{ fontSize: "14px" }}>{status}</div>
+        <div style={{ fontSize: "13px", fontFamily: "var(--font-sans)" }}>
+          {status}
+        </div>
+        <div
+          style={{
+            width: "200px",
+            height: "2px",
+            background: "#333",
+            borderRadius: "1px",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: "40%",
+              height: "100%",
+              background: "#007acc",
+              borderRadius: "1px",
+              animation: "loading 1.5s ease-in-out infinite",
+            }}
+          />
+        </div>
+        <style>{`
+          @keyframes loading {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(350%); }
+          }
+        `}</style>
       </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <TopBar mode={mode} onModeChange={setMode} docId={docId} />
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        <Sidebar activeDocId={docId} onSelect={setDocId} />
-        <div style={{ flex: 1, overflow: "auto" }}>
-          {docId ? (
-            <PageView docId={docId} mode={mode} />
-          ) : (
-            <div style={{ padding: "48px", color: "#999" }}>
-              Select a page from the sidebar.
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <Shell
+      titleBar={<TitleBar activeDocId={activeTabId} />}
+      activityBar={
+        <ActivityBar
+          activePanel={activePanel}
+          onSelectPanel={setActivePanel}
+          showTerminal={showTerminal}
+          onToggleTerminal={handleToggleTerminal}
+        />
+      }
+      sidebar={
+        activePanel === "pages" ? (
+          <PagesPanel
+            activeDocId={activeTabId}
+            onSelect={openTab}
+            onDeleteDoc={handleDeleteDoc}
+            onRenameDoc={handleRenameDoc}
+          />
+        ) : activePanel === "apps" ? (
+          <AppsPanel onOpenAppFile={(appId, filename) => openAppFileTab(appId, filename)} />
+        ) : (
+          <DataPanel onOpenTable={openTableTab} onOpenActivity={openActivityTab} />
+        )
+      }
+      tabBar={
+        <TabBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSelect={setActiveTab}
+          onClose={closeTab}
+          onToggleSource={toggleSource}
+        />
+      }
+      content={<ContentArea activeTab={activeTab} onOpenDoc={openTab} />}
+      terminal={<TerminalPanel />}
+      showTerminal={showTerminal}
+    />
   );
 }

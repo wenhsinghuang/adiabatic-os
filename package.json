@@ -1,5 +1,6 @@
 {
   "name": "adiabatic-os",
+  "version": "0.1.0",
   "private": true,
   "workspaces": ["core", "shell"]
 }

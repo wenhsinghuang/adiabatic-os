@@ -104,3 +104,52 @@ Utility Intelligence (App) → 從 organized data 找 insight
 ```
 
 Optimizer 管秩序。Utility app 管價值。用戶管決策。三者分離。
+
+---
+
+## 20260304 修正：合併 Entropy Engineering 與 Utility Intelligence
+
+上面把 Optimizer 定義為 content-agnostic、Utility Intelligence 歸為 app 層。這個分離不成立，原因：
+
+1. **Content-agnostic 不成立** — entropy 的三個 proxy（semantic / structural / interaction）全都需要理解 content。你無法判斷「命名是否清楚」而不理解它在講什麼。entropy 的定義本身就包含 content。
+2. **改善 app 就是降 interaction entropy** — 建 shortcut、調 flow、加新 app 都是 minimize E 的 action。拆到另一個 scope 反而製造 interaction entropy。
+3. **Human as core** — 用戶不在乎手段是 merge schema 還是建新 app，在乎的是系統整體越來越好用。分離 objective function 才是核心問題，不是 content agnostic。
+
+合併後：
+
+```
+一個 Optimizer，一個 objective（minimize E），三種 action space：
+  1. 結構操作 — merge / promote / de-promote schema
+  2. 功能操作 — 建 app / 改 app / 加 shortcut
+  3. 介面操作 — 調 context default / 改 page layout / 改 flow
+```
+
+App 是 Optimizer 的 output artifact，不是平行的 scope。Optimizer 管秩序和價值。用戶管決策。
+
+### 再修正：minimize E 和 maximize U 是兩個 objective
+
+上面的合併過度了。Minimize E 和 maximize U 不是同一件事：
+
+- **Minimize E** — 讓 data substrate 維持低 entropy。結構清楚、找得到、用起來不煩。
+- **Maximize U** — 在 organized data 上做 domain-specific reasoning，產生對人有價值的 insight 和 action。
+
+很多高價值的操作不是在降 entropy，而是在產生新的 judgment：
+- 根據基因 × 健檢 × 日常記錄調整 schedule
+- 觀察飲食 / 睡眠 / 能量 pattern 做出 prescriptive recommendation
+- 根據 info flow 對情緒和 attention 的影響，反過來管理 info flow
+- 主動發現 unknown unknowns：「你可以通過搜集 A, B, C 實現 X」——用戶自己不知道要問的問題
+
+這類操作需要 domain knowledge + causal model + prescriptive reasoning，不是 entropy reduction 能覆蓋的。
+
+所以正確的結構是兩層 objective：
+
+```
+Layer 1: minimize E — 管 data substrate 的秩序
+Layer 2: maximize U — 在 organized data 上做 domain reasoning，產生 insight / action / 發現盲區
+
+Layer 1 是 Layer 2 的 prerequisite（data 不乾淨什麼都做不了）
+Layer 2 的 feedback 校準 Layer 1（什麼該 promote 取決於什麼對人有用）
+Layer 2 的關鍵能力：主動發現 unknown unknowns，而非被動回應已知需求
+```
+
+這跟最初分離 Entropy Engineering / Utility Intelligence 的結構相同，但理由不同——不是 content-agnostic vs content-aware，而是 objective function 本質上就是兩個。原本的 uninstall test 仍成立，但邊界重新定義為 minimize E vs maximize U。

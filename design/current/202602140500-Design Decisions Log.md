@@ -109,3 +109,50 @@
 1. **夠用** — Single-user desktop app 的 threat model 是「保護用戶不被自己的 buggy vibe code 搞壞」，不是「保護 server 不被惡意用戶攻擊」。Worker thread 提供 process-level isolation，已足夠。
 2. **輕量** — 不需要 WebContainers（多一整個 WASM Node.js runtime）或 microVM。
 3. **可升級** — Sandbox 策略是 implementation detail，不是 data schema。改了不影響 data。未來 marketplace 有 3rd party app 時可升級隔離方式。
+
+---
+
+## 20260304 Session
+
+### DD10: Flow editor 是 built-in primitive，Canvas 不內建
+
+**決定：** Flow-based MDX editor 是系統內建的 first-class 編輯器。Canvas（空間佈局）不內建，若需要可通過 app 實現。
+
+**理由：**
+
+**為什麼 flow 是 primitive：**
+- 語言本身是 sequential 的。人一次只能讀一個字，論述有因果順序。這不是習慣，是語言的物理限制。
+- Flow 負責「表達思想」（sequential，不可壓縮），spatial 負責「組織思想之間的關係」（parallel，可一眼掃過）。
+- 沒有內容就沒有東西可以組織 — flow 比 spatial 更 fundamental。
+- 所有工具（Heptabase、Notion、Obsidian）的 canvas 最終都指向 card/document — 一個 flow-based 的編輯單元。Card 是不可再分的原子。
+
+**為什麼 flow editor 是 built-in 而不是 app：**
+- **Bootstrapping** — 要有 app，先要有 page 放 `<App />`；要有 page，先要有 MDX editor。Flow editor 是 layer 0。
+- 類似 OS 的 shell/terminal — 也是一種 view，但是 built-in 的，因為沒有它連 app 都裝不了。
+- 理論上未來 app 系統夠強時，MDX editor 也可以變成可替換的 app。但現階段是 bootstrap 必需品。
+
+**為什麼 canvas 不內建：**
+- Canvas 是一種 view，不是 data model。「空間座標作為資料是污染」（design philosophy）。
+- Heptabase 的教訓：把 x/y 座標寫進資料，導致資料被 canvas view 綁架。
+- Canvas app 可以自己管理 spatial layout（座標存在 app 的 ephemeral state），從 D1/D2 讀資料投射成空間佈局，完全不污染資料。
+- Canvas 的複雜度（zoom、pan、connection lines、layout algorithm）封裝在 app 裡，不用改核心。
+- 不喜歡某個 canvas 實現？換一個 app 就好。符合「Code is the Liability」。
+
+**結論：** Flow editor = built-in primitive。Canvas = app use case。架構已為此留好位置。
+
+### DD11: MDX 是所有 content 操作的 single source of truth
+
+**決定：** 所有對 page content 的操作（排版、拖拽排序、resize、樣式變更）本質上都是 MDX 的改動。Editor 是 MDX 的 WYSIWYG view，不維護額外的 side state。
+
+**理由：**
+1. **One interface, all actors** — 用戶在 editor UI 操作、用戶手寫 MDX source、AI agent 直接編輯 .mdx 檔案，三者的效果完全等價。不需要為不同 actor 提供不同 API。
+2. **No hidden state** — 沒有 CSS-only 的 ephemeral state（刷新就丟失），沒有 editor-only 的 metadata store。所有可見的狀態都能在 .mdx 裡找到對應的文字。
+3. **Plain text = universal interface** — MDX 就是 plain text。任何 tool（AI agent、script、version control）都能讀寫，不需要了解 editor internal。
+4. **Serialization round-trip 已建立** — Plate node ↔ MDAST ↔ MDX text 的雙向轉換已完整。新操作只需在這個 pipeline 上擴展，不需要新機制。
+
+**應用範例：**
+- Component resize → 序列化為 `<Component data-width="500px" data-height="300px" />` 寫入 .mdx
+- DnD 拖拽排序 → block 在 .mdx 中的順序改變
+- 任何 visual property 的改動 → 對應到 .mdx 中某個 JSX/Markdown 結構的變化
+
+**邊界：** 這個原則只適用於 **content**（page 內容）。Application layout（sidebar width、terminal height）屬於 shell UI state，不存在 MDX 裡。

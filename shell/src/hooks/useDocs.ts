@@ -1,6 +1,7 @@
 // useDocs — list all docs for the sidebar. Polls every 2s.
+// Exposes refresh() for immediate re-fetch after create/delete/rename.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import * as api from "../lib/api";
 
 export interface DocEntry {
@@ -15,24 +16,24 @@ export function useDocs() {
   const [loading, setLoading] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    async function fetch() {
-      try {
-        const result = await api.listDocs();
-        setDocs(result.rows as unknown as DocEntry[]);
-        setLoading(false);
-      } catch (err) {
-        console.error("[useDocs] Fetch failed:", err);
-      }
+  const fetchDocs = useCallback(async () => {
+    try {
+      const result = await api.listDocs();
+      setDocs(result.rows as unknown as DocEntry[]);
+      setLoading(false);
+    } catch (err) {
+      console.error("[useDocs] Fetch failed:", err);
     }
+  }, []);
 
-    fetch();
-    intervalRef.current = setInterval(fetch, 2000);
+  useEffect(() => {
+    fetchDocs();
+    intervalRef.current = setInterval(fetchDocs, 2000);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, []);
+  }, [fetchDocs]);
 
-  return { docs, loading };
+  return { docs, loading, refresh: fetchDocs };
 }

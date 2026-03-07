@@ -33,6 +33,9 @@ export class Guard {
   // Listener for doc changes (working tree uses this)
   public onDocChange?: (id: string, content: string | null) => void;
 
+  // Always-fire subscribers for doc changes (SSE etc. — never suppressed by WorkingTree)
+  public docChangeSubscribers: Array<(id: string) => void> = [];
+
   constructor(opts: GuardOptions) {
     this.db = opts.db;
     this.source = opts.source;
@@ -76,6 +79,11 @@ export class Guard {
     const now = Date.now();
     const meta = metadata ? JSON.stringify(metadata) : null;
 
+    // Read existing content before upsert (for diff in D0 log)
+    const existing = (this.stmts.getDoc ??= this.db.prepare(
+      "SELECT id, content, metadata FROM docs WHERE id = ?"
+    )).get(id) as { content: string } | null;
+
     const stmt = this.stmts.upsertDoc ??= this.db.prepare(
       `INSERT INTO docs (id, content, metadata, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)
@@ -86,16 +94,19 @@ export class Guard {
     );
     stmt.run(id, content, meta, now, now);
 
-    // Auto D0 log — behavior signal only, not full content
+    // Auto D0 log — store before/after for diff
     const isLocked = metadata?.locked === true;
     if (!isLocked) {
       this.logD0("d1.write", {
         doc_id: id,
+        before: existing ? existing.content.slice(0, 4000) : null,
+        after: content.slice(0, 4000),
         bytes: Buffer.byteLength(content, "utf8"),
       });
     }
 
     this.onDocChange?.(id, content);
+    for (const fn of this.docChangeSubscribers) { try { fn(id); } catch {} }
   }
 
   // -- D1: deleteDoc (hard delete + auto D0 snapshot) --
@@ -121,6 +132,7 @@ export class Guard {
     });
 
     this.onDocChange?.(id, null);
+    for (const fn of this.docChangeSubscribers) { try { fn(id); } catch {} }
     return true;
   }
 

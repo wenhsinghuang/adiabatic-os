@@ -64,6 +64,39 @@ export function listApps(): Promise<{ apps: AppInfo[] }> {
   return request("/api/apps");
 }
 
+export function getAppSource(appId: string): Promise<Record<string, string>> {
+  return request(`/api/apps/${encodeURIComponent(appId)}/source`);
+}
+
+export function createApp(id: string, name: string): Promise<{ ok: true; id: string }> {
+  return request("/api/apps", {
+    method: "POST",
+    body: JSON.stringify({ id, name }),
+  });
+}
+
+export function saveAppFile(
+  appId: string,
+  filename: string,
+  content: string,
+): Promise<{ ok: true }> {
+  return request(`/api/apps/${encodeURIComponent(appId)}/files/${encodeURIComponent(filename)}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
+// -- Render --
+
+export function renderMdx(
+  mdx: string,
+): Promise<{ code: string } | { error: string }> {
+  return request("/api/render", {
+    method: "POST",
+    body: JSON.stringify({ mdx }),
+  });
+}
+
 // -- Query / Write (system bridge for components) --
 
 export function query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }> {

@@ -5,7 +5,7 @@
 export function HelloWorld({ name = "World" }: { name?: string }) {
   return (
     <div style={{ padding: "1rem", border: "1px solid #ccc", borderRadius: "8px" }}>
-      <h3>Hello, {name}!</h3>
+      <h3>Heloll, {name}!</h3>
       <p>This component is rendered from the hello-world app.</p>
     </div>
   );

@@ -20,16 +20,40 @@ export const SANDBOX_FILES: FileSystemTree = {
     },
   },
 
+  // Shim modules — resolve React imports to host-provided globals at bundle time.
+  // esbuild alias maps "react" → "./shims/react.js" etc., so the output
+  // has no bare module specifiers and can be directly imported via blob URL.
+  shims: {
+    directory: {
+      "react.js": {
+        file: {
+          contents: `const R = globalThis.__ADIABATIC_REACT__; export default R; export const { useState, useEffect, useRef, useCallback, useMemo, useContext, useReducer, useLayoutEffect, createContext, createElement, Fragment, forwardRef, memo, lazy, Suspense, Component, PureComponent, Children, cloneElement, isValidElement, createRef } = R;`,
+        },
+      },
+      "react-dom.js": {
+        file: {
+          contents: `const RD = globalThis.__ADIABATIC_REACT_DOM__; export default RD; export const { createRoot, hydrateRoot, flushSync, createPortal } = RD;`,
+        },
+      },
+      "jsx-runtime.js": {
+        file: {
+          contents: `const J = globalThis.__ADIABATIC_JSX_RUNTIME__; export const { jsx, jsxs, Fragment } = J;`,
+        },
+      },
+    },
+  },
+
   // Bundler — takes each app in /apps/ and produces /bundles/{appId}.js
-  // React is externalized (provided by the host page).
+  // React is resolved to shim modules via esbuild alias (no bare specifiers in output).
   "bundler.js": {
     file: {
       contents: `
 import { build } from "esbuild";
 import { readdirSync, existsSync, mkdirSync } from "fs";
+import { resolve } from "path";
 
-const APPS_DIR = "/apps";
-const BUNDLES_DIR = "/bundles";
+const APPS_DIR = "./apps";
+const BUNDLES_DIR = "./bundles";
 const targetApp = process.argv[2] || null; // optional: bundle single app
 
 if (!existsSync(BUNDLES_DIR)) mkdirSync(BUNDLES_DIR, { recursive: true });
@@ -46,6 +70,13 @@ if (targetApp) {
   apps = apps.filter((a) => a === targetApp);
 }
 
+// Resolve React imports to shim modules that read from host globals
+const shimAlias = {
+  "react": resolve("./shims/react.js"),
+  "react-dom": resolve("./shims/react-dom.js"),
+  "react/jsx-runtime": resolve("./shims/jsx-runtime.js"),
+};
+
 for (const appId of apps) {
   const entry = APPS_DIR + "/" + appId + "/index.tsx";
   if (!existsSync(entry)) {
@@ -60,7 +91,7 @@ for (const appId of apps) {
       format: "esm",
       target: "es2022",
       outfile: BUNDLES_DIR + "/" + appId + ".js",
-      external: ["react", "react-dom", "react/jsx-runtime"],
+      alias: shimAlias,
       jsx: "automatic",
       logLevel: "warning",
     });
@@ -93,22 +124,24 @@ const CORE_URL = "http://localhost:3000";
 const PORT = 4000;
 
 const server = createServer(async (req, res) => {
-  // CORS
+  // CORS + cross-origin isolation support
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-App-Id");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
   const url = new URL(req.url, "http://localhost:" + PORT);
 
   // Serve bundled app code
   if (req.method === "GET" && url.pathname.startsWith("/bundles/")) {
-    const filename = "/bundles/" + url.pathname.slice("/bundles/".length);
+    const filename = "./bundles/" + url.pathname.slice("/bundles/".length);
     if (!existsSync(filename)) {
       res.writeHead(404); res.end("Not found"); return;
     }
     const code = await readFile(filename, "utf8");
-    res.writeHead(200, { "Content-Type": "application/javascript" });
+    res.setHeader("Content-Type", "application/javascript");
+    res.writeHead(200);
     res.end(code);
     return;
   }

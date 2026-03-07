@@ -88,3 +88,16 @@ MDX composition layer。最可拋的。
 | App sandbox 策略 | Two-way | 不影響 data schema |
 | Connector 設計 | Two-way | 可隨時增刪 |
 | Pages 渲染方式 | Two-way | 不影響 data |
+
+---
+
+## 20260304 修正：Scope 2 從 "Entropy Engineering" 改為 "Optimizer"
+
+原本 Scope 2 只做 content-agnostic 的結構操作，Utility Intelligence 歸在 Apps（Scope 3）。推翻原因見 Entropy Engineering doc。
+
+變更：
+- Scope 2 改名 **Optimizer**，action space 擴展為結構操作 + 功能操作 + 介面操作
+- Constraint 擴展：不能刪資料，只能 reorganize / promote / merge / restructure / 建 app / 改 flow
+- App 是 Optimizer 的 output artifact
+- Scope 3 Apps 移除 Utility Intelligence 描述（不再是獨立分類，已被 Optimizer 吸收）
+- Uninstall test 不變：卸載 Optimizer = 不是 Adiabatic

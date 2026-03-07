@@ -1,0 +1,8 @@
+{
+  "id": "tools",
+  "name": "Tools",
+  "permissions": {
+    "write": []
+  },
+  "components": ["Counter", "Calc", "Clock"]
+}

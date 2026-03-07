@@ -1,0 +1,32 @@
+.menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  background: #2d2d2d;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  padding: 4px 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.item {
+  display: block;
+  width: 100%;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: #ccc;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.item.danger:hover {
+  background: rgba(220, 38, 38, 0.2);
+  color: #f87171;
+}

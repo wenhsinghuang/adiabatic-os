@@ -1,0 +1,47 @@
+:root {
+  /* Chrome (dark) */
+  --color-bg-titlebar: #323233;
+  --color-bg-activity: #333333;
+  --color-bg-sidebar: #252526;
+  --color-bg-tab-bar: #2d2d2d;
+  --color-bg-tab-active: #1e1e1e;
+  --color-bg-tab-inactive: #2d2d2d;
+
+  /* Content (light) */
+  --color-bg-content: #ffffff;
+  --color-text-content: #1e1e1e;
+
+  /* Terminal */
+  --color-bg-terminal: #1e1e1e;
+
+  /* Text */
+  --color-text-primary: #cccccc;
+  --color-text-secondary: #969696;
+  --color-text-muted: #6e6e6e;
+
+  /* Borders */
+  --color-border: #3c3c3c;
+  --color-border-light: #e0e0e0;
+
+  /* Accent */
+  --color-accent: #007acc;
+  --color-accent-hover: #1a8ad4;
+
+  /* Status bar */
+  --color-bg-status: #007acc;
+  --color-text-status: #ffffff;
+
+  /* Sizes */
+  --titlebar-height: 36px;
+  --activity-bar-width: 48px;
+  --sidebar-width: 240px;
+  --tab-bar-height: 35px;
+  --terminal-min-height: 150px;
+
+  /* Fonts */
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-lg: 14px;
+}

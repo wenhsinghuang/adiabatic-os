@@ -1,0 +1,114 @@
+import { HelloWorld } from "@apps/hello-world"
+
+# MDX Stress Test
+
+This page tests that the renderer handles **all valid MDX** correctly.
+
+## Inline Formatting
+
+Here is **bold**, _italic_, ~~strikethrough~~, and `inline code`. Mixed: **bold with _nested italic_** **inside**. A [link to some](https://example.com).
+
+\{1+4}
+
+{1+4}
+
+## Headings
+
+### Third Level
+
+Regular paragraph under h3.
+
+## Block Elements
+
+> This is a blockquote. It should render with an indent and a left border.
+> Multiple lines in the same blockquote.
+
+***
+
+Another paragraph after a horizontal rule.
+
+## Code Block
+
+```typescript
+function fibonacci(n: number): number {
+  if (n <= 1) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// Test it
+console.log(fibonacci(10)); // 55
+```
+
+## Lists
+
+* First item
+* Second item with **bold**
+* Third item with `code`
+
+  * Nested item A
+  * Nested item B
+
+1. Ordered first
+2. Ordered second
+
+<HelloWorld name="Stress Test" />
+
+1. Ordered third
+
+## Component with Props
+
+## Multiple Components
+
+Text before component.
+
+<HelloWorld />
+
+Text between two components.
+
+<HelloWorld name="Second Instance" />
+
+Text after last component.
+
+## Mixed Content
+
+Here's a paragraph, then a component, then a blockquote — all adjacent:
+
+<HelloWorld name="Adjacent" />
+
+> A blockquote right after a component. Does it render correctly?
+
+And back to a regular paragraph. Then a code block:
+
+```javascript
+const x = { nested: { object: true } };
+```
+
+## Native HTML in MDX
+
+<div style={{width: "720.7734375px", height: "204.390625px"}}>
+  <HelloWorld name="Left" />
+</div>
+
+<div style={{background: "#f0f4ff", padding: "1rem", borderRadius: "8px", border: "1px solid #c0d0ff"}}>
+  This text is inside a styled div with a blue background.
+</div>
+
+<details>
+  <summary>
+    Click to expand
+  </summary>
+
+  Hidden content inside a details element.
+</details>
+
+## Native HTML + Components Mixed
+
+<div style={{width: "200px", height: "165.890625px"}} />
+
+## Edge Cases
+
+A paragraph with special characters: `<div>`, `{curly}`, `<Component/>`, `import { x } from 'y'`.
+
+**Empty paragraph below this line:**
+
+**And text resumes here.**
