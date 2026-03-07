@@ -2,36 +2,6 @@
 // Extracted for testability. No React, no DOM, no side effects.
 
 // ---------------------------------------------------------------------------
-// Import extraction / stripping
-// ---------------------------------------------------------------------------
-
-export interface MdxImport {
-  name: string;
-  appId: string;
-}
-
-/** Extract `import { Name } from '@apps/appId'` statements. */
-export function extractImports(mdx: string): MdxImport[] {
-  const imports: MdxImport[] = [];
-  const re = /import\s*\{([^}]+)\}\s*from\s*['"]@apps\/([^'"]+)['"]/g;
-  let m;
-  while ((m = re.exec(mdx)) !== null) {
-    const names = m[1].split(",").map((s) => s.trim()).filter(Boolean);
-    const appId = m[2];
-    for (const name of names) imports.push({ name, appId });
-  }
-  return imports;
-}
-
-/** Remove `import { ... } from '@apps/...'` lines from MDX source. */
-export function stripAppImports(mdx: string): string {
-  return mdx.replace(
-    /^import\s*\{[^}]+\}\s*from\s*['"]@apps\/[^'"]+['"]\s*;?\s*$/gm,
-    "",
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Expression wrapping
 // ---------------------------------------------------------------------------
 

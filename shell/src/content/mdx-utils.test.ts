@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  extractImports,
-  stripAppImports,
   wrapExpressions,
   extractComponentJsx,
   patchSource,
@@ -9,94 +7,6 @@ import {
   parseResizeWrapper,
   generateResizeWrapper,
 } from "./mdx-utils";
-
-// =========================================================================
-// 1. Round-trip: strip imports → re-add imports should preserve structure
-// =========================================================================
-
-describe("extractImports", () => {
-  it("extracts single named import", () => {
-    const mdx = `import { Chart } from '@apps/analytics'`;
-    expect(extractImports(mdx)).toEqual([
-      { name: "Chart", appId: "analytics" },
-    ]);
-  });
-
-  it("extracts multiple named imports from one line", () => {
-    const mdx = `import { Chart, Table } from '@apps/analytics'`;
-    expect(extractImports(mdx)).toEqual([
-      { name: "Chart", appId: "analytics" },
-      { name: "Table", appId: "analytics" },
-    ]);
-  });
-
-  it("extracts imports from multiple apps", () => {
-    const mdx = [
-      `import { Chart } from '@apps/analytics'`,
-      `import { Timer } from '@apps/focus'`,
-    ].join("\n");
-    expect(extractImports(mdx)).toEqual([
-      { name: "Chart", appId: "analytics" },
-      { name: "Timer", appId: "focus" },
-    ]);
-  });
-
-  it("ignores non-app imports", () => {
-    const mdx = `import { useState } from 'react'`;
-    expect(extractImports(mdx)).toEqual([]);
-  });
-
-  it("handles double quotes", () => {
-    const mdx = `import { Chart } from "@apps/analytics"`;
-    expect(extractImports(mdx)).toEqual([
-      { name: "Chart", appId: "analytics" },
-    ]);
-  });
-
-  it("returns empty for no imports", () => {
-    expect(extractImports("# Hello\n\nSome text")).toEqual([]);
-  });
-});
-
-describe("stripAppImports", () => {
-  it("strips single import line", () => {
-    const mdx = `import { Chart } from '@apps/analytics'\n\n# Hello`;
-    // \s*$ in the regex consumes trailing \n, so one \n is eaten
-    expect(stripAppImports(mdx)).toBe("\n# Hello");
-  });
-
-  it("strips multiple import lines", () => {
-    const mdx = [
-      `import { Chart } from '@apps/analytics'`,
-      `import { Timer } from '@apps/focus'`,
-      "",
-      "# Hello",
-    ].join("\n");
-    expect(stripAppImports(mdx)).toBe("\n\n# Hello");
-  });
-
-  it("preserves non-app imports", () => {
-    const mdx = `import { useState } from 'react'\n\n# Hello`;
-    expect(stripAppImports(mdx)).toBe(mdx);
-  });
-
-  it("strips import with trailing semicolon", () => {
-    const mdx = `import { Chart } from '@apps/analytics';\n\n# Hello`;
-    expect(stripAppImports(mdx)).toBe("\n# Hello");
-  });
-
-  it("handles mixed app and non-app imports", () => {
-    const mdx = [
-      `import { useState } from 'react'`,
-      `import { Chart } from '@apps/analytics'`,
-      "",
-      "# Hello",
-    ].join("\n");
-    const result = stripAppImports(mdx);
-    expect(result).toContain("import { useState } from 'react'");
-    expect(result).not.toContain("@apps/analytics");
-  });
-});
 
 // =========================================================================
 // 2. Text patching
@@ -179,47 +89,7 @@ describe("patchSource", () => {
 });
 
 // =========================================================================
-// 3. Import extraction round-trip
-// =========================================================================
-
-describe("import round-trip", () => {
-  it("extract then strip preserves non-import content exactly", () => {
-    const mdx = [
-      `import { Chart } from '@apps/analytics'`,
-      "",
-      "# Weekly Review",
-      "",
-      "Some text here.",
-      "",
-      '<Chart period="week" />',
-    ].join("\n");
-
-    const imports = extractImports(mdx);
-    expect(imports).toHaveLength(1);
-
-    const stripped = stripAppImports(mdx);
-    expect(stripped).toContain("# Weekly Review");
-    expect(stripped).toContain("Some text here.");
-    expect(stripped).toContain('<Chart period="week" />');
-    expect(stripped).not.toContain("@apps/analytics");
-  });
-
-  it("import content can be reconstructed", () => {
-    const imports = [
-      { name: "Chart", appId: "analytics" },
-      { name: "Timer", appId: "focus" },
-    ];
-    const reconstructed = imports
-      .map((i) => `import { ${i.name} } from '@apps/${i.appId}'`)
-      .join("\n");
-    expect(reconstructed).toBe(
-      `import { Chart } from '@apps/analytics'\nimport { Timer } from '@apps/focus'`,
-    );
-  });
-});
-
-// =========================================================================
-// 4. Component JSX extraction
+// 3. Component JSX extraction
 // =========================================================================
 
 describe("extractComponentJsx", () => {
@@ -494,10 +364,11 @@ describe("TAG_TO_MD", () => {
 });
 
 // =========================================================================
-// 8. Full MDX structure round-trip (patch-based)
+// 7. Full MDX structure round-trip (patch-based)
 // =========================================================================
 
 describe("full MDX structure preservation", () => {
+  // Full MDX doc with imports, markdown, components, expressions, links, resize wrapper
   const fullMdx = [
     `import { Chart } from '@apps/analytics'`,
     `import { Timer } from '@apps/focus'`,
@@ -520,24 +391,6 @@ describe("full MDX structure preservation", () => {
     '<div style={{width: "500px", height: "300px"}}><Timer /></div>',
   ].join("\n");
 
-  it("extractImports finds all app imports", () => {
-    const imports = extractImports(fullMdx);
-    expect(imports).toEqual([
-      { name: "Chart", appId: "analytics" },
-      { name: "Timer", appId: "focus" },
-    ]);
-  });
-
-  it("stripAppImports removes only app imports", () => {
-    const stripped = stripAppImports(fullMdx);
-    expect(stripped).not.toContain("@apps/");
-    expect(stripped).toContain("# Weekly Review");
-    expect(stripped).toContain("**32 hours**");
-    expect(stripped).toContain('<Chart period="week" />');
-    expect(stripped).toContain("{1 + 1}");
-    expect(stripped).toContain("[this link](https://example.com)");
-  });
-
   it("extractComponentJsx finds all component usages", () => {
     expect(extractComponentJsx(fullMdx, "Chart")).toEqual([
       '<Chart period="week" />',
@@ -555,8 +408,7 @@ describe("full MDX structure preservation", () => {
     expect(patched).toContain("# Monthly Review");
     expect(patched).toContain("**32 hours**");
     expect(patched).toContain('<Chart period="week" />');
-    // Verify imports still intact
-    expect(extractImports(patched)).toHaveLength(2);
+    expect(patched).toContain("import { Chart }");
   });
 
   it("patching text preserves structure", () => {
