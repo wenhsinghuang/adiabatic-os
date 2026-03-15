@@ -5,6 +5,7 @@ import { Component, type ReactNode, type ErrorInfo } from "react";
 interface Props {
   fallback?: ReactNode;
   children: ReactNode;
+  resetKey?: unknown;
 }
 
 interface State {
@@ -16,6 +17,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { error };
+  }
+
+  componentDidUpdate(prevProps: Props) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {

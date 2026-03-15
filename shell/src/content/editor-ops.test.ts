@@ -11,6 +11,7 @@ import {
   moveComponent,
   resizeComponent,
   insertComponent,
+  ensureImport,
 } from "./editor-ops";
 
 // =========================================================================
@@ -338,7 +339,104 @@ describe("component insert", () => {
 });
 
 // =========================================================================
-// 5. Mixed JSX/MD editing (Rule 3)
+// 5. ensureImport
+// =========================================================================
+
+describe("ensureImport", () => {
+  it("adds new import to empty document", () => {
+    const result = ensureImport("", "Chart", "analytics");
+    expect(result).toBe('import { Chart } from "@apps/analytics"');
+  });
+
+  it("adds new import at top of document without imports", () => {
+    const result = ensureImport(simpleMdx, "Chart", "analytics");
+    expect(result).toMatch(/^import \{ Chart \}/);
+    expect(result).toContain("# Weekly Review");
+  });
+
+  it("does not duplicate existing import", () => {
+    const result = ensureImport(withComponentMdx, "Chart", "analytics");
+    expect(result).toBe(withComponentMdx);
+  });
+
+  it("merges into existing import from same app", () => {
+    const result = ensureImport(withComponentMdx, "Timer", "analytics");
+    expect(result).toContain("Chart, Timer");
+    expect(result).toContain("@apps/analytics");
+    // Should not add a second import line
+    const importCount = (result.match(/import/g) || []).length;
+    expect(importCount).toBe(1);
+  });
+
+  it("adds import after existing imports", () => {
+    const result = ensureImport(withComponentMdx, "TodoList", "tasks");
+    expect(result).toContain('import { TodoList } from "@apps/tasks"');
+    // New import should be after existing one
+    const chartIdx = result.indexOf("@apps/analytics");
+    const todoIdx = result.indexOf("@apps/tasks");
+    expect(todoIdx).toBeGreaterThan(chartIdx);
+  });
+});
+
+// =========================================================================
+// 5b. Slash command workflow (insertComponent + ensureImport combo)
+// =========================================================================
+
+describe("slash command workflow", () => {
+  it("inserts component + adds new import to plain markdown", () => {
+    let src = simpleMdx;
+    const blockIdx = 1; // after heading
+    src = insertComponent(src, "<Chart />", blockIdx);
+    src = ensureImport(src, "Chart", "analytics");
+
+    expect(src).toContain('import { Chart } from "@apps/analytics"');
+    expect(src).toContain("<Chart />");
+    // Chart should appear after heading
+    const blocks = getBlocks(src);
+    const headingIdx = blocks.findIndex((b) => b.includes("# Weekly"));
+    const chartIdx = blocks.findIndex((b) => b.includes("<Chart />"));
+    expect(chartIdx).toBe(headingIdx + 1);
+  });
+
+  it("inserts component + merges into existing import from same app", () => {
+    let src = withComponentMdx;
+    const blocks = getBlocks(src);
+    const endIdx = blocks.length;
+    src = insertComponent(src, "<Timer />", endIdx);
+    src = ensureImport(src, "Timer", "analytics");
+
+    expect(src).toContain("Chart, Timer");
+    expect(src).toContain("<Timer />");
+    // Only one import line
+    const importCount = (src.match(/import/g) || []).length;
+    expect(importCount).toBe(1);
+  });
+
+  it("inserts component at start of empty document", () => {
+    let src = "";
+    src = insertComponent(src, "<Widget />", 0);
+    src = ensureImport(src, "Widget", "my-app");
+
+    expect(src).toContain('import { Widget } from "@apps/my-app"');
+    expect(src).toContain("<Widget />");
+  });
+
+  it("does not duplicate import if already present", () => {
+    let src = withComponentMdx;
+    const blocks = getBlocks(src);
+    src = insertComponent(src, '<Chart period="month" />', blocks.length);
+    src = ensureImport(src, "Chart", "analytics");
+
+    // Should still have exactly one import line for analytics
+    const importLines = src
+      .split("\n")
+      .filter((l) => l.includes("@apps/analytics"));
+    expect(importLines.length).toBe(1);
+  });
+});
+
+// =========================================================================
+// 6. Mixed JSX/MD editing (Rule 3)
 // =========================================================================
 
 describe("mixed JSX/MD editing", () => {
@@ -354,7 +452,7 @@ describe("mixed JSX/MD editing", () => {
 });
 
 // =========================================================================
-// 6. Invariants
+// 7. Invariants
 // =========================================================================
 
 describe("invariants", () => {

@@ -2,5 +2,12 @@
   "name": "adiabatic-os",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["core", "shell"]
+  "workspaces": [
+    "core",
+    "shell"
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "playwright": "^1.58.2"
+  }
 }

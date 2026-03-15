@@ -42,6 +42,12 @@
   min-height: 100%;
 }
 
+.contentFullApp {
+  height: 100%;
+  padding: 0;
+  max-width: none;
+}
+
 .content h1 {
   font-size: 28px;
   font-weight: 700;
@@ -149,21 +155,34 @@
   font-weight: 600;
 }
 
+/* --- Inline Monaco editor overlay for block editing --- */
+
+.inlineEditor {
+  border-radius: 4px;
+  background: var(--color-bg-content, #fff);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
 /* --- Component block wrapper with top bar --- */
 
 .componentWrapper {
   position: relative;
   margin: 12px 0;
   border-radius: 6px;
-  border: 1px solid transparent;
+  border: 1px solid rgba(0, 0, 0, 0.06);
   transition: border-color 0.15s ease;
 }
 
 .componentWrapper:hover {
-  border-color: rgba(0, 0, 0, 0.1);
+  border-color: rgba(0, 0, 0, 0.15);
 }
 
-/* Top bar: [name] [Edit] [×] — visible on hover */
+.dropTarget {
+  border-color: var(--color-accent) !important;
+  background: rgba(0, 122, 204, 0.03);
+}
+
+/* Top bar: [name] [Edit] [x] — visible on hover, entire bar is drag handle */
 .componentBar {
   display: flex;
   align-items: center;
@@ -174,8 +193,13 @@
   font-size: 11px;
   color: rgba(0, 0, 0, 0.45);
   user-select: none;
+  cursor: grab;
   opacity: 0;
   transition: opacity 0.1s ease;
+}
+
+.componentBar:active {
+  cursor: grabbing;
 }
 
 .componentWrapper:hover .componentBar {
@@ -218,6 +242,54 @@
 
 .componentBody {
   /* Component renders fully interactive here */
+  overflow: auto;
+}
+
+/* Resize handle — bottom-right corner */
+.resizeHandle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.resizeHandle::after {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgba(0, 0, 0, 0.3);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.3);
+}
+
+.componentWrapper:hover .resizeHandle {
+  opacity: 1;
+}
+
+/* Tail zone: clickable empty area below content for appending new blocks */
+.tailZone {
+  min-height: 200px;
+  cursor: text;
+}
+
+/* --- Drop zones between blocks --- */
+
+.dropZone {
+  height: 4px;
+  transition: height 0.15s ease, background 0.15s ease;
+}
+
+.dropZoneActive {
+  height: 24px;
+  background: rgba(0, 122, 204, 0.08);
+  border-radius: 4px;
+  border: 2px dashed var(--color-accent);
 }
 
 /* --- Popover for editing component JSX --- */
@@ -286,104 +358,4 @@
 
 .popoverCancel:hover {
   background: #f5f5f5;
-}
-
-/* --- Link URL popover --- */
-
-.linkPopover {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 1000;
-  margin-top: 4px;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  padding: 6px 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.linkInput {
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 13px;
-  width: 260px;
-  outline: none;
-}
-
-.linkInput:focus {
-  border-color: var(--color-accent);
-}
-
-.linkUrl {
-  color: #666;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.linkSaveBtn {
-  border: none;
-  background: var(--color-accent);
-  color: #fff;
-  border-radius: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.linkBtn {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 2px 4px;
-  color: #666;
-}
-
-.linkBtn:hover {
-  color: #333;
-}
-
-.linkOpenBtn {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 2px 4px;
-  color: var(--color-accent);
-}
-
-/* --- Expression inline editing (Obsidian-style) --- */
-
-.exprValue {
-  cursor: pointer;
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.25);
-  transition: border-color 0.15s ease;
-}
-
-.exprValue:hover {
-  border-bottom-color: var(--color-accent);
-}
-
-.exprEditing {
-  display: inline-block;
-}
-
-.exprInput {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.5;
-  border: 1px solid var(--color-accent);
-  border-radius: 3px;
-  padding: 1px 6px;
-  outline: none;
-  background: #f5f5ff;
-  min-width: 80px;
 }
