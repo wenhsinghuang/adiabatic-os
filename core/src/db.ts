@@ -1,11 +1,13 @@
 import { Database } from "bun:sqlite";
 import { join } from "path";
+import { D0_SCHEMA_VERSION } from "./schema";
 
 // D0 events + D1 docs schema — one-way door, matches design spec exactly
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
   id          TEXT PRIMARY KEY,
+  schema_version TEXT NOT NULL DEFAULT '${D0_SCHEMA_VERSION}',
   source      TEXT NOT NULL,
   type        TEXT NOT NULL,
   external_id TEXT,
@@ -19,6 +21,18 @@ CREATE INDEX IF NOT EXISTS idx_events_source ON events(source, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, started_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events(source, external_id)
   WHERE external_id IS NOT NULL;
+
+CREATE TRIGGER IF NOT EXISTS prevent_events_update
+BEFORE UPDATE ON events
+BEGIN
+  SELECT RAISE(ABORT, 'events are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_events_delete
+BEFORE DELETE ON events
+BEGIN
+  SELECT RAISE(ABORT, 'events are append-only');
+END;
 
 CREATE TABLE IF NOT EXISTS docs (
   id          TEXT PRIMARY KEY,
@@ -47,6 +61,7 @@ export function openDB(workspacePath: string): AdiabaticDB {
 
   // Apply schema
   db.exec(SCHEMA);
+  migrateExistingSchema(db);
 
   return {
     db,
@@ -54,4 +69,11 @@ export function openDB(workspacePath: string): AdiabaticDB {
       db.close();
     },
   };
+}
+
+function migrateExistingSchema(db: Database): void {
+  const eventColumns = db.prepare("PRAGMA table_info(events)").all() as { name: string }[];
+  if (!eventColumns.some((column) => column.name === "schema_version")) {
+    db.run(`ALTER TABLE events ADD COLUMN schema_version TEXT NOT NULL DEFAULT '${D0_SCHEMA_VERSION}'`);
+  }
 }

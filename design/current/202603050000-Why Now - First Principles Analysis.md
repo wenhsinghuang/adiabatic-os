@@ -12,7 +12,7 @@
 
 | 層 | 問題 | 歷史解法 |
 |---|------|---------|
-| Capture | 資料怎麼進來 | 都解了。打字、API、import，不是瓶頸 |
+| Capture | 資料怎麼進來 | API/import 已解；ambient capture 到 2024-2026 才真的變可行 |
 | Organization | 進來之後怎麼放 | 手動：folder、tag、link、canvas。全部 scale 不了 |
 | Retrieval | 要用的時候找得到嗎 | Search、backlink、Dataview。勉強能用但被 organization 的品質限制 |
 | Synthesis | 能從已有資料產生新 insight 嗎 | 幾乎沒有工具解這個。全靠人腦 |
@@ -27,6 +27,20 @@
 核心矛盾：**Organization 的成本隨資料量線性（甚至超線性）增長，而人的時間是固定的。** 所以每個系統最終都會到達一個點 — 資料量超過人能維護的上限，entropy 開始贏。
 
 這不是功能問題，是經濟學問題。Organize 的勞動力供給不足。
+
+---
+
+## Capture 也剛過線
+
+早期文件把 capture 簡化成「打字、API、import」，這只涵蓋主動資料和外部服務資料。真正讓 verb-first personal system 成立的是另一種 capture：**低摩擦、背景式、但仍然結構化的 user interaction stream**。
+
+到 2026，這層才開始可用：
+
+- **macOS Accessibility API（AX API）** 可以讀取 app UI tree、可見文字、window/focus/selection 等結構化資訊，不必靠 screenshot OCR 才知道使用者在看什麼。
+- **Secure text / password fields** 不應該被當成一般文字捕捉；connector 必須把密碼欄、private browsing、敏感 app allow/deny list 視為第一版安全需求。
+- **Littlebird.ai** 證明這條 stack 可以產品化：native macOS app 用 AX API 建 text-based working memory，讓使用者查「今天做了什麼」和「哪些 email 重要」這類問題。
+
+Littlebird 的存在不是反證，而是 timing signal：ambient capture 的技術和使用者心理接受度都已經過線。Adiabatic 的差異不在「能不能 capture」，而在 capture 之後的 ownership 和 ontology：Littlebird 把 memory 累積在 AI/SaaS 的 schema 裡；Adiabatic 要把 raw interaction 先落到使用者擁有的 D0 event log。
 
 ---
 

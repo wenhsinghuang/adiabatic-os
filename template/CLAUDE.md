@@ -7,12 +7,11 @@ This workspace is managed by Adiabatic OS. Follow these conventions when writing
 
 ```
 ├── CLAUDE.md          ← you are here
-├── .adiabatic/        ← runtime data (DB lives here, do not modify directly)
 ├── apps/              ← sandboxed apps (you write code here)
 │   └── <app-name>/
 │       ├── manifest.json
 │       └── index.tsx
-└── pages/             ← working tree (.mdx files, synced with DB)
+└── pages/             ← user-facing Markdown/MDX working files
 ```
 
 ## Writing an App
@@ -67,11 +66,12 @@ system.writeEvent(event)            // Write D0 event directly
 - All writes go through Guard — permission checked against manifest
 - Every write automatically produces a D0 event (audit trail)
 - Apps have universal read, scoped write
-- Never write to `.adiabatic/` or DB files directly
+- Use the System API for all data operations
+- Do not inspect or modify runtime-managed files
 
 ## Pages (MDX)
 
-Pages in `pages/` are MDX files synced with the DB. They can embed app components:
+Pages in `pages/` are MDX files managed by Adiabatic OS. They can embed app components:
 
 ```mdx
 # My Dashboard
@@ -81,7 +81,7 @@ Some text here...
 <MyWidget period="week" />
 ```
 
-- DB is source of truth; `pages/` is a convenience layer
+- The System API is the source of truth; `pages/` is a convenience layer
 - Editing a `.mdx` file auto-syncs to DB
 - Writing a doc via API auto-materializes to `pages/`
 
@@ -102,12 +102,11 @@ This workspace is managed by Adiabatic OS. Follow these conventions when writing
 
 ```
 ├── CLAUDE.md          ← you are here
-├── .adiabatic/        ← runtime data (DB lives here, do not modify directly)
 ├── apps/              ← sandboxed apps (you write code here)
 │   └── <app-name>/
 │       ├── manifest.json
 │       └── index.tsx
-└── pages/             ← working tree (.mdx files, synced with DB)
+└── pages/             ← user-facing Markdown/MDX working files
 ```
 
 ## Writing an App
@@ -162,11 +161,12 @@ system.writeEvent(event)            // Write D0 event directly
 - All writes go through Guard — permission checked against manifest
 - Every write automatically produces a D0 event (audit trail)
 - Apps have universal read, scoped write
-- Never write to `.adiabatic/` or DB files directly
+- Use the System API for all data operations
+- Do not inspect or modify runtime-managed files
 
 ## Pages (MDX)
 
-Pages in `pages/` are MDX files synced with the DB. They can embed app components:
+Pages in `pages/` are MDX files managed by Adiabatic OS. They can embed app components:
 
 ```mdx
 # My Dashboard
@@ -176,7 +176,7 @@ Some text here...
 <MyWidget period="week" />
 ```
 
-- DB is source of truth; `pages/` is a convenience layer
+- The System API is the source of truth; `pages/` is a convenience layer
 - Editing a `.mdx` file auto-syncs to DB
 - Writing a doc via API auto-materializes to `pages/`
 

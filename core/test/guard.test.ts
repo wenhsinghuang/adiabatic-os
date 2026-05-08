@@ -109,6 +109,7 @@ describe("Guard", () => {
     expect(id.length).toBe(26); // ULID length
 
     const event = guard.queryOne("SELECT * FROM events WHERE id = ?", [id]) as any;
+    expect(event.schema_version).toBe("0.1");
     expect(event.source).toBe("connector:oura");
     expect(event.type).toBe("sleep.recorded");
   });
@@ -130,6 +131,21 @@ describe("Guard", () => {
     const types = events.map((e: any) => e.type);
     expect(types).toContain("ddl.promote");
     expect(types).toContain("d2.insert");
+  });
+
+  test("write rejects system table writes", () => {
+    expect(() =>
+      guard.write("INSERT INTO events (id, source, type, started_at, payload) VALUES (?, ?, ?, ?, ?)", [
+        "e1",
+        "system:test",
+        "test.event",
+        Date.now(),
+        "{}",
+      ])
+    ).toThrow("system table writes are not allowed: events");
+    expect(() => guard.write("UPDATE docs SET content = ? WHERE id = ?", ["nope", "doc"])).toThrow(
+      "system table writes are not allowed: docs",
+    );
   });
 
   test("write rejects unsupported operations", () => {

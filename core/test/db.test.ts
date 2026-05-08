@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { Database } from "bun:sqlite";
 import { openDB } from "../src/db";
 import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
@@ -41,6 +42,7 @@ describe("DB", () => {
     const names = columns.map((c) => c.name);
 
     expect(names).toContain("id");
+    expect(names).toContain("schema_version");
     expect(names).toContain("source");
     expect(names).toContain("type");
     expect(names).toContain("external_id");
@@ -48,6 +50,49 @@ describe("DB", () => {
     expect(names).toContain("ended_at");
     expect(names).toContain("payload");
     expect(names).toContain("created_at");
+
+    close();
+  });
+
+  test("events default to current D0 schema version", () => {
+    const { db, close } = openDB(workspace);
+
+    db.prepare(
+      "INSERT INTO events (id, source, type, started_at, payload) VALUES (?, ?, ?, ?, ?)"
+    ).run("e1", "system:test", "test.event", Date.now(), "{}");
+
+    const event = db.prepare("SELECT schema_version FROM events WHERE id = ?").get("e1") as {
+      schema_version: string;
+    };
+    expect(event.schema_version).toBe("0.1");
+
+    close();
+  });
+
+  test("openDB migrates legacy events table with schema_version", () => {
+    const legacy = new Database(join(workspace, ".adiabatic", "adiabatic.db"), { create: true });
+    legacy.exec(`
+      CREATE TABLE events (
+        id          TEXT PRIMARY KEY,
+        source      TEXT NOT NULL,
+        type        TEXT NOT NULL,
+        external_id TEXT,
+        started_at  INTEGER NOT NULL,
+        ended_at    INTEGER,
+        payload     JSON NOT NULL,
+        created_at  INTEGER NOT NULL DEFAULT (unixepoch('subsec')*1000)
+      );
+    `);
+    legacy.prepare(
+      "INSERT INTO events (id, source, type, started_at, payload) VALUES (?, ?, ?, ?, ?)"
+    ).run("legacy-1", "system:legacy", "legacy.event", Date.now(), "{}");
+    legacy.close();
+
+    const { db, close } = openDB(workspace);
+    const event = db.prepare("SELECT schema_version FROM events WHERE id = ?").get("legacy-1") as {
+      schema_version: string;
+    };
+    expect(event.schema_version).toBe("0.1");
 
     close();
   });
@@ -84,6 +129,23 @@ describe("DB", () => {
     db.prepare(
       "INSERT INTO events (id, source, type, external_id, started_at, payload) VALUES (?, ?, ?, ?, ?, ?)"
     ).run("e3", "connector:github", "sleep.recorded", "oura-123", Date.now(), "{}");
+
+    close();
+  });
+
+  test("events table is append-only at SQLite trigger level", () => {
+    const { db, close } = openDB(workspace);
+
+    db.prepare(
+      "INSERT INTO events (id, source, type, started_at, payload) VALUES (?, ?, ?, ?, ?)"
+    ).run("e1", "system:test", "test.event", Date.now(), "{}");
+
+    expect(() =>
+      db.prepare("UPDATE events SET type = ? WHERE id = ?").run("test.changed", "e1")
+    ).toThrow("events are append-only");
+    expect(() =>
+      db.prepare("DELETE FROM events WHERE id = ?").run("e1")
+    ).toThrow("events are append-only");
 
     close();
   });

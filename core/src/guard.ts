@@ -1,10 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { ulid } from "./utils/ulid";
+import { D0_SCHEMA_VERSION } from "./schema";
 
 // Guard — the only write path into the database.
 // Every mutation goes through here: permission check → execute → auto D0 log.
 
 export interface EventInput {
+  schemaVersion?: string;
   source: string;
   type: string;
   externalId?: string;
@@ -17,6 +19,8 @@ export interface GuardOptions {
   db: Database;
   source: string; // injected at construction, cannot be forged by app
 }
+
+const SYSTEM_TABLES = new Set(["events", "docs"]);
 
 export class Guard {
   private db: Database;
@@ -58,11 +62,12 @@ export class Guard {
   writeEvent(event: EventInput): string {
     const id = ulid();
     const stmt = this.stmts.insertEvent ??= this.db.prepare(
-      `INSERT INTO events (id, source, type, external_id, started_at, ended_at, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO events (id, schema_version, source, type, external_id, started_at, ended_at, payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     stmt.run(
       id,
+      event.schemaVersion ?? D0_SCHEMA_VERSION,
       event.source,
       event.type,
       event.externalId ?? null,
@@ -163,6 +168,13 @@ export class Guard {
       throw new Error(`Guard: unsupported write operation: ${sql.slice(0, 30)}`);
     }
 
+    if (!table) {
+      throw new Error(`Guard: could not determine target table: ${sql.slice(0, 50)}`);
+    }
+    if (isSystemTable(table)) {
+      throw new Error(`Guard: system table writes are not allowed: ${table}`);
+    }
+
     // Execute
     const stmt = this.db.prepare(sql);
     if (params) {
@@ -185,10 +197,10 @@ export class Guard {
     const id = ulid();
     const now = Date.now();
     const stmt = this.stmts.insertEvent ??= this.db.prepare(
-      `INSERT INTO events (id, source, type, external_id, started_at, ended_at, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO events (id, schema_version, source, type, external_id, started_at, ended_at, payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    stmt.run(id, this.source, type, null, now, null, JSON.stringify(payload));
+    stmt.run(id, D0_SCHEMA_VERSION, this.source, type, null, now, null, JSON.stringify(payload));
   }
 }
 
@@ -197,4 +209,9 @@ function extractTable(sql: string, keyword: string): string | null {
   const regex = new RegExp(`${keyword}\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?["'\`]?(\\w+)["'\`]?`, "i");
   const match = sql.match(regex);
   return match?.[1] ?? null;
+}
+
+function isSystemTable(table: string): boolean {
+  const normalized = table.toLowerCase();
+  return SYSTEM_TABLES.has(normalized) || normalized.startsWith("sqlite_") || normalized.startsWith("_adiabatic_");
 }
