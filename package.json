@@ -2,6 +2,9 @@
   "name": "adiabatic-os",
   "version": "0.1.0",
   "private": true,
+  "scripts": {
+    "package:patch": "node scripts/package-os-patch.mjs"
+  },
   "workspaces": [
     "core",
     "shell"

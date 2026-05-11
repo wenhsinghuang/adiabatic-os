@@ -86,17 +86,6 @@ export function saveAppFile(
   });
 }
 
-// -- Render --
-
-export function renderMdx(
-  mdx: string,
-): Promise<{ code: string } | { error: string }> {
-  return request("/api/render", {
-    method: "POST",
-    body: JSON.stringify({ mdx }),
-  });
-}
-
 // -- Query / Write (system bridge for components) --
 
 export function query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }> {
@@ -110,5 +99,39 @@ export function write(sql: string, params?: unknown[]): Promise<{ ok: true }> {
   return request("/api/write", {
     method: "POST",
     body: JSON.stringify({ sql, params }),
+  });
+}
+
+// -- Schema lifecycle approval --
+
+export interface SchemaRequest {
+  id: string;
+  kind: "promote" | "demote";
+  ddl: string[];
+  requestedBy: string;
+  createdAt: number;
+  beforeSchema: unknown;
+  status: "pending" | "applied" | "rejected" | "failed";
+  error?: string;
+}
+
+export function listSchemaRequests(): Promise<{ requests: SchemaRequest[] }> {
+  return request("/api/schema/requests");
+}
+
+export function approveSchemaRequest(
+  id: string,
+  remember = false,
+): Promise<{ request: SchemaRequest }> {
+  return request(`/api/schema/requests/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ remember }),
+  });
+}
+
+export function rejectSchemaRequest(id: string): Promise<{ request: SchemaRequest }> {
+  return request(`/api/schema/requests/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }

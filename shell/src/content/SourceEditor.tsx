@@ -1,4 +1,4 @@
-// SourceEditor — Monaco Editor wrapper for MDX source editing.
+// SourceEditor — Monaco Editor wrapper for app/source files.
 
 import { useRef, useCallback } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
@@ -11,7 +11,7 @@ interface SourceEditorProps {
   language?: string;
 }
 
-export function SourceEditor({ content, onSave, language = "mdx" }: SourceEditorProps) {
+export function SourceEditor({ content, onSave, language = "plaintext" }: SourceEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

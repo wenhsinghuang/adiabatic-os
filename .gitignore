@@ -2,6 +2,8 @@
 node_modules/
 dist/
 /.adiabatic/
+**/.adiabatic/*
+!**/.adiabatic/.gitkeep
 *.db
 *.db-journal
 *.db-wal

@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { SourceEditor } from "./SourceEditor";
 import * as api from "../lib/api";
-import { reloadApp } from "../sandbox/webcontainer";
-import { invalidateAppModule } from "../sandbox/app-bundler";
+import { getContainer, reloadApp } from "../sandbox/webcontainer";
 import styles from "./ContentArea.module.css";
 
 interface AppFileEditorProps {
@@ -64,10 +63,11 @@ export function AppFileEditor({ appId, filename }: AppFileEditorProps) {
       api
         .saveAppFile(appId, filename, value)
         .then(async () => {
-          // Rebuild: push updated source into WebContainer, re-bundle, invalidate caches
-          invalidateAppModule(appId);
-          await reloadApp(appId);
-          console.log(`[AppFileEditor] Rebuilt app "${appId}"`);
+          // Rebuild only if the app runtime sandbox is already active.
+          if (getContainer()) {
+            await reloadApp(appId);
+            console.log(`[AppFileEditor] Rebuilt app "${appId}"`);
+          }
         })
         .catch((err) => {
           console.error("[AppFileEditor] Save/rebuild failed:", err);

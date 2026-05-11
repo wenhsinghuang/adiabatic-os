@@ -1,25 +1,55 @@
-// ContentArea — renders the active tab's content (rendered page, source editor, or app file editor).
+// ContentArea — renders the dashboard, page editor, app files, app runtimes, or data views.
 
+import { lazy, Suspense } from "react";
 import type { Tab } from "../hooks/useTabs";
 import { useDoc } from "../hooks/useDoc";
-import { MdxRenderer } from "./MdxRenderer";
-import { SourceEditor } from "./SourceEditor";
+import type { SchemaRequest } from "../lib/api";
 import { AppFileEditor } from "./AppFileEditor";
+import { AppRuntimeView } from "./AppRuntimeView";
+import { Dashboard } from "./Dashboard";
 import { TableView } from "./TableView";
 import { ActivityView } from "./ActivityView";
 import styles from "./ContentArea.module.css";
 
+const MarkdownPageEditor = lazy(() =>
+  import("./MarkdownPageEditor").then((module) => ({ default: module.MarkdownPageEditor })),
+);
+
 interface ContentAreaProps {
   activeTab: Tab | null;
+  coreStatus: "checking" | "connected" | "offline";
+  coreError: string | null;
+  schemaRequest: SchemaRequest | null;
   onOpenDoc?: (docId: string) => void;
+  onCreatePage: () => void;
+  onOpenApps: () => void;
+  onOpenData: () => void;
+  onOpenActivity: () => void;
 }
 
-export function ContentArea({ activeTab, onOpenDoc }: ContentAreaProps) {
+export function ContentArea({
+  activeTab,
+  coreStatus,
+  coreError,
+  schemaRequest,
+  onOpenDoc,
+  onCreatePage,
+  onOpenApps,
+  onOpenData,
+  onOpenActivity,
+}: ContentAreaProps) {
   if (!activeTab) {
     return (
-      <div className={styles.empty}>
-        <span>Open a page from the sidebar</span>
-      </div>
+      <Dashboard
+        coreStatus={coreStatus}
+        coreError={coreError}
+        schemaRequest={schemaRequest}
+        onCreatePage={onCreatePage}
+        onOpenDoc={onOpenDoc ?? (() => {})}
+        onOpenApps={onOpenApps}
+        onOpenData={onOpenData}
+        onOpenActivity={onOpenActivity}
+      />
     );
   }
 
@@ -31,6 +61,10 @@ export function ContentArea({ activeTab, onOpenDoc }: ContentAreaProps) {
         filename={activeTab.filename}
       />
     );
+  }
+
+  if (activeTab.type === "appRuntime" && activeTab.appId) {
+    return <AppRuntimeView key={activeTab.id} appId={activeTab.appId} />;
   }
 
   if (activeTab.type === "table" && activeTab.tableName) {
@@ -59,9 +93,9 @@ function TabContent({ tab }: { tab: Tab }) {
     return <div className={styles.empty}>Document not found</div>;
   }
 
-  if (tab.showSource) {
-    return <SourceEditor content={doc.content} onSave={save} />;
-  }
-
-  return <MdxRenderer content={doc.content} onSave={save} />;
+  return (
+    <Suspense fallback={<div className={styles.loading}>Loading editor...</div>}>
+      <MarkdownPageEditor content={doc.content} onSave={save} />
+    </Suspense>
+  );
 }

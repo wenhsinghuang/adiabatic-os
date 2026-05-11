@@ -1,0 +1,156 @@
+.pageEditor {
+  height: 100%;
+  overflow: auto;
+  background: #fbfbf8;
+  color: #202124;
+}
+
+.mdxRoot {
+  min-height: 100%;
+}
+
+.contentEditable {
+  box-sizing: border-box;
+  width: min(100%, 920px);
+  min-height: calc(100vh - var(--titlebar-height) - var(--tab-bar-height));
+  margin: 0 auto;
+  padding: 56px 72px 120px;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.72;
+  color: #202124;
+}
+
+.contentEditable h1,
+.contentEditable h2,
+.contentEditable h3,
+.contentEditable h4 {
+  margin: 1.6em 0 0.55em;
+  line-height: 1.2;
+  font-weight: 680;
+  color: #111827;
+}
+
+.contentEditable h1 {
+  margin-top: 0;
+  font-size: 32px;
+}
+
+.contentEditable h2 {
+  font-size: 24px;
+}
+
+.contentEditable h3 {
+  font-size: 19px;
+}
+
+.contentEditable p,
+.contentEditable ul,
+.contentEditable ol,
+.contentEditable blockquote,
+.contentEditable pre {
+  margin: 0.75em 0;
+}
+
+.contentEditable a {
+  color: #2563eb;
+}
+
+.contentEditable code {
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  background: #f3f4f6;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.contentEditable pre {
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: #111827;
+  color: #f9fafb;
+}
+
+.contentEditable pre code {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.contentEditable blockquote {
+  border-left: 3px solid #9ca3af;
+  margin-left: 0;
+  padding-left: 16px;
+  color: #4b5563;
+}
+
+.contentEditable hr {
+  border: 0;
+  border-top: 1px solid #d1d5db;
+  margin: 28px 0;
+}
+
+.codeBlockEditor {
+  overflow: hidden;
+  border: 1px solid #d7dde4;
+  border-radius: 8px;
+  background: #111827;
+}
+
+.codeLanguage {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #273244;
+  padding: 7px 10px;
+  background: #182235;
+  color: #d1d5db;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  outline: none;
+}
+
+.codeTextarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  border: 0;
+  padding: 12px 14px;
+  background: transparent;
+  color: #f9fafb;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+}
+
+:global(.mdxeditor-toolbar) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid #e5e7eb;
+  background: rgba(251, 251, 248, 0.96);
+  backdrop-filter: blur(10px);
+}
+
+:global(.mdxeditor) {
+  background: transparent;
+}
+
+@media (max-width: 760px) {
+  .contentEditable {
+    padding: 32px 24px 96px;
+    font-size: 15px;
+  }
+
+  .contentEditable h1 {
+    font-size: 28px;
+  }
+}

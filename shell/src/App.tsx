@@ -1,5 +1,4 @@
-// Root App — VS Code-inspired layout with sidebar, tabs, content, and terminal.
-// Boots the WebContainer sandbox on mount.
+// Root App — local-first personal OS shell.
 
 import { useState, useEffect, useCallback } from "react";
 import { Shell } from "./layout/Shell";
@@ -9,18 +8,28 @@ import { ActivityBar, type Panel } from "./layout/ActivityBar";
 import { PagesPanel } from "./components/PagesPanel";
 import { AppsPanel } from "./components/AppsPanel";
 import { DataPanel } from "./components/DataPanel";
+import { SchemaApprovalModal } from "./components/SchemaApprovalModal";
 import { ContentArea } from "./content/ContentArea";
 import { TerminalPanel } from "./content/TerminalPanel";
 import { useTabs } from "./hooks/useTabs";
-import { listApps } from "./lib/api";
-import { boot, loadApps, startBridgeServer } from "./sandbox/webcontainer";
+import {
+  approveSchemaRequest,
+  listApps,
+  listSchemaRequests,
+  rejectSchemaRequest,
+  saveDoc,
+  type SchemaRequest,
+} from "./lib/api";
 import "./styles/global.css";
 
+type CoreStatus = "checking" | "connected" | "offline";
+
 export function App() {
-  const [ready, setReady] = useState(false);
-  const [status, setStatus] = useState("Booting sandbox...");
+  const [coreStatus, setCoreStatus] = useState<CoreStatus>("checking");
+  const [coreError, setCoreError] = useState<string | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activePanel, setActivePanel] = useState<Panel>("pages");
+  const [schemaRequest, setSchemaRequest] = useState<SchemaRequest | null>(null);
 
   const {
     tabs,
@@ -28,12 +37,12 @@ export function App() {
     activeTab,
     openTab,
     openAppFileTab,
+    openAppRuntimeTab,
     openTableTab,
     openActivityTab,
     closeTab,
     setActiveTab,
-    toggleSource,
-  } = useTabs("welcome");
+  } = useTabs(null);
 
   const handleToggleTerminal = useCallback(() => {
     setShowTerminal((prev) => !prev);
@@ -54,111 +63,136 @@ export function App() {
     [closeTab, openTab],
   );
 
-  useEffect(() => {
-    async function init() {
-      try {
-        setStatus("Booting sandbox...");
-        await boot();
-
-        setStatus("Loading apps...");
-        const { apps } = await listApps();
-        await loadApps(apps);
-
-        setStatus("Starting bridge server...");
-        await startBridgeServer();
-      } catch (err) {
-        console.error("[app] Sandbox init failed:", err);
-        setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        return;
-      }
-      setReady(true);
+  const checkCore = useCallback(async () => {
+    try {
+      await listApps();
+      setCoreStatus("connected");
+      setCoreError(null);
+    } catch (err) {
+      setCoreStatus("offline");
+      setCoreError(err instanceof Error ? err.message : String(err));
     }
-    init();
   }, []);
 
-  if (!ready) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100vh",
-          background: "#1e1e1e",
-          color: "#888",
-          flexDirection: "column",
-          gap: "12px",
-        }}
-      >
-        <div style={{ fontSize: "13px", fontFamily: "var(--font-sans)" }}>
-          {status}
-        </div>
-        <div
-          style={{
-            width: "200px",
-            height: "2px",
-            background: "#333",
-            borderRadius: "1px",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              width: "40%",
-              height: "100%",
-              background: "#007acc",
-              borderRadius: "1px",
-              animation: "loading 1.5s ease-in-out infinite",
-            }}
-          />
-        </div>
-        <style>{`
-          @keyframes loading {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(350%); }
-          }
-        `}</style>
-      </div>
-    );
-  }
+  useEffect(() => {
+    checkCore();
+    const id = window.setInterval(checkCore, 5000);
+    return () => window.clearInterval(id);
+  }, [checkCore]);
+
+  useEffect(() => {
+    if (coreStatus !== "connected") return;
+    let cancelled = false;
+
+    async function pollSchemaRequests() {
+      try {
+        const { requests } = await listSchemaRequests();
+        if (cancelled) return;
+        setSchemaRequest(requests.find((request) => request.status === "pending") ?? null);
+      } catch (err) {
+        console.error("[app] Schema request poll failed:", err);
+      }
+    }
+
+    pollSchemaRequests();
+    const id = window.setInterval(pollSchemaRequests, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [coreStatus]);
+
+  const handleApproveSchema = useCallback(async (id: string, remember: boolean) => {
+    await approveSchemaRequest(id, remember);
+    setSchemaRequest(null);
+  }, []);
+
+  const handleRejectSchema = useCallback(async (id: string) => {
+    await rejectSchemaRequest(id);
+    setSchemaRequest(null);
+  }, []);
+
+  const handleCreatePage = useCallback(async () => {
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+    const id = `untitled-${stamp}`;
+    await saveDoc(id, "# Untitled\n");
+    setActivePanel("pages");
+    openTab(id);
+  }, [openTab]);
+
+  const handleOpenApps = useCallback(() => {
+    setActivePanel("apps");
+  }, []);
+
+  const handleOpenData = useCallback(() => {
+    setActivePanel("data");
+  }, []);
+
+  const handleOpenActivity = useCallback(() => {
+    setActivePanel("data");
+    openActivityTab();
+  }, [openActivityTab]);
 
   return (
-    <Shell
-      titleBar={<TitleBar activeDocId={activeTabId} />}
-      activityBar={
-        <ActivityBar
-          activePanel={activePanel}
-          onSelectPanel={setActivePanel}
-          showTerminal={showTerminal}
-          onToggleTerminal={handleToggleTerminal}
-        />
-      }
-      sidebar={
-        activePanel === "pages" ? (
-          <PagesPanel
-            activeDocId={activeTabId}
-            onSelect={openTab}
-            onDeleteDoc={handleDeleteDoc}
-            onRenameDoc={handleRenameDoc}
+    <>
+      <Shell
+        titleBar={<TitleBar activeDocId={activeTabId} />}
+        activityBar={
+          <ActivityBar
+            activePanel={activePanel}
+            onSelectPanel={setActivePanel}
+            showTerminal={showTerminal}
+            onToggleTerminal={handleToggleTerminal}
           />
-        ) : activePanel === "apps" ? (
-          <AppsPanel onOpenAppFile={(appId, filename) => openAppFileTab(appId, filename)} />
-        ) : (
-          <DataPanel onOpenTable={openTableTab} onOpenActivity={openActivityTab} />
-        )
-      }
-      tabBar={
-        <TabBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onSelect={setActiveTab}
-          onClose={closeTab}
-          onToggleSource={toggleSource}
+        }
+        sidebar={
+          activePanel === "pages" ? (
+            <PagesPanel
+              activeDocId={activeTabId}
+              onSelect={openTab}
+              onDeleteDoc={handleDeleteDoc}
+              onRenameDoc={handleRenameDoc}
+            />
+          ) : activePanel === "apps" ? (
+            <AppsPanel
+              onOpenApp={openAppRuntimeTab}
+              onOpenAppFile={(appId, filename) => openAppFileTab(appId, filename)}
+            />
+          ) : (
+            <DataPanel onOpenTable={openTableTab} onOpenActivity={openActivityTab} />
+          )
+        }
+        tabBar={
+          <TabBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onSelect={setActiveTab}
+            onClose={closeTab}
+          />
+        }
+        content={
+          <ContentArea
+            activeTab={activeTab}
+            coreStatus={coreStatus}
+            coreError={coreError}
+            schemaRequest={schemaRequest}
+            onOpenDoc={openTab}
+            onCreatePage={handleCreatePage}
+            onOpenApps={handleOpenApps}
+            onOpenData={handleOpenData}
+            onOpenActivity={handleOpenActivity}
+          />
+        }
+        terminal={<TerminalPanel />}
+        showTerminal={showTerminal}
+      />
+      {schemaRequest && (
+        <SchemaApprovalModal
+          request={schemaRequest}
+          onApprove={handleApproveSchema}
+          onReject={handleRejectSchema}
         />
-      }
-      content={<ContentArea activeTab={activeTab} onOpenDoc={openTab} />}
-      terminal={<TerminalPanel />}
-      showTerminal={showTerminal}
-    />
+      )}
+    </>
   );
 }

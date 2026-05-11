@@ -1,14 +1,13 @@
-import { join } from "path";
-import { mkdir, writeFile } from "fs/promises";
+import { dirname, join, relative } from "path";
+import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
 import { openDB } from "./db";
 import { Guard } from "./guard";
+import type { SchemaOp } from "./guard";
 import { WorkingTree } from "./working-tree";
 import { loadApps } from "./app-loader";
-import { renderMDX } from "./renderer";
 import { ensureClaudeMd } from "./claude-md";
-import { readdir, readFile, stat } from "fs/promises";
-import { dirname } from "path";
 import { ulid } from "./utils/ulid";
+import { SettingsStore } from "./settings";
 
 // Adiabatic OS — HTTP server entry point
 // All routes go through here. Guard is the only write path.
@@ -17,6 +16,23 @@ const workspacePath = process.argv[2] || process.cwd();
 const pagesDir = join(workspacePath, "pages");
 const appsDir = join(workspacePath, "apps");
 const adiabaticDir = join(workspacePath, ".adiabatic");
+const APP_ID_HEADER = "x-adiabatic-app-id";
+const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
+  export const system: {
+    query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
+    write(sql: string, params?: unknown[]): Promise<{ ok: true }>;
+    writeDoc(id: string, content: string, metadata?: Record<string, unknown>): Promise<{ ok: true; id: string }>;
+    deleteDoc(id: string): Promise<{ ok: true }>;
+    writeEvent(event: {
+      type: string;
+      startedAt: number;
+      endedAt?: number;
+      externalId?: string;
+      payload: Record<string, unknown>;
+    }): Promise<{ ok: true; id: string }>;
+  };
+}
+`;
 
 // Ensure .adiabatic/ exists
 await mkdir(adiabaticDir, { recursive: true });
@@ -27,9 +43,24 @@ await ensureClaudeMd(workspacePath);
 // Boot
 const { db, close: closeDB } = openDB(workspacePath);
 const guard = new Guard({ db, source: "system:server" });
+const settings = new SettingsStore(adiabaticDir);
+await settings.update({ workspacePath });
 let registry = await loadApps(appsDir);
 const workingTree = new WorkingTree({ guard, pagesDir });
 await workingTree.start();
+
+interface SchemaRequest {
+  id: string;
+  kind: SchemaOp;
+  ddl: string[];
+  requestedBy: string;
+  createdAt: number;
+  beforeSchema: unknown;
+  status: "pending" | "applied" | "rejected" | "failed";
+  error?: string;
+}
+
+const schemaRequests = new Map<string, SchemaRequest>();
 
 // SSE: push doc change notifications to connected shell clients
 const sseClients = new Set<ReadableStreamDefaultController>();
@@ -47,7 +78,7 @@ console.log(`[adiabatic] Apps loaded: ${[...registry.apps.keys()].join(", ") || 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-App-Id",
+  "Access-Control-Allow-Headers": "Content-Type",
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Embedder-Policy": "credentialless",
 };
@@ -61,6 +92,112 @@ function json(data: unknown, status = 200): Response {
 
 async function readBody<T>(req: Request): Promise<T> {
   return (await req.json()) as T;
+}
+
+function guardForRequest(req: Request, opts?: { requireAppIdentity?: boolean }): Guard {
+  const appId = req.headers.get(APP_ID_HEADER);
+  if (!appId) {
+    if (opts?.requireAppIdentity) {
+      throw new Error("Guard: app identity is required for this write path");
+    }
+    return guard;
+  }
+
+  const app = registry.apps.get(appId);
+  if (!app) {
+    throw new Error(`Guard: unknown app identity: ${appId}`);
+  }
+
+  return guard.withSource(`app:${appId}`, {
+    canWriteTable: (table) => registry.hasWritePermission(appId, table),
+  });
+}
+
+async function createSchemaRequest(
+  kind: SchemaOp,
+  ddl: string | string[],
+  requestedBy: string,
+): Promise<{ status: "pending" | "applied"; request?: SchemaRequest }> {
+  if ((await settings.get()).allowCodingAgentSchemaDecisions) {
+    if (kind === "promote") {
+      guard.promote(ddl, { approved: true, requestedBy });
+    } else {
+      guard.demote(ddl, { approved: true, requestedBy });
+    }
+    return { status: "applied" };
+  }
+
+  const plan = guard.schemaPlan(kind, ddl);
+  const request: SchemaRequest = {
+    id: ulid(),
+    kind,
+    ddl: plan.ddl,
+    requestedBy,
+    createdAt: Date.now(),
+    beforeSchema: plan.before_schema,
+    status: "pending",
+  };
+  schemaRequests.set(request.id, request);
+  return { status: "pending", request };
+}
+
+async function approveSchemaRequest(id: string, remember: boolean): Promise<SchemaRequest> {
+  const request = schemaRequests.get(id);
+  if (!request) throw new Error(`Schema request not found: ${id}`);
+  if (request.status !== "pending") return request;
+
+  try {
+    if (request.kind === "promote") {
+      guard.promote(request.ddl, { approved: true, requestedBy: request.requestedBy });
+    } else {
+      guard.demote(request.ddl, { approved: true, requestedBy: request.requestedBy });
+    }
+    request.status = "applied";
+    if (remember) {
+      await settings.update({ allowCodingAgentSchemaDecisions: true });
+    }
+  } catch (err) {
+    request.status = "failed";
+    request.error = err instanceof Error ? err.message : String(err);
+  }
+  return request;
+}
+
+function rejectSchemaRequest(id: string): SchemaRequest {
+  const request = schemaRequests.get(id);
+  if (!request) throw new Error(`Schema request not found: ${id}`);
+  if (request.status === "pending") request.status = "rejected";
+  return request;
+}
+
+async function readAppFiles(appDir: string): Promise<Record<string, string>> {
+  const files: Record<string, string> = {};
+  async function walk(dir: string, prefix = ""): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "dist") {
+        continue;
+      }
+      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath, relPath);
+      } else if (entry.isFile()) {
+        files[relPath] = await readFile(fullPath, "utf8");
+      }
+    }
+  }
+  await walk(appDir);
+  return files;
+}
+
+function resolveAppFile(appDir: string, filename: string): string {
+  const target = join(appDir, filename);
+  const rel = relative(appDir, target);
+  if (!rel || rel.startsWith("..") || rel.includes("../") || rel === ".git" || rel.startsWith(".git/")) {
+    throw new Error("Invalid filename");
+  }
+  return target;
 }
 
 // Track active terminal subprocesses for cleanup
@@ -85,7 +222,6 @@ class TerminalLogger {
 
   open(): void {
     this.guard.writeEvent({
-      source: "system:terminal",
       type: "terminal.open",
       startedAt: Date.now(),
       payload: { sessionId: this.sessionId },
@@ -96,7 +232,6 @@ class TerminalLogger {
     this.flushInput();
     this.flushOutput();
     this.guard.writeEvent({
-      source: "system:terminal",
       type: "terminal.close",
       startedAt: Date.now(),
       payload: { sessionId: this.sessionId },
@@ -125,7 +260,6 @@ class TerminalLogger {
     const data = this.inputBuf;
     this.inputBuf = "";
     this.guard.writeEvent({
-      source: "system:terminal",
       type: "terminal.input",
       startedAt: Date.now(),
       payload: { sessionId: this.sessionId, data },
@@ -138,7 +272,6 @@ class TerminalLogger {
     const data = this.outputBuf;
     this.outputBuf = "";
     this.guard.writeEvent({
-      source: "system:terminal",
       type: "terminal.output",
       startedAt: Date.now(),
       payload: { sessionId: this.sessionId, data },
@@ -196,7 +329,7 @@ const server = Bun.serve({
       // -- Docs --
       if (path === "/api/docs" && method === "POST") {
         const body = await readBody<{ id: string; content: string; metadata?: Record<string, unknown> }>(req);
-        guard.writeDoc(body.id, body.content, body.metadata);
+        guardForRequest(req).writeDoc(body.id, body.content, body.metadata);
         return json({ ok: true, id: body.id });
       }
 
@@ -209,7 +342,7 @@ const server = Bun.serve({
 
       if (path.startsWith("/api/docs/") && method === "DELETE") {
         const docId = decodeURIComponent(path.slice("/api/docs/".length));
-        const deleted = guard.deleteDoc(docId);
+        const deleted = guardForRequest(req).deleteDoc(docId);
         if (!deleted) return json({ error: "not found" }, 404);
         return json({ ok: true });
       }
@@ -217,10 +350,10 @@ const server = Bun.serve({
       // -- Events --
       if (path === "/api/events" && method === "POST") {
         const body = await readBody<{
-          source: string; type: string; startedAt: number;
+          type: string; startedAt: number;
           endedAt?: number; externalId?: string; payload: Record<string, unknown>;
         }>(req);
-        const id = guard.writeEvent(body);
+        const id = guardForRequest(req).writeEvent(body);
         return json({ ok: true, id });
       }
 
@@ -234,8 +367,42 @@ const server = Bun.serve({
       // -- Write (D2 DML + auto D0 log) --
       if (path === "/api/write" && method === "POST") {
         const body = await readBody<{ sql: string; params?: unknown[] }>(req);
-        guard.write(body.sql, body.params);
+        guardForRequest(req, { requireAppIdentity: true }).write(body.sql, body.params);
         return json({ ok: true });
+      }
+
+      // -- Schema lifecycle request/approval --
+      const schemaRequestMatch = path.match(/^\/api\/schema\/(promote|demote)\/request$/);
+      if (schemaRequestMatch && method === "POST") {
+        const kind = schemaRequestMatch[1] as SchemaOp;
+        const body = await readBody<{ ddl: string | string[]; requestedBy?: string }>(req);
+        const requestedBy = body.requestedBy ?? req.headers.get(APP_ID_HEADER) ?? "coding-agent";
+        const result = await createSchemaRequest(kind, body.ddl, requestedBy);
+        return json(result);
+      }
+
+      if (path === "/api/schema/requests" && method === "GET") {
+        return json({ requests: [...schemaRequests.values()] });
+      }
+
+      const schemaRequestById = path.match(/^\/api\/schema\/requests\/([^/]+)$/);
+      if (schemaRequestById && method === "GET") {
+        const request = schemaRequests.get(decodeURIComponent(schemaRequestById[1]));
+        if (!request) return json({ error: "not found" }, 404);
+        return json({ request });
+      }
+
+      const approveMatch = path.match(/^\/api\/schema\/requests\/([^/]+)\/approve$/);
+      if (approveMatch && method === "POST") {
+        const body = await readBody<{ remember?: boolean }>(req);
+        const request = await approveSchemaRequest(decodeURIComponent(approveMatch[1]), body.remember === true);
+        return json({ request });
+      }
+
+      const rejectMatch = path.match(/^\/api\/schema\/requests\/([^/]+)\/reject$/);
+      if (rejectMatch && method === "POST") {
+        const request = rejectSchemaRequest(decodeURIComponent(rejectMatch[1]));
+        return json({ request });
       }
 
       // -- Apps --
@@ -257,13 +424,7 @@ const server = Bun.serve({
         const app = registry.apps.get(appId);
         if (!app) return json({ error: "app not found" }, 404);
         try {
-          const files: Record<string, string> = {};
-          const entries = await readdir(app.dir);
-          for (const entry of entries) {
-            const content = await readFile(join(app.dir, entry), "utf8");
-            files[entry] = content;
-          }
-          return json(files);
+          return json(await readAppFiles(app.dir));
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           return json({ error: message }, 500);
@@ -292,9 +453,33 @@ const server = Bun.serve({
         };
         await writeFile(join(appDir, "manifest.json"), JSON.stringify(manifest, null, 2));
         await writeFile(
+          join(appDir, "package.json"),
+          JSON.stringify({
+            name: `adiabatic-app-${id}`,
+            version: "0.1.0",
+            type: "module",
+            scripts: { dev: "vite" },
+            dependencies: {
+              react: "^19.0.0",
+              "react-dom": "^19.0.0",
+            },
+            devDependencies: {
+              "@vitejs/plugin-react": "^4.0.0",
+              typescript: "^5.7.0",
+              vite: "^6.0.0",
+            },
+          }, null, 2) + "\n",
+        );
+        await writeFile(
           join(appDir, "index.tsx"),
           `// ${name} — app entry point\nimport React from "react";\n\nexport default function ${name.replace(/[^a-zA-Z0-9]/g, "")}() {\n  return <div>${name}</div>;\n}\n`,
         );
+        await writeFile(join(appDir, "adiabatic-system.d.ts"), ADIABATIC_SYSTEM_DTS);
+        try {
+          await Bun.spawn(["git", "init"], { cwd: appDir }).exited;
+        } catch (err) {
+          console.warn(`[adiabatic] Could not initialize git for ${id}:`, err);
+        }
 
         // Reload registry
         registry = await loadApps(appsDir);
@@ -307,31 +492,20 @@ const server = Bun.serve({
         const appId = decodeURIComponent(fileMatch[1]);
         const filename = decodeURIComponent(fileMatch[2]);
 
-        // Path traversal protection
-        if (filename.includes("..") || filename.includes("/")) {
-          return json({ error: "Invalid filename" }, 400);
-        }
-
         const app = registry.apps.get(appId);
         if (!app) return json({ error: "app not found" }, 404);
 
         const body = await readBody<{ content: string }>(req);
-        await writeFile(join(app.dir, filename), body.content);
+        const filePath = resolveAppFile(app.dir, filename);
+        await mkdir(dirname(filePath), { recursive: true });
+        await writeFile(filePath, body.content);
 
         // Reload registry if manifest was modified
-        if (filename === "manifest.json") {
+        if (filename === "manifest.json" || filename === "package.json") {
           registry = await loadApps(appsDir);
         }
 
         return json({ ok: true });
-      }
-
-      // -- Render (MDX → compiled JS) --
-      if (path === "/api/render" && method === "POST") {
-        const body = await readBody<{ mdx: string }>(req);
-        const result = await renderMDX(body.mdx);
-        if (result.error) return json({ error: result.error }, 400);
-        return json({ code: result.code });
       }
 
       // -- Shell (static SPA) --
@@ -363,7 +537,7 @@ const server = Bun.serve({
       const { cwd } = ws.data as { cwd: string };
 
       // Terminal I/O logger
-      const logger = new TerminalLogger(guard);
+      const logger = new TerminalLogger(guard.withSource("system:terminal"));
       (ws as any)._logger = logger;
       logger.open();
 

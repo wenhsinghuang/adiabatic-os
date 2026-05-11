@@ -33,6 +33,33 @@ describe("App Loader", () => {
     expect(registry.getPermissions("test-app")).toEqual(["my_table"]);
   });
 
+  test("supports src/App.tsx entry point", async () => {
+    const appDir = join(appsDir, "modern");
+    mkdirSync(join(appDir, "src"), { recursive: true });
+    writeFileSync(
+      join(appDir, "manifest.json"),
+      JSON.stringify({ id: "modern", name: "Modern", permissions: { write: [] } }),
+    );
+    writeFileSync(join(appDir, "src/App.tsx"), "export default function App() { return null; }");
+
+    const registry = await loadApps(appsDir);
+    expect(registry.apps.get("modern")?.entryPoint).toContain("src/App.tsx");
+  });
+
+  test("prefers index.tsx when present", async () => {
+    const appDir = join(appsDir, "simple");
+    mkdirSync(join(appDir, "src"), { recursive: true });
+    writeFileSync(
+      join(appDir, "manifest.json"),
+      JSON.stringify({ id: "simple", name: "Simple", permissions: { write: [] } }),
+    );
+    writeFileSync(join(appDir, "src/App.tsx"), "export default function App() { return null; }");
+    writeFileSync(join(appDir, "index.tsx"), "export default function Index() { return null; }");
+
+    const registry = await loadApps(appsDir);
+    expect(registry.apps.get("simple")?.entryPoint).toContain("index.tsx");
+  });
+
   test("hasWritePermission checks correctly", async () => {
     const appDir = join(appsDir, "focus");
     mkdirSync(appDir);

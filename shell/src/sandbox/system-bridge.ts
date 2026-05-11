@@ -10,7 +10,6 @@ export interface System {
   writeDoc(id: string, content: string, metadata?: Record<string, unknown>): Promise<void>;
   deleteDoc(id: string): Promise<void>;
   writeEvent(event: {
-    source: string;
     type: string;
     startedAt: number;
     endedAt?: number;
@@ -65,7 +64,6 @@ export function createSystemBridge(appId: string): System {
     },
 
     async writeEvent(event: {
-      source: string;
       type: string;
       startedAt: number;
       endedAt?: number;

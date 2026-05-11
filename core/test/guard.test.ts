@@ -55,6 +55,11 @@ describe("Guard", () => {
 
     const payload = JSON.parse(events[0].payload);
     expect(payload.doc_id).toBe("test/doc");
+    expect(payload.patch).toContain("--- /dev/null");
+    expect(payload.patch).toContain("+++ b/test/doc");
+    expect(payload.patch).toContain("+hello");
+    expect(payload.before).toBeUndefined();
+    expect(payload.after).toBeUndefined();
     expect(payload.bytes).toBeGreaterThan(0);
   });
 
@@ -96,9 +101,9 @@ describe("Guard", () => {
 
   // -- writeEvent --
 
-  test("writeEvent inserts D0 event", () => {
-    const id = guard.writeEvent({
-      source: "connector:oura",
+  test("writeEvent injects Guard source", () => {
+    const connectorGuard = guard.withSource("connector:oura");
+    const id = connectorGuard.writeEvent({
       type: "sleep.recorded",
       startedAt: Date.now() - 28800000,
       endedAt: Date.now(),
@@ -116,21 +121,99 @@ describe("Guard", () => {
 
   // -- write (D2) --
 
-  test("write creates D2 table and auto-logs D0", () => {
-    guard.write("CREATE TABLE IF NOT EXISTS focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
+  test("write runs DML and auto-logs D0", () => {
+    db.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
     guard.write("INSERT INTO focus_sessions (id, duration) VALUES (?, ?)", ["s1", 3600]);
 
     const rows = guard.query("SELECT * FROM focus_sessions") as any[];
     expect(rows.length).toBe(1);
     expect(rows[0].duration).toBe(3600);
 
-    // Should have D0 events for both DDL and DML
     const events = guard.query(
       "SELECT * FROM events WHERE source = 'system:test' ORDER BY created_at"
     ) as any[];
     const types = events.map((e: any) => e.type);
-    expect(types).toContain("ddl.promote");
     expect(types).toContain("d2.insert");
+
+    const payload = JSON.parse(events.at(-1).payload);
+    expect(payload.op).toBe("insert");
+    expect(payload.table).toBe("focus_sessions");
+    expect(payload.primary_key).toEqual([{ id: "s1" }]);
+    expect(payload.before).toBeNull();
+    expect(payload.after).toEqual([{ id: "s1", duration: 3600 }]);
+    expect(payload.affected_rows).toBe(1);
+    expect(payload.schema_version).toBe("0.1");
+    expect(payload.sql).toBe("INSERT INTO focus_sessions (id, duration) VALUES (?, ?)");
+    expect(payload.params).toEqual(["s1", 3600]);
+  });
+
+  test("write logs update and delete snapshots", () => {
+    db.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
+    guard.write("INSERT INTO focus_sessions (id, duration) VALUES (?, ?)", ["s1", 3600]);
+    guard.write("UPDATE focus_sessions SET duration = ? WHERE id = ?", [4200, "s1"]);
+    guard.write("DELETE FROM focus_sessions WHERE id = ?", ["s1"]);
+
+    const events = guard.query(
+      "SELECT type, payload FROM events WHERE type LIKE 'd2.%' ORDER BY created_at"
+    ) as any[];
+    expect(events.map((event) => event.type)).toEqual(["d2.insert", "d2.update", "d2.delete"]);
+
+    const update = JSON.parse(events[1].payload);
+    expect(update.op).toBe("update");
+    expect(update.before).toEqual([{ id: "s1", duration: 3600 }]);
+    expect(update.after).toEqual([{ id: "s1", duration: 4200 }]);
+
+    const deleted = JSON.parse(events[2].payload);
+    expect(deleted.op).toBe("delete");
+    expect(deleted.primary_key).toEqual([{ id: "s1" }]);
+    expect(deleted.before).toEqual([{ id: "s1", duration: 4200 }]);
+    expect(deleted.after).toBeNull();
+  });
+
+  test("write enforces app table grants", () => {
+    db.run("CREATE TABLE allowed_table (id TEXT PRIMARY KEY)");
+    db.run("CREATE TABLE denied_table (id TEXT PRIMARY KEY)");
+    const appGuard = guard.withSource("app:demo", {
+      canWriteTable: (table) => table === "allowed_table",
+    });
+
+    appGuard.write("INSERT INTO allowed_table (id) VALUES (?)", ["ok"]);
+    expect(() =>
+      appGuard.write("INSERT INTO denied_table (id) VALUES (?)", ["no"])
+    ).toThrow("is not allowed to write table");
+  });
+
+  test("write rejects schema operations", () => {
+    expect(() =>
+      guard.write("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY)")
+    ).toThrow("system.write only supports INSERT, UPDATE, DELETE");
+    expect(() => guard.write("DROP TABLE focus_sessions")).toThrow(
+      "system.write only supports INSERT, UPDATE, DELETE",
+    );
+    expect(() => guard.write("ALTER TABLE focus_sessions ADD COLUMN x TEXT")).toThrow(
+      "system.write only supports INSERT, UPDATE, DELETE",
+    );
+    expect(() => guard.write("PRAGMA table_info(focus_sessions)")).toThrow(
+      "system.write only supports INSERT, UPDATE, DELETE",
+    );
+    expect(() => guard.write("ATTACH DATABASE 'x' AS other")).toThrow(
+      "system.write only supports INSERT, UPDATE, DELETE",
+    );
+  });
+
+  test("write rejects multiple statements", () => {
+    db.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
+    expect(() =>
+      guard.write("INSERT INTO focus_sessions (id, duration) VALUES ('s1', 1); DELETE FROM focus_sessions")
+    ).toThrow("one DML statement");
+  });
+
+  test("write allows semicolons inside SQL string literals", () => {
+    db.run("CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT)");
+    guard.write("INSERT INTO notes (id, body) VALUES (?, 'one; two')", ["n1"]);
+
+    const row = guard.queryOne("SELECT body FROM notes WHERE id = ?", ["n1"]) as any;
+    expect(row.body).toBe("one; two");
   });
 
   test("write rejects system table writes", () => {
@@ -149,7 +232,67 @@ describe("Guard", () => {
   });
 
   test("write rejects unsupported operations", () => {
-    expect(() => guard.write("SELECT * FROM events")).toThrow("unsupported write operation");
+    expect(() => guard.write("SELECT * FROM events")).toThrow("system.write only supports");
+  });
+
+  // -- promote / demote --
+
+  test("promote and demote require approval", () => {
+    expect(() => guard.promote("CREATE TABLE memories (id TEXT PRIMARY KEY)")).toThrow(
+      "requires approval",
+    );
+    expect(() => guard.demote("DROP TABLE memories")).toThrow("requires approval");
+  });
+
+  test("promote accepts allowlisted DDL and logs schema audit", () => {
+    guard.promote([
+      "CREATE TABLE memories (id TEXT PRIMARY KEY, body TEXT)",
+      "CREATE INDEX memories_body_idx ON memories (body)",
+      "ALTER TABLE memories ADD COLUMN source TEXT",
+    ], { approved: true, requestedBy: "test" });
+
+    const table = guard.queryOne(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memories'"
+    ) as any;
+    expect(table.name).toBe("memories");
+
+    const events = guard.query("SELECT * FROM events WHERE type = 'ddl.promote'") as any[];
+    expect(events.length).toBe(1);
+    const payload = JSON.parse(events[0].payload);
+    expect(payload.ddl.length).toBe(3);
+    expect(payload.before_schema).toBeTruthy();
+    expect(payload.after_schema.tables.some((item: any) => item.name === "memories")).toBe(true);
+    expect(payload.requested_by).toBe("test");
+  });
+
+  test("demote accepts allowlisted DDL and logs schema audit", () => {
+    guard.promote("CREATE TABLE scratch (id TEXT PRIMARY KEY)", { approved: true });
+    guard.demote("DROP TABLE scratch", { approved: true, requestedBy: "cleanup" });
+
+    const table = guard.queryOne(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scratch'"
+    );
+    expect(table).toBeNull();
+
+    const events = guard.query("SELECT * FROM events WHERE type = 'ddl.demote'") as any[];
+    expect(events.length).toBe(1);
+    const payload = JSON.parse(events[0].payload);
+    expect(payload.ddl).toEqual(["DROP TABLE scratch"]);
+    expect(payload.requested_by).toBe("cleanup");
+  });
+
+  test("promote and demote reject disallowed DDL and system tables", () => {
+    expect(() => guard.promote("DROP TABLE docs", { approved: true })).toThrow("system table");
+    expect(() => guard.promote("ALTER TABLE events ADD COLUMN nope TEXT", { approved: true })).toThrow(
+      "system table",
+    );
+    expect(() => guard.promote("CREATE INDEX docs_content_idx ON docs (content)", { approved: true })).toThrow(
+      "system table",
+    );
+    expect(() => guard.demote("CREATE TABLE nope (id TEXT)", { approved: true })).toThrow(
+      "demote DDL is not allowed",
+    );
+    expect(() => guard.demote("DROP TABLE docs", { approved: true })).toThrow("system table");
   });
 
   // -- query --

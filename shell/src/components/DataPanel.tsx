@@ -144,7 +144,7 @@ export function DataPanel({ onOpenTable, onOpenActivity }: DataPanelProps) {
             <div className={styles.empty}>
               No tables yet.
               <br />
-              Apps create tables via system.write()
+              Tables appear after schema promotion
             </div>
           ) : (
             tables.map((table) => {

@@ -88,9 +88,34 @@
 }
 
 .appName {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.runBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.appItem:hover .runBtn {
+  opacity: 1;
+}
+
+.runBtn:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .fileItem {

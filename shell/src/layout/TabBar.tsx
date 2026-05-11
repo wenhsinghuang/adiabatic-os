@@ -1,4 +1,4 @@
-// TabBar — document and app file tabs with source-toggle icon per tab.
+// TabBar — document, app, and data tabs.
 
 import type { Tab } from "../hooks/useTabs";
 import styles from "./TabBar.module.css";
@@ -8,11 +8,11 @@ interface TabBarProps {
   activeTabId: string | null;
   onSelect: (tabId: string) => void;
   onClose: (tabId: string) => void;
-  onToggleSource: (tabId: string) => void;
 }
 
 function getTabLabel(tab: Tab): string {
   if (tab.type === "appFile" && tab.filename) return tab.filename;
+  if (tab.type === "appRuntime" && tab.appId) return tab.appId;
   if (tab.type === "table" && tab.tableName) return tab.tableName;
   if (tab.type === "activity") return "Activity";
   return tab.docId.split("/").pop() || tab.docId;
@@ -23,7 +23,6 @@ export function TabBar({
   activeTabId,
   onSelect,
   onClose,
-  onToggleSource,
 }: TabBarProps) {
   if (tabs.length === 0) {
     return <div className={styles.tabBar} />;
@@ -34,7 +33,6 @@ export function TabBar({
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         const label = getTabLabel(tab);
-        const showSourceToggle = tab.type === "doc";
 
         return (
           <div
@@ -43,20 +41,6 @@ export function TabBar({
             onClick={() => onSelect(tab.id)}
           >
             <span className={styles.label}>{label}</span>
-            {showSourceToggle && (
-              <button
-                className={`${styles.icon} ${tab.showSource ? styles.sourceActive : ""}`}
-                title={tab.showSource ? "Show rendered" : "Show source"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleSource(tab.id);
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M5.854 4.146a.5.5 0 0 1 0 .708L2.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0zm4.292 0a.5.5 0 0 0 0 .708L13.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0z" />
-                </svg>
-              </button>
-            )}
             <button
               className={styles.close}
               title="Close"

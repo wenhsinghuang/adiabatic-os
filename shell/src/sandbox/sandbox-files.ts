@@ -1,5 +1,5 @@
 // Files mounted inside the WebContainer filesystem.
-// These are the sandbox's internal scaffold: package.json, bundler, bridge server.
+// The container serves app pages and proxies system calls to core Guard.
 
 import type { FileSystemTree } from "@webcontainer/api";
 
@@ -11,7 +11,12 @@ export const SANDBOX_FILES: FileSystemTree = {
           name: "adiabatic-sandbox",
           type: "module",
           dependencies: {
+            "@vitejs/plugin-react": "^4.0.0",
             esbuild: "^0.24.0",
+            react: "^19.0.0",
+            "react-dom": "^19.0.0",
+            typescript: "^5.7.0",
+            vite: "^6.0.0",
           },
         },
         null,
@@ -20,69 +25,111 @@ export const SANDBOX_FILES: FileSystemTree = {
     },
   },
 
-  // Shim modules — resolve React imports to host-provided globals at bundle time.
-  // esbuild alias maps "react" → "./shims/react.js" etc., so the output
-  // has no bare module specifiers and can be directly imported via blob URL.
   shims: {
     directory: {
-      "react.js": {
+      "system.js": {
         file: {
-          contents: `const R = globalThis.__ADIABATIC_REACT__; export default R; export const { useState, useEffect, useRef, useCallback, useMemo, useContext, useReducer, useLayoutEffect, createContext, createElement, Fragment, forwardRef, memo, lazy, Suspense, Component, PureComponent, Children, cloneElement, isValidElement, createRef } = R;`,
-        },
-      },
-      "react-dom.js": {
-        file: {
-          contents: `const RD = globalThis.__ADIABATIC_REACT_DOM__; export default RD; export const { createRoot, hydrateRoot, flushSync, createPortal } = RD;`,
-        },
-      },
-      "jsx-runtime.js": {
-        file: {
-          contents: `const J = globalThis.__ADIABATIC_JSX_RUNTIME__; export const { jsx, jsxs, Fragment } = J;`,
+          contents: `
+async function call(method, body) {
+  const res = await fetch("/system/" + method, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "system." + method + " failed");
+  return data;
+}
+
+export const system = {
+  query(sql, params) {
+    return call("query", { sql, params });
+  },
+  write(sql, params) {
+    return call("write", { sql, params });
+  },
+  writeDoc(id, content, metadata) {
+    return call("writeDoc", { id, content, metadata });
+  },
+  deleteDoc(id) {
+    return call("deleteDoc", { id });
+  },
+  writeEvent(event) {
+    return call("writeEvent", event);
+  },
+};
+
+export default system;
+`,
         },
       },
     },
   },
 
-  // Bundler — takes each app in /apps/ and produces /bundles/{appId}.js
-  // React is resolved to shim modules via esbuild alias (no bare specifiers in output).
   "bundler.js": {
     file: {
       contents: `
 import { build } from "esbuild";
-import { readdirSync, existsSync, mkdirSync } from "fs";
-import { resolve } from "path";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
+import { dirname, resolve } from "path";
 
 const APPS_DIR = "./apps";
-const BUNDLES_DIR = "./bundles";
-const targetApp = process.argv[2] || null; // optional: bundle single app
+const RUNTIME_DIR = "./runtime";
+const targetApp = process.argv[2] || null;
 
-if (!existsSync(BUNDLES_DIR)) mkdirSync(BUNDLES_DIR, { recursive: true });
+if (!existsSync(RUNTIME_DIR)) mkdirSync(RUNTIME_DIR, { recursive: true });
 
 let apps;
 try {
-  apps = readdirSync(APPS_DIR);
+  apps = readdirSync(APPS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
 } catch {
   console.log("No apps/ directory found.");
   process.exit(0);
 }
 
-if (targetApp) {
-  apps = apps.filter((a) => a === targetApp);
-}
+if (targetApp) apps = apps.filter((appId) => appId === targetApp);
 
-// Resolve React imports to shim modules that read from host globals
-const shimAlias = {
-  "react": resolve("./shims/react.js"),
-  "react-dom": resolve("./shims/react-dom.js"),
-  "react/jsx-runtime": resolve("./shims/jsx-runtime.js"),
+const alias = {
+  "@adiabatic/system": resolve("./shims/system.js"),
 };
 
+function findEntry(appId) {
+  const candidates = [
+    APPS_DIR + "/" + appId + "/index.tsx",
+    APPS_DIR + "/" + appId + "/src/App.tsx",
+    APPS_DIR + "/" + appId + "/src/main.tsx",
+  ];
+  return candidates.find((file) => existsSync(file)) || null;
+}
+
 for (const appId of apps) {
-  const entry = APPS_DIR + "/" + appId + "/index.tsx";
-  if (!existsSync(entry)) {
-    console.log("Skip " + appId + ": no index.tsx");
+  const appEntry = findEntry(appId);
+  if (!appEntry) {
+    console.log("Skip " + appId + ": no app entry point");
     continue;
   }
+
+  const entry = RUNTIME_DIR + "/" + appId + ".entry.tsx";
+  mkdirSync(dirname(entry), { recursive: true });
+  writeFileSync(entry, \`
+import * as React from "react";
+import { createRoot } from "react-dom/client";
+import * as AppModule from "../\${appEntry}";
+
+const Component = AppModule.default || Object.values(AppModule).find((value) => typeof value === "function");
+const root = document.getElementById("root");
+
+if (!root) {
+  throw new Error("Missing #root");
+}
+if (!Component) {
+  root.textContent = "App has no default export or function export.";
+} else {
+  createRoot(root).render(React.createElement(Component));
+}
+\`);
 
   try {
     await build({
@@ -90,29 +137,20 @@ for (const appId of apps) {
       bundle: true,
       format: "esm",
       target: "es2022",
-      outfile: BUNDLES_DIR + "/" + appId + ".js",
-      alias: shimAlias,
+      outfile: RUNTIME_DIR + "/" + appId + ".js",
+      alias,
       jsx: "automatic",
       logLevel: "warning",
     });
-    console.log("Bundled: " + appId);
+    console.log("Bundled app page: " + appId);
   } catch (err) {
     console.error("Bundle failed for " + appId + ":", err.message);
   }
 }
-
-console.log("Bundler done.");
 `,
     },
   },
 
-  // Bridge server — serves two things:
-  // 1. GET /bundles/{appId}.js — bundled app code for dynamic import
-  // 2. POST /system/{method} — proxy to core Guard (system.* bridge)
-  //
-  // Components loaded in the host page call system.* via this server,
-  // which forwards to core. This ensures all system calls route through
-  // the sandbox (app identity is enforced here).
   "bridge-server.js": {
     file: {
       contents: `
@@ -122,71 +160,103 @@ import { existsSync } from "fs";
 
 const CORE_URL = "http://localhost:3000";
 const PORT = 4000;
+const APP_ID_HEADER = "X-Adiabatic-App-Id";
+
+function send(res, status, body, headers = {}) {
+  res.writeHead(status, headers);
+  res.end(body);
+}
+
+function appIdFromReferer(req) {
+  const referer = req.headers.referer;
+  if (!referer) return null;
+  try {
+    const url = new URL(referer);
+    const match = url.pathname.match(/^\\/apps\\/([^/]+)\\//);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
 
 const server = createServer(async (req, res) => {
-  // CORS + cross-origin isolation support
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-App-Id");
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
-
   const url = new URL(req.url, "http://localhost:" + PORT);
 
-  // Serve bundled app code
-  if (req.method === "GET" && url.pathname.startsWith("/bundles/")) {
-    const filename = "./bundles/" + url.pathname.slice("/bundles/".length);
-    if (!existsSync(filename)) {
-      res.writeHead(404); res.end("Not found"); return;
-    }
-    const code = await readFile(filename, "utf8");
-    res.setHeader("Content-Type", "application/javascript");
-    res.writeHead(200);
-    res.end(code);
-    return;
+  if (req.method === "GET" && url.pathname.startsWith("/apps/")) {
+    const match = url.pathname.match(/^\\/apps\\/([^/]+)\\/?$/);
+    if (!match) return send(res, 404, "Not found");
+    const appId = decodeURIComponent(match[1]);
+    const bundle = "./runtime/" + appId + ".js";
+    if (!existsSync(bundle)) return send(res, 404, "App bundle not found");
+    const html = \`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>\${appId}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/runtime/\${encodeURIComponent(appId)}.js"></script>
+  </body>
+</html>\`;
+    return send(res, 200, html, { "Content-Type": "text/html" });
   }
 
-  // System bridge: proxy to core Guard
-  // POST /system/query  → POST core/api/query
-  // POST /system/write  → POST core/api/write
-  // POST /system/docs   → POST core/api/docs
-  // etc.
-  if (req.method === "POST" && url.pathname.startsWith("/system/")) {
-    const method = url.pathname.slice("/system/".length);
-    const appId = req.headers["x-app-id"] || "unknown";
+  if (req.method === "GET" && url.pathname.startsWith("/runtime/")) {
+    const filename = "./runtime/" + url.pathname.slice("/runtime/".length);
+    if (!existsSync(filename)) return send(res, 404, "Not found");
+    const code = await readFile(filename, "utf8");
+    return send(res, 200, code, { "Content-Type": "application/javascript" });
+  }
 
+  if (req.method === "POST" && url.pathname.startsWith("/system/")) {
+    const appId = appIdFromReferer(req);
+    if (!appId) {
+      return send(res, 403, JSON.stringify({ error: "Missing app identity" }), { "Content-Type": "application/json" });
+    }
+
+    const method = url.pathname.slice("/system/".length);
     let body = "";
     for await (const chunk of req) body += chunk;
 
-    // Map system methods to core API endpoints
+    let coreMethod = "POST";
     let corePath;
     switch (method) {
-      case "query":     corePath = "/api/query"; break;
-      case "write":     corePath = "/api/write"; break;
-      case "writeDoc":  corePath = "/api/docs"; break;
+      case "query": corePath = "/api/query"; break;
+      case "write": corePath = "/api/write"; break;
+      case "writeDoc": corePath = "/api/docs"; break;
       case "writeEvent": corePath = "/api/events"; break;
+      case "deleteDoc": {
+        const parsed = body ? JSON.parse(body) : {};
+        if (!parsed.id) return send(res, 400, JSON.stringify({ error: "deleteDoc requires id" }), { "Content-Type": "application/json" });
+        coreMethod = "DELETE";
+        corePath = "/api/docs/" + encodeURIComponent(parsed.id);
+        body = "";
+        break;
+      }
       default:
-        res.writeHead(400); res.end(JSON.stringify({ error: "Unknown method: " + method })); return;
+        return send(res, 400, JSON.stringify({ error: "Unknown method: " + method }), { "Content-Type": "application/json" });
     }
 
     try {
       const coreRes = await fetch(CORE_URL + corePath, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: body,
+        method: coreMethod,
+        headers: { "Content-Type": "application/json", [APP_ID_HEADER]: appId },
+        body: coreMethod === "DELETE" ? undefined : body,
       });
       const data = await coreRes.text();
-      res.writeHead(coreRes.status, { "Content-Type": "application/json" });
-      res.end(data);
+      return send(res, coreRes.status, data, { "Content-Type": "application/json" });
     } catch (err) {
-      res.writeHead(502);
-      res.end(JSON.stringify({ error: "Core unreachable: " + err.message }));
+      return send(res, 502, JSON.stringify({ error: "Core unreachable: " + err.message }), { "Content-Type": "application/json" });
     }
-    return;
   }
 
-  res.writeHead(404);
-  res.end("Not found");
+  send(res, 404, "Not found");
 });
 
 server.listen(PORT, () => {
@@ -196,13 +266,6 @@ server.listen(PORT, () => {
     },
   },
 
-  // App directory (initially empty, populated at runtime)
-  apps: {
-    directory: {},
-  },
-
-  // Bundles directory (created by bundler)
-  bundles: {
-    directory: {},
-  },
+  apps: { directory: {} },
+  runtime: { directory: {} },
 };

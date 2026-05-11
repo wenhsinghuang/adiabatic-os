@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Adiabatic OS v0.1 Architecture Report</title>
+  <style>
+    :root {
+      --bg: #f6f4ef;
+      --panel: #fffdfa;
+      --ink: #22201c;
+      --muted: #676059;
+      --line: #d9d2c7;
+      --accent: #2f6f73;
+      --accent-2: #7a4e24;
+      --good: #2f7350;
+      --warn: #996a1f;
+      --danger: #9b3535;
+      --code: #1f2528;
+      --code-bg: #eef1ee;
+      --shadow: 0 18px 48px rgba(45, 38, 28, 0.10);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.55;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+      gap: 24px;
+      align-items: end;
+      padding: 32px 0 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 42px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 21px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 12px; }
+
+    .subtitle {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 17px;
+      max-width: 760px;
+    }
+
+    .status-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .status-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status-row strong { color: var(--ink); }
+
+    section {
+      margin-top: 28px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: var(--shadow);
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    .three-col {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 15px;
+      background: #fbfaf7;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e5eee9;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .tag.warn {
+      background: #f2e7d2;
+      color: var(--warn);
+    }
+
+    .tag.danger {
+      background: #f2d9d6;
+      color: var(--danger);
+    }
+
+    .diagram {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .flow {
+      min-width: 820px;
+      display: grid;
+      grid-template-columns: 1fr 42px 1fr 42px 1fr 42px 1fr;
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .flow.wide {
+      grid-template-columns: 1fr 42px 1fr 42px 1fr;
+      min-width: 760px;
+    }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+      min-height: 112px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .box .label {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--ink);
+    }
+
+    .box .body {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-2);
+      font-weight: 800;
+      font-size: 24px;
+    }
+
+    .layer-map {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 96px 1fr 1fr;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .layer-name {
+      font-weight: 900;
+      font-size: 20px;
+      color: var(--accent);
+    }
+
+    .layer-title {
+      font-weight: 800;
+      margin-bottom: 2px;
+    }
+
+    .layer-copy {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      color: var(--code);
+      background: var(--code-bg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      overflow: auto;
+      border-radius: 8px;
+      background: #202427;
+      color: #f0f3ef;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 20px;
+    }
+
+    li { margin: 6px 0; }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      padding: 12px 14px;
+      background: #eef5f1;
+      border-radius: 0 8px 8px 0;
+      color: #263f39;
+      margin-top: 12px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .footer {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 860px) {
+      .page { padding: 20px 14px 40px; }
+      header,
+      .two-col,
+      .three-col {
+        grid-template-columns: 1fr;
+      }
+      h1 { font-size: 32px; }
+      section { padding: 16px; }
+      .layer {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div>
+        <div class="tag">v0.1 current architecture</div>
+        <h1>Adiabatic OS 是什麼、現在怎麼跑</h1>
+        <p class="subtitle">
+          這份 report 把目前實作整理成一張圖：SQLite/D0 是 source of truth，
+          <code>pages/</code> 是 working tree mirror，<code>apps/</code> 是可 vibe-code 的獨立 app，
+          所有資料 mutation 經過 Guard。
+        </p>
+      </div>
+      <aside class="status-card">
+        <h2>目前狀態</h2>
+        <div class="status-grid">
+          <div class="status-row"><span>Core tests</span><strong>48 passed</strong></div>
+          <div class="status-row"><span>Shell tests</span><strong>41 passed</strong></div>
+          <div class="status-row"><span>Shell build</span><strong>passed</strong></div>
+          <div class="status-row"><span>Local patch</span><strong>產生成功</strong></div>
+        </div>
+      </aside>
+    </header>
+
+    <section>
+      <h2>一句話模型</h2>
+      <div class="callout">
+        使用者累積的是 append-only event log；app、pages、D2 tables、shell UI 都只是這個 log 上方的操作面或 derived/read model。
+      </div>
+      <div class="three-col" style="margin-top: 16px;">
+        <div class="card">
+          <h3>資料主權</h3>
+          <p class="small">workspace 在本機；OS update 和 app code update 不應該動到使用者資料。</p>
+        </div>
+        <div class="card">
+          <h3>原生 primitives</h3>
+          <p class="small">保留 SQL、DDL、Git、filesystem、React/Node，不用自訂 app DSL。</p>
+        </div>
+        <div class="card">
+          <h3>安全邊界</h3>
+          <p class="small">不信任 app；write path 由 runtime/bridge/Guard 注入身份、檢查 grants、寫 D0 audit。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Workspace Layout</h2>
+      <div class="two-col">
+        <div>
+          <p>workspace 是使用者資料所在的 local vault-like directory，但它不是 Git repo 的必要邊界。</p>
+          <pre>workspace/
+├── CLAUDE.md
+├── pages/
+│   └── *.mdx
+├── apps/
+│   └── &lt;app-id&gt;/
+│       ├── .git/
+│       ├── manifest.json
+│       ├── package.json
+│       └── index.tsx
+└── runtime-managed data</pre>
+        </div>
+        <div class="card">
+          <h3>邊界</h3>
+          <ul>
+            <li><code>pages/</code>：D1 working tree mirror，coding agent 可直接改。</li>
+            <li><code>apps/&lt;id&gt;/</code>：每個 app 自己一個 Git repo，管理 code/update/rollback。</li>
+            <li>data 不進 app Git；schema/data mutation 走 Guard。</li>
+            <li>AI-facing docs 不主動說 DB 位置，也不把 DB 當操作面。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>D0 / D1 / D2</h2>
+      <div class="layer-map">
+        <div class="layer">
+          <div class="layer-name">D0</div>
+          <div>
+            <div class="layer-title">Raw event log</div>
+            <div class="layer-copy">append-only、source injected、schema_version required。</div>
+          </div>
+          <div class="layer-copy">真正 source of truth。未來 derive 邏輯變了，可以 replay/rederive。</div>
+        </div>
+        <div class="layer">
+          <div class="layer-name">D1</div>
+          <div>
+            <div class="layer-title">Pages working tree</div>
+            <div class="layer-copy"><code>pages/*.mdx</code> mirror 到 DB docs table。</div>
+          </div>
+          <div class="layer-copy">File -> DB source 是 <code>working-tree:pages</code>。D1 write 存 git-style patch；delete 存 full snapshot。</div>
+        </div>
+        <div class="layer">
+          <div class="layer-name">D2</div>
+          <div>
+            <div class="layer-title">Derived/read-model tables</div>
+            <div class="layer-copy">app 透過 raw SQL DML 寫入。</div>
+          </div>
+          <div class="layer-copy">每次 INSERT/UPDATE/DELETE 產生 CDC-style D0 payload：before/after/primary_key/sql/params。</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Write Path：所有 mutation 都過 Guard</h2>
+      <div class="diagram">
+        <div class="flow">
+          <div class="box">
+            <div class="label">Caller</div>
+            <div class="body">shell、working tree listener、CLI、WebContainer app。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">Runtime identity</div>
+            <div class="body">host/bridge 注入 <code>source</code>，app 不能自己傳。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">Guard</div>
+            <div class="body">檢查 DML/DDL allowlist、system table protection、manifest write grants。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">SQLite + D0 audit</div>
+            <div class="body">mutation 和 audit 在同一個 transaction 內完成。</div>
+          </div>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>API</th><th>允許什麼</th><th>D0 audit</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>writeEvent(event)</code></td>
+            <td>直接寫 D0 event；source 由 Guard 注入。</td>
+            <td>event 本身就是 D0。</td>
+          </tr>
+          <tr>
+            <td><code>writeDoc(id, content)</code></td>
+            <td>upsert D1 doc。</td>
+            <td><code>d1.write</code>，payload 內含 git-style patch。</td>
+          </tr>
+          <tr>
+            <td><code>deleteDoc(id)</code></td>
+            <td>刪 D1 doc。</td>
+            <td><code>d1.delete</code>，payload 內含 full snapshot。</td>
+          </tr>
+          <tr>
+            <td><code>write(sql, params)</code></td>
+            <td>單一 <code>INSERT</code> / <code>UPDATE</code> / <code>DELETE</code>，不可碰 system tables。</td>
+            <td><code>d2.insert</code> / <code>d2.update</code> / <code>d2.delete</code>，CDC-style payload。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Schema Lifecycle：promote / demote</h2>
+      <div class="two-col">
+        <div class="card">
+          <h3>Promote = 增加結構</h3>
+          <ul>
+            <li><code>CREATE TABLE</code></li>
+            <li><code>CREATE INDEX</code></li>
+            <li><code>ALTER TABLE ... ADD COLUMN</code></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Demote = 減少結構</h3>
+          <ul>
+            <li><code>DROP TABLE</code></li>
+            <li><code>DROP INDEX</code></li>
+          </ul>
+        </div>
+      </div>
+      <div class="diagram">
+        <div class="flow wide">
+          <div class="box">
+            <div class="label">CLI / app request</div>
+            <div class="body"><code>adiabatic promote "&lt;ddl&gt;"</code> 或 API request。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">Shell approval</div>
+            <div class="body">default 需要 modal approval；可記住 trusted coding agent。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">Guard transaction</div>
+            <div class="body">dry-run、system table protection、schema snapshot、DDL、D0 audit。</div>
+          </div>
+        </div>
+      </div>
+      <p class="small">
+        這裡保留 raw DDL，不做 ops DSL。Guard 只限制「DDL 類型」和「不能碰 system tables」。
+      </p>
+    </section>
+
+    <section>
+      <h2>App Runtime / Sandbox</h2>
+      <div class="diagram">
+        <div class="flow">
+          <div class="box">
+            <div class="label">App code</div>
+            <div class="body"><code>apps/&lt;id&gt;/index.tsx</code>，普通 React/Node project。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">WebContainer</div>
+            <div class="body">bundle app、serve <code>/apps/&lt;id&gt;/</code>、host bridge server。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">Shell tab</div>
+            <div class="body">載入 WebContainer app URL。app browser page CSP：runtime network default deny。</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box">
+            <div class="label">@adiabatic/system</div>
+            <div class="body">只 call <code>/system/*</code>；bridge 從 referer 推 app id，再轉給 core。</div>
+          </div>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>問題</th><th>目前答案</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>app 能不能直接傳 <code>X-App-Id</code>？</td>
+            <td>不能。bridge 不信任 app header，從 app URL / referer 推導 identity，再給 core <code>X-Adiabatic-App-Id</code>。</td>
+          </tr>
+          <tr>
+            <td>app 能不能任意 network？</td>
+            <td>browser runtime 透過 CSP 限制 <code>connect-src 'self'</code>。完整 connector/ETL network policy deferred。</td>
+          </tr>
+          <tr>
+            <td>coding agent 開發是不是自由？</td>
+            <td>是。它仍然寫普通 React/TS/Node；安全性在 runtime boundary + Guard，不在 app DSL。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>CLI 給 Coding Agent 的最小操作面</h2>
+      <pre>adiabatic query "SELECT * FROM events ORDER BY created_at DESC LIMIT 20"
+adiabatic promote "CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, started_at INTEGER)"
+adiabatic demote "DROP TABLE scratch"</pre>
+      <p class="small">
+        沒有 D1 write CLI；D1 最自然的操作方式是直接改 <code>pages/*.mdx</code>。
+        D2 row writes 主要由 app runtime 的 <code>system.write()</code> 做。
+      </p>
+    </section>
+
+    <section>
+      <h2>Update / Versioning Boundary</h2>
+      <div class="two-col">
+        <div class="card">
+          <h3>OS update</h3>
+          <ul>
+            <li>local patch archive：<code>npm run package:patch</code></li>
+            <li>更新 shell/core/Guard/runtime。</li>
+            <li>workspace path 記在 Electron userData，不因 OS update 重設。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>App update</h3>
+          <ul>
+            <li>每個 app 自己 <code>.git</code>。</li>
+            <li>Git 管 code/update/rollback。</li>
+            <li>data/migration 不進 Git，走 Guard promote/demote。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>已保留的未來改動權</h2>
+      <table>
+        <thead>
+          <tr><th>改動類型</th><th>v0.1 對應策略</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>新增 source / type / payload 欄位</td>
+            <td>D0 payload schema-free；source/type 是 string convention。</td>
+          </tr>
+          <tr>
+            <td>derive 邏輯改掉</td>
+            <td>D0 保留 raw events；D2 是 read model，可以 drop/rebuild。</td>
+          </tr>
+          <tr>
+            <td>D2 schema entropy</td>
+            <td>promote/demote 可增加或減少結構，且 DDL audit 到 D0。</td>
+          </tr>
+          <tr>
+            <td>working tree sync 變複雜</td>
+            <td>D1 exact replay deferred；現在先 patch audit + delete snapshot，未來可接 Yjs。</td>
+          </tr>
+          <tr>
+            <td>OS runtime 更新</td>
+            <td>OS install/runtime 跟 workspace data 分離；local patch archive 不包含使用者 DB。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Deferred / Caveats</h2>
+      <div class="three-col">
+        <div class="card">
+          <div class="tag warn">deferred</div>
+          <h3 style="margin-top: 10px;">Connector framework</h3>
+          <p class="small">browser app network 先靠 CSP 擋；完整 connector/ETL policy 尚未完成。</p>
+        </div>
+        <div class="card">
+          <div class="tag warn">deferred</div>
+          <h3 style="margin-top: 10px;">D1 exact replay</h3>
+          <p class="small">目前是 patch audit + delete snapshot；未來可用 Yjs 或 snapshot strategy。</p>
+        </div>
+        <div class="card">
+          <div class="tag warn">deferred</div>
+          <h3 style="margin-top: 10px;">Remote updater</h3>
+          <p class="small">R2 latest patch、GitHub Actions 打包/upload 還沒納入 v0.1。</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      Generated for Adiabatic OS v0.1 implementation snapshot.
+    </div>
+  </div>
+</body>
+</html>

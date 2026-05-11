@@ -9,9 +9,9 @@
 //   ├── Host page (BlockNote + React)
 //   │   └── dynamic import from WebContainer's server URL
 //   └── WebContainer (WASM sandbox)
-//       ├── apps/*          ← app code mounted here
-//       ├── bridge-server.js ← serves bundles + proxies system.* to core
-//       └── bundles/*       ← esbuild output (ESM for browser)
+//       ├── apps/*           ← app code mounted here
+//       ├── bridge-server.js  ← serves app pages + proxies system.* to core
+//       └── runtime/*         ← esbuild output for app pages
 
 import { WebContainer } from "@webcontainer/api";
 import { SANDBOX_FILES } from "./sandbox-files";
@@ -19,26 +19,45 @@ import type { AppInfo } from "../lib/api";
 
 let instance: WebContainer | null = null;
 let serverUrl: string | null = null;
+let bootPromise: Promise<void> | null = null;
+let bridgePromise: Promise<string> | null = null;
+let runtimePromise: Promise<void> | null = null;
 
 export async function boot(): Promise<void> {
   if (instance) return;
-
-  console.log("[sandbox] Booting WebContainer...");
-  instance = await WebContainer.boot();
-
-  // Mount scaffold files (package.json, bridge-server, bundler)
-  await instance.mount(SANDBOX_FILES);
-
-  // Install dependencies inside the container
-  console.log("[sandbox] Installing sandbox dependencies...");
-  const installProcess = await instance.spawn("npm", ["install"]);
-
-  const installExit = await installProcess.exit;
-  if (installExit !== 0) {
-    throw new Error(`npm install failed with exit code ${installExit}`);
+  if (bootPromise) return bootPromise;
+  if (!globalThis.crossOriginIsolated) {
+    throw new Error(
+      "WebContainer requires cross-origin isolation (COOP/COEP). This embedded browser is not isolated; open the shell in Electron or a browser context that supports it.",
+    );
   }
 
-  console.log("[sandbox] WebContainer ready.");
+  bootPromise = (async () => {
+    console.log("[sandbox] Booting WebContainer...");
+    instance = await WebContainer.boot();
+
+    // Mount scaffold files (package.json, bridge-server, bundler)
+    await instance.mount(SANDBOX_FILES);
+
+    // Install dependencies inside the container
+    console.log("[sandbox] Installing sandbox dependencies...");
+    const installProcess = await instance.spawn("npm", ["install"]);
+
+    const installExit = await installProcess.exit;
+    if (installExit !== 0) {
+      throw new Error(`npm install failed with exit code ${installExit}`);
+    }
+
+    console.log("[sandbox] WebContainer ready.");
+  })();
+
+  try {
+    await bootPromise;
+  } catch (err) {
+    bootPromise = null;
+    instance = null;
+    throw err;
+  }
 }
 
 // Load apps into the WebContainer filesystem and bundle them.
@@ -56,6 +75,10 @@ export async function loadApps(apps: AppInfo[]): Promise<void> {
     // Write app files into /apps/{appId}/
     await instance.fs.mkdir(`/apps/${app.id}`, { recursive: true });
     for (const [filename, content] of Object.entries(files)) {
+      const parts = filename.split("/");
+      if (parts.length > 1) {
+        await instance.fs.mkdir(`/apps/${app.id}/${parts.slice(0, -1).join("/")}`, { recursive: true });
+      }
       await instance.fs.writeFile(`/apps/${app.id}/${filename}`, content);
     }
   }
@@ -83,32 +106,65 @@ export async function loadApps(apps: AppInfo[]): Promise<void> {
 export async function startBridgeServer(): Promise<string> {
   if (!instance) throw new Error("WebContainer not booted");
   if (serverUrl) return serverUrl;
+  if (bridgePromise) return bridgePromise;
 
-  console.log("[sandbox] Starting bridge server...");
-  const serverProcess = await instance.spawn("node", ["bridge-server.js"]);
+  bridgePromise = (async () => {
+    console.log("[sandbox] Starting bridge server...");
+    const serverProcess = await instance!.spawn("node", ["bridge-server.js"]);
 
-  serverProcess.output.pipeTo(
-    new WritableStream({
-      write(chunk) {
-        console.log("[sandbox:bridge]", chunk);
-      },
-    }),
-  );
+    serverProcess.output.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          console.log("[sandbox:bridge]", chunk);
+        },
+      }),
+    );
 
-  // Wait for server-ready event from WebContainer
-  serverUrl = await new Promise<string>((resolve) => {
-    instance!.on("server-ready", (_port, url) => {
-      console.log("[sandbox] Bridge server ready at", url);
-      resolve(url);
+    // Wait for server-ready event from WebContainer
+    serverUrl = await new Promise<string>((resolve) => {
+      instance!.on("server-ready", (_port, url) => {
+        console.log("[sandbox] Bridge server ready at", url);
+        resolve(url);
+      });
     });
-  });
 
-  return serverUrl;
+    return serverUrl;
+  })();
+
+  try {
+    return await bridgePromise;
+  } catch (err) {
+    bridgePromise = null;
+    throw err;
+  }
+}
+
+export async function prepareRuntime(apps: AppInfo[]): Promise<void> {
+  if (serverUrl) return;
+  if (runtimePromise) return runtimePromise;
+
+  runtimePromise = (async () => {
+    await boot();
+    await loadApps(apps);
+    await startBridgeServer();
+  })();
+
+  try {
+    await runtimePromise;
+  } catch (err) {
+    runtimePromise = null;
+    throw err;
+  }
 }
 
 // Get the server URL (after startBridgeServer).
 export function getServerUrl(): string | null {
   return serverUrl;
+}
+
+export function getAppUrl(appId: string): string | null {
+  if (!serverUrl) return null;
+  return `${serverUrl}/apps/${encodeURIComponent(appId)}/`;
 }
 
 // Get the WebContainer instance.
@@ -125,6 +181,10 @@ export async function reloadApp(appId: string): Promise<void> {
 
   const files = (await res.json()) as Record<string, string>;
   for (const [filename, content] of Object.entries(files)) {
+    const parts = filename.split("/");
+    if (parts.length > 1) {
+      await instance.fs.mkdir(`/apps/${appId}/${parts.slice(0, -1).join("/")}`, { recursive: true });
+    }
     await instance.fs.writeFile(`/apps/${appId}/${filename}`, content);
   }
 
@@ -138,4 +198,7 @@ export async function teardown(): Promise<void> {
   instance?.teardown();
   instance = null;
   serverUrl = null;
+  bootPromise = null;
+  bridgePromise = null;
+  runtimePromise = null;
 }

@@ -171,11 +171,53 @@ function DiffBlock({ before, after }: { before: string | null; after: string }) 
   );
 }
 
+function PatchBlock({ patch }: { patch: string }) {
+  const lines = patch.split("\n");
+  return (
+    <div className={styles.diffBlock}>
+      {lines.map((line, i) => {
+        const className =
+          line.startsWith("@@") ? styles.diffSep :
+          line.startsWith("+") && !line.startsWith("+++") ? styles.diffAdd :
+          line.startsWith("-") && !line.startsWith("---") ? styles.diffDel :
+          styles.diffSame;
+        return (
+          <div key={i} className={className}>
+            <span className={styles.diffSign}>
+              {line.startsWith("@@") ? "@" : line[0] === "+" || line[0] === "-" ? line[0] : " "}
+            </span>
+            <span>{line || "\u00A0"}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PayloadDetail({ type, payload, onOpenDoc }: { type: string; payload: Record<string, unknown>; onOpenDoc?: (docId: string) => void }) {
+  // d1.write — new events store a git-style patch.
+  if (type === "d1.write" && typeof payload.patch === "string") {
+    const docId = payload.doc_id as string;
+    return (
+      <div>
+        <div className={styles.detailMeta}>
+          <span
+            className={onOpenDoc ? styles.docLink : undefined}
+            onClick={onOpenDoc ? (e) => { e.stopPropagation(); onOpenDoc(docId); } : undefined}
+          >
+            {docId}
+          </span>
+          <span>{payload.bytes as number} bytes</span>
+        </div>
+        <PatchBlock patch={payload.patch} />
+      </div>
+    );
+  }
+
   // d1.write / d1.delete — show diff
-  if ((type === "d1.write" || type === "d1.delete") && ("before" in payload || "after" in payload)) {
-    const before = payload.before as string | null;
-    const after = (payload.after ?? payload.content ?? "") as string;
+  if ((type === "d1.write" || type === "d1.delete") && ("before" in payload || "after" in payload || "content" in payload)) {
+    const before = (payload.before ?? (type === "d1.delete" ? payload.content : null)) as string | null;
+    const after = (payload.after ?? (type === "d1.delete" ? "" : payload.content ?? "")) as string;
     const docId = payload.doc_id as string;
     return (
       <div>

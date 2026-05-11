@@ -1,12 +1,11 @@
-// useTabs — manages open tabs (docs + app files) with source-toggle state.
+// useTabs — manages open tabs for pages, app files, app runtimes, and data.
 
 import { useState, useCallback } from "react";
 
 export interface Tab {
   id: string; // unique tab identifier
-  type: "doc" | "appFile" | "table" | "activity";
+  type: "doc" | "appFile" | "appRuntime" | "table" | "activity";
   docId: string; // for doc tabs: the doc id; for appFile tabs: `__app:{appId}/{filename}`
-  showSource: boolean;
   appId?: string;
   filename?: string;
   tableName?: string;
@@ -21,11 +20,15 @@ function makeAppFileTabId(appId: string, filename: string): string {
   return `__app:${appId}/${filename}`;
 }
 
+function makeAppRuntimeTabId(appId: string): string {
+  return `__app-runtime:${appId}`;
+}
+
 export function useTabs(initialDocId: string | null = "welcome") {
   const [state, setState] = useState<TabsState>(() => {
     if (!initialDocId) return { tabs: [], activeTabId: null };
     return {
-      tabs: [{ id: initialDocId, type: "doc", docId: initialDocId, showSource: false }],
+      tabs: [{ id: initialDocId, type: "doc", docId: initialDocId }],
       activeTabId: initialDocId,
     };
   });
@@ -37,7 +40,7 @@ export function useTabs(initialDocId: string | null = "welcome") {
         return { ...prev, activeTabId: docId };
       }
       return {
-        tabs: [...prev.tabs, { id: docId, type: "doc", docId, showSource: false }],
+        tabs: [...prev.tabs, { id: docId, type: "doc", docId }],
         activeTabId: docId,
       };
     });
@@ -57,9 +60,30 @@ export function useTabs(initialDocId: string | null = "welcome") {
             id: tabId,
             type: "appFile",
             docId: tabId,
-            showSource: false,
             appId,
             filename,
+          },
+        ],
+        activeTabId: tabId,
+      };
+    });
+  }, []);
+
+  const openAppRuntimeTab = useCallback((appId: string) => {
+    const tabId = makeAppRuntimeTabId(appId);
+    setState((prev) => {
+      const exists = prev.tabs.find((t) => t.id === tabId);
+      if (exists) {
+        return { ...prev, activeTabId: tabId };
+      }
+      return {
+        tabs: [
+          ...prev.tabs,
+          {
+            id: tabId,
+            type: "appRuntime",
+            docId: tabId,
+            appId,
           },
         ],
         activeTabId: tabId,
@@ -93,15 +117,6 @@ export function useTabs(initialDocId: string | null = "welcome") {
     setState((prev) => ({ ...prev, activeTabId: tabId }));
   }, []);
 
-  const toggleSource = useCallback((tabId: string) => {
-    setState((prev) => ({
-      ...prev,
-      tabs: prev.tabs.map((t) =>
-        t.id === tabId ? { ...t, showSource: !t.showSource } : t,
-      ),
-    }));
-  }, []);
-
   const openTableTab = useCallback((tableName: string) => {
     const tabId = `__table:${tableName}`;
     setState((prev) => {
@@ -110,7 +125,7 @@ export function useTabs(initialDocId: string | null = "welcome") {
       return {
         tabs: [
           ...prev.tabs,
-          { id: tabId, type: "table", docId: tabId, showSource: false, tableName },
+          { id: tabId, type: "table", docId: tabId, tableName },
         ],
         activeTabId: tabId,
       };
@@ -125,7 +140,7 @@ export function useTabs(initialDocId: string | null = "welcome") {
       return {
         tabs: [
           ...prev.tabs,
-          { id: tabId, type: "activity", docId: tabId, showSource: false },
+          { id: tabId, type: "activity", docId: tabId },
         ],
         activeTabId: tabId,
       };
@@ -140,10 +155,10 @@ export function useTabs(initialDocId: string | null = "welcome") {
     activeTab,
     openTab,
     openAppFileTab,
+    openAppRuntimeTab,
     openTableTab,
     openActivityTab,
     closeTab,
     setActiveTab,
-    toggleSource,
   };
 }

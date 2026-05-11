@@ -71,6 +71,27 @@ describe("WorkingTree", () => {
     const doc = guard.queryOne("SELECT * FROM docs WHERE id = ?", ["existing"]) as any;
     expect(doc).toBeTruthy();
     expect(doc.content).toBe("# Existing Doc");
+
+    const event = guard.queryOne("SELECT source, type FROM events WHERE type = 'd1.write'") as any;
+    expect(event.source).toBe("working-tree:pages");
+  });
+
+  test("changed .mdx files sync with working-tree source", async () => {
+    mkdirSync(pagesDir, { recursive: true });
+    writeFileSync(join(pagesDir, "edited.mdx"), "# Old");
+    await tree.start();
+    await Bun.sleep(50);
+    writeFileSync(join(pagesDir, "edited.mdx"), "# Edited");
+    await Bun.sleep(500);
+
+    const doc = guard.queryOne("SELECT * FROM docs WHERE id = ?", ["edited"]) as any;
+    expect(doc.content).toBe("# Edited");
+
+    const event = guard.queryOne(
+      "SELECT source, type FROM events WHERE type = 'd1.write' AND payload LIKE ?",
+      ['%"doc_id":"edited"%'],
+    ) as any;
+    expect(event.source).toBe("working-tree:pages");
   });
 
   test("nested .mdx files are loaded with correct doc id", async () => {

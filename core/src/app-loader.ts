@@ -1,4 +1,4 @@
-import { readdir, readFile } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 
 // App Loader — scans apps/ directory, reads manifests, builds registry.
@@ -59,11 +59,12 @@ export async function loadApps(appsDir: string): Promise<AppRegistry> {
       manifest.permissions ??= { write: [] };
       manifest.permissions.write ??= [];
       manifest.components ??= [];
+      const entryPoint = await resolveEntryPoint(appDir);
 
       apps.set(manifest.id, {
         manifest,
         dir: appDir,
-        entryPoint: join(appDir, "index.tsx"),
+        entryPoint,
       });
     } catch {
       console.warn(`[app-loader] Skipping ${entry.name}: could not read manifest.json`);
@@ -71,6 +72,20 @@ export async function loadApps(appsDir: string): Promise<AppRegistry> {
   }
 
   return createRegistry(apps);
+}
+
+async function resolveEntryPoint(appDir: string): Promise<string> {
+  const candidates = [
+    join(appDir, "index.tsx"),
+    join(appDir, "src/App.tsx"),
+    join(appDir, "src/main.tsx"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch {}
+  }
+  return candidates[0];
 }
 
 function createRegistry(apps: Map<string, LoadedApp>): AppRegistry {

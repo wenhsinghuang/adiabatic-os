@@ -5,25 +5,40 @@
 
 import { app, BrowserWindow } from "electron";
 import { spawn, type ChildProcess } from "child_process";
-import { existsSync, cpSync } from "fs";
+import { existsSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
-const WORKSPACE = join(app.getPath("home"), "Adiabatic");
 const TEMPLATE = join(__dirname, "..", "..", "template");
 const CORE_ENTRY = join(__dirname, "..", "..", "core", "src", "index.ts");
 const CORE_PORT = 3000;
 
 let bun: ChildProcess | null = null;
+let workspace = "";
+
+function settingsPath(): string {
+  return join(app.getPath("userData"), "settings.json");
+}
+
+function loadWorkspacePath(): string {
+  const fallback = join(app.getPath("home"), "Adiabatic");
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath(), "utf8")) as { workspacePath?: string };
+    if (settings.workspacePath) return settings.workspacePath;
+  } catch {}
+  mkdirSync(app.getPath("userData"), { recursive: true });
+  writeFileSync(settingsPath(), JSON.stringify({ workspacePath: fallback }, null, 2) + "\n", "utf8");
+  return fallback;
+}
 
 function ensureWorkspace(): void {
-  if (existsSync(WORKSPACE)) return;
-  console.log(`[electron] First launch — copying template to ${WORKSPACE}`);
-  cpSync(TEMPLATE, WORKSPACE, { recursive: true });
+  if (existsSync(workspace)) return;
+  console.log(`[electron] First launch — copying template to ${workspace}`);
+  cpSync(TEMPLATE, workspace, { recursive: true });
 }
 
 function startCore(): void {
   console.log(`[electron] Starting Bun runtime...`);
-  bun = spawn("bun", ["run", CORE_ENTRY, WORKSPACE], {
+  bun = spawn("bun", ["run", CORE_ENTRY, workspace], {
     stdio: "inherit",
   });
   bun.on("exit", (code) => {
@@ -63,6 +78,7 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  workspace = loadWorkspacePath();
   ensureWorkspace();
   startCore();
   await waitForCore();
