@@ -8,6 +8,7 @@ import { ActivityBar, type Panel } from "./layout/ActivityBar";
 import { PagesPanel } from "./components/PagesPanel";
 import { AppsPanel } from "./components/AppsPanel";
 import { DataPanel } from "./components/DataPanel";
+import { WorkspacePanel } from "./components/WorkspacePanel";
 import { SchemaApprovalModal } from "./components/SchemaApprovalModal";
 import { ContentArea } from "./content/ContentArea";
 import { TerminalPanel } from "./content/TerminalPanel";
@@ -28,6 +29,7 @@ export function App() {
   const [coreStatus, setCoreStatus] = useState<CoreStatus>("checking");
   const [coreError, setCoreError] = useState<string | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
+  const [terminalStarted, setTerminalStarted] = useState(false);
   const [activePanel, setActivePanel] = useState<Panel>("pages");
   const [schemaRequest, setSchemaRequest] = useState<SchemaRequest | null>(null);
 
@@ -45,7 +47,11 @@ export function App() {
   } = useTabs(null);
 
   const handleToggleTerminal = useCallback(() => {
-    setShowTerminal((prev) => !prev);
+    setShowTerminal((prev) => {
+      const next = !prev;
+      if (next) setTerminalStarted(true);
+      return next;
+    });
   }, []);
 
   const handleDeleteDoc = useCallback(
@@ -158,8 +164,10 @@ export function App() {
               onOpenApp={openAppRuntimeTab}
               onOpenAppFile={(appId, filename) => openAppFileTab(appId, filename)}
             />
-          ) : (
+          ) : activePanel === "data" ? (
             <DataPanel onOpenTable={openTableTab} onOpenActivity={openActivityTab} />
+          ) : (
+            <WorkspacePanel coreStatus={coreStatus} onCoreChanged={checkCore} />
           )
         }
         tabBar={
@@ -183,7 +191,7 @@ export function App() {
             onOpenActivity={handleOpenActivity}
           />
         }
-        terminal={<TerminalPanel />}
+        terminal={terminalStarted ? <TerminalPanel visible={showTerminal} /> : null}
         showTerminal={showTerminal}
       />
       {schemaRequest && (

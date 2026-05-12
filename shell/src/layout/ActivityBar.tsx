@@ -1,8 +1,8 @@
-// ActivityBar — icon rail on the left (files, apps, terminal toggle).
+// ActivityBar — icon rail on the left (files, apps, settings, terminal toggle).
 
 import styles from "./ActivityBar.module.css";
 
-export type Panel = "pages" | "apps" | "data";
+export type Panel = "pages" | "apps" | "data" | "workspace";
 
 interface ActivityBarProps {
   activePanel: Panel;
@@ -50,6 +50,16 @@ export function ActivityBar({ activePanel, onSelectPanel, showTerminal, onToggle
         </button>
       </div>
       <div className={styles.bottom}>
+        {/* Workspace/settings */}
+        <button
+          className={`${styles.icon} ${activePanel === "workspace" ? styles.active : ""}`}
+          title="Workspace"
+          onClick={() => onSelectPanel("workspace")}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.02-.66-.07-.98l2.11-1.65.2-1-2-3.46-.96-.3-2.49 1a7.4 7.4 0 0 0-1.7-.98L14.2 2h-4.4l-.39 2.63c-.61.24-1.18.56-1.7.98l-2.49-1-.96.3-2 3.46.2 1 2.11 1.65c-.04.32-.07.65-.07.98s.02.66.07.98l-2.11 1.65-.2 1 2 3.46.96.3 2.49-1c.52.4 1.09.73 1.7.98L9.8 22h4.4l.39-2.63c.61-.24 1.18-.56 1.7-.98l2.49 1 .96-.3 2-3.46-.2-1-2.11-1.65zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
+          </svg>
+        </button>
         {/* Terminal toggle */}
         <button
           className={`${styles.icon} ${showTerminal ? styles.active : ""}`}

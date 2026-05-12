@@ -1,6 +1,6 @@
 // TerminalPanel — xterm.js terminal connected to core PTY via WebSocket.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -8,11 +8,23 @@ import styles from "./TerminalPanel.module.css";
 
 const WS_URL = "ws://localhost:3000/api/terminal";
 
-export function TerminalPanel() {
+interface TerminalPanelProps {
+  visible: boolean;
+}
+
+type TerminalStatus = "connecting" | "connected" | "disconnected" | "error";
+
+export function TerminalPanel({ visible }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const visibleRef = useRef(visible);
+  const [status, setStatus] = useState<TerminalStatus>("connecting");
+
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -46,6 +58,7 @@ export function TerminalPanel() {
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
+      setStatus("connected");
       // Send initial size to PTY
       sendResize(ws, term.cols, term.rows);
     };
@@ -59,10 +72,12 @@ export function TerminalPanel() {
     };
 
     ws.onclose = () => {
+      setStatus("disconnected");
       term.writeln("\r\n\x1b[90m~ Terminal disconnected ~\x1b[0m");
     };
 
     ws.onerror = () => {
+      setStatus("error");
       term.writeln("\r\n\x1b[31m~ Connection error ~\x1b[0m");
     };
 
@@ -80,6 +95,7 @@ export function TerminalPanel() {
 
     // Resize observer for fit
     const observer = new ResizeObserver(() => {
+      if (!visibleRef.current) return;
       try { fit.fit(); } catch {}
     });
     observer.observe(containerRef.current);
@@ -94,10 +110,29 @@ export function TerminalPanel() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!visible) return;
+    const id = window.setTimeout(() => {
+      const term = termRef.current;
+      const fit = fitRef.current;
+      const ws = wsRef.current;
+      if (!term || !fit || !ws) return;
+      try {
+        fit.fit();
+        sendResize(ws, term.cols, term.rows);
+        term.focus();
+      } catch {
+        // xterm can throw while the container is being reattached after a resize.
+      }
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [visible]);
+
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
         <span className={styles.title}>Terminal</span>
+        <span className={`${styles.status} ${styles[status]}`}>{status}</span>
       </div>
       <div className={styles.terminal} ref={containerRef} />
     </div>

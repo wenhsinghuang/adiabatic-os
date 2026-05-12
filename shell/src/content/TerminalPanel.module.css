@@ -8,6 +8,7 @@
 .header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 12px;
   height: 28px;
   background: var(--color-bg-tab-bar);
@@ -21,6 +22,25 @@
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.status {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.connected {
+  color: #98c379;
+}
+
+.connecting {
+  color: var(--color-text-muted);
+}
+
+.disconnected,
+.error {
+  color: #e06c75;
 }
 
 .terminal {

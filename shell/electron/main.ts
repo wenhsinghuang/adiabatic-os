@@ -3,7 +3,7 @@
 // - First-launch: copies template/ → ~/Adiabatic/
 // - Opens renderer window
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { spawn, type ChildProcess } from "child_process";
 import { existsSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -30,20 +30,60 @@ function loadWorkspacePath(): string {
   return fallback;
 }
 
-function ensureWorkspace(): void {
-  if (existsSync(workspace)) return;
-  console.log(`[electron] First launch — copying template to ${workspace}`);
-  cpSync(TEMPLATE, workspace, { recursive: true });
+function saveWorkspacePath(nextWorkspace: string): void {
+  mkdirSync(app.getPath("userData"), { recursive: true });
+  writeFileSync(
+    settingsPath(),
+    JSON.stringify({ workspacePath: nextWorkspace }, null, 2) + "\n",
+    "utf8",
+  );
+}
+
+function ensureWorkspace(targetWorkspace = workspace): void {
+  if (existsSync(targetWorkspace)) return;
+  console.log(`[electron] First launch — copying template to ${targetWorkspace}`);
+  cpSync(TEMPLATE, targetWorkspace, { recursive: true });
 }
 
 function startCore(): void {
   console.log(`[electron] Starting Bun runtime...`);
-  bun = spawn("bun", ["run", CORE_ENTRY, workspace], {
+  const child = spawn("bun", ["run", CORE_ENTRY, workspace], {
     stdio: "inherit",
   });
-  bun.on("exit", (code) => {
+  bun = child;
+  child.on("exit", (code) => {
     console.log(`[electron] Bun exited with code ${code}`);
+    if (bun === child) bun = null;
   });
+}
+
+async function stopCore(): Promise<void> {
+  if (!bun) return;
+  const child = bun;
+  bun = null;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, 1500);
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    child.kill();
+  });
+}
+
+async function switchWorkspace(nextWorkspace: string): Promise<string> {
+  const normalized = nextWorkspace.trim();
+  if (!normalized) {
+    throw new Error("Workspace path is required");
+  }
+  if (normalized === workspace) return workspace;
+  await stopCore();
+  workspace = normalized;
+  saveWorkspacePath(workspace);
+  ensureWorkspace(workspace);
+  startCore();
+  await waitForCore();
+  return workspace;
 }
 
 async function waitForCore(retries = 20, delay = 500): Promise<void> {
@@ -66,6 +106,7 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: join(__dirname, "preload.cjs"),
     },
   });
 
@@ -79,6 +120,22 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   workspace = loadWorkspacePath();
+  ipcMain.handle("workspace:get", () => workspace);
+  ipcMain.handle("workspace:set", async (_event, nextWorkspace: string) => {
+    const path = await switchWorkspace(nextWorkspace);
+    return { path };
+  });
+  ipcMain.handle("workspace:choose", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "Choose Adiabatic workspace",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { path: null };
+    }
+    const path = await switchWorkspace(result.filePaths[0]);
+    return { path };
+  });
   ensureWorkspace();
   startCore();
   await waitForCore();

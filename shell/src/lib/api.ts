@@ -14,6 +14,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 // -- Docs --
 
+export interface WorkspaceInfo {
+  path: string;
+}
+
+export function getWorkspace(): Promise<WorkspaceInfo> {
+  return request("/api/workspace");
+}
+
 export interface Doc {
   id: string;
   content: string;

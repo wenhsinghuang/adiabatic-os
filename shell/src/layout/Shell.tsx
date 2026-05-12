@@ -35,6 +35,7 @@ export function Shell({
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [terminalHeight, setTerminalHeight] = useState(250);
   const draggingRef = useRef<"sidebar" | "terminal" | null>(null);
+  const hasTerminal = terminal !== null && terminal !== undefined;
 
   const onMouseMove = useCallback((e: MouseEvent) => {
     if (draggingRef.current === "sidebar") {
@@ -83,10 +84,16 @@ export function Shell({
       <div className={styles.main}>
         <div className={styles.tabBar}>{tabBar}</div>
         <div className={styles.content}>{content}</div>
-        {showTerminal && (
+        {hasTerminal && (
           <>
-            <div className={styles.terminalSplitter} onMouseDown={startTerminalResize} />
-            <div className={styles.terminal} style={{ height: terminalHeight }}>
+            <div
+              className={`${styles.terminalSplitter} ${showTerminal ? "" : styles.terminalHidden}`}
+              onMouseDown={startTerminalResize}
+            />
+            <div
+              className={`${styles.terminal} ${showTerminal ? "" : styles.terminalHidden}`}
+              style={{ height: showTerminal ? terminalHeight : 0 }}
+            >
               {terminal}
             </div>
           </>

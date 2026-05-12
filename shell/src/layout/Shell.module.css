@@ -70,3 +70,8 @@
   max-height: 50vh;
   overflow: hidden;
 }
+
+.terminalHidden {
+  display: none;
+  min-height: 0;
+}

@@ -1,4 +1,4 @@
-import { dirname, join, relative } from "path";
+import { dirname, join, relative, resolve } from "path";
 import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
 import { openDB } from "./db";
 import { Guard } from "./guard";
@@ -12,7 +12,7 @@ import { SettingsStore } from "./settings";
 // Adiabatic OS — HTTP server entry point
 // All routes go through here. Guard is the only write path.
 
-const workspacePath = process.argv[2] || process.cwd();
+const workspacePath = resolve(process.argv[2] || process.cwd());
 const pagesDir = join(workspacePath, "pages");
 const appsDir = join(workspacePath, "apps");
 const adiabaticDir = join(workspacePath, ".adiabatic");
@@ -281,6 +281,7 @@ class TerminalLogger {
 
 // Routes
 const server = Bun.serve({
+  hostname: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT) || 3000,
   idleTimeout: 255, // max — SSE connections need long-lived responses
   async fetch(req, server) {
@@ -326,6 +327,11 @@ const server = Bun.serve({
     }
 
     try {
+      // -- Workspace --
+      if (path === "/api/workspace" && method === "GET") {
+        return json({ path: workspacePath });
+      }
+
       // -- Docs --
       if (path === "/api/docs" && method === "POST") {
         const body = await readBody<{ id: string; content: string; metadata?: Record<string, unknown> }>(req);
