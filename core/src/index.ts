@@ -204,81 +204,6 @@ function resolveAppFile(appDir: string, filename: string): string {
 const terminalProcs = new Set<import("bun").Subprocess>();
 const ptyHelperPath = join(dirname(new URL(import.meta.url).pathname), "pty-helper.cjs");
 
-// Terminal I/O logger — captures input/output as D0 events
-const INPUT_BATCH_MS = 300;
-const OUTPUT_BATCH_MS = 2000;
-const OUTPUT_MAX_BYTES = 64 * 1024;
-
-class TerminalLogger {
-  sessionId: string;
-  private inputBuf = "";
-  private inputTimer: ReturnType<typeof setTimeout> | null = null;
-  private outputBuf = "";
-  private outputTimer: ReturnType<typeof setTimeout> | null = null;
-
-  constructor(private guard: Guard) {
-    this.sessionId = ulid();
-  }
-
-  open(): void {
-    this.guard.writeEvent({
-      type: "terminal.open",
-      startedAt: Date.now(),
-      payload: { sessionId: this.sessionId },
-    });
-  }
-
-  close(): void {
-    this.flushInput();
-    this.flushOutput();
-    this.guard.writeEvent({
-      type: "terminal.close",
-      startedAt: Date.now(),
-      payload: { sessionId: this.sessionId },
-    });
-  }
-
-  appendInput(data: string): void {
-    this.inputBuf += data;
-    if (!this.inputTimer) {
-      this.inputTimer = setTimeout(() => this.flushInput(), INPUT_BATCH_MS);
-    }
-  }
-
-  appendOutput(data: string): void {
-    this.outputBuf += data;
-    if (Buffer.byteLength(this.outputBuf, "utf8") >= OUTPUT_MAX_BYTES) {
-      this.flushOutput();
-    } else if (!this.outputTimer) {
-      this.outputTimer = setTimeout(() => this.flushOutput(), OUTPUT_BATCH_MS);
-    }
-  }
-
-  private flushInput(): void {
-    if (this.inputTimer) { clearTimeout(this.inputTimer); this.inputTimer = null; }
-    if (!this.inputBuf) return;
-    const data = this.inputBuf;
-    this.inputBuf = "";
-    this.guard.writeEvent({
-      type: "terminal.input",
-      startedAt: Date.now(),
-      payload: { sessionId: this.sessionId, data },
-    });
-  }
-
-  private flushOutput(): void {
-    if (this.outputTimer) { clearTimeout(this.outputTimer); this.outputTimer = null; }
-    if (!this.outputBuf) return;
-    const data = this.outputBuf;
-    this.outputBuf = "";
-    this.guard.writeEvent({
-      type: "terminal.output",
-      startedAt: Date.now(),
-      payload: { sessionId: this.sessionId, data },
-    });
-  }
-}
-
 // Routes
 const server = Bun.serve({
   hostname: process.env.HOST || "127.0.0.1",
@@ -542,11 +467,6 @@ const server = Bun.serve({
     open(ws) {
       const { cwd } = ws.data as { cwd: string };
 
-      // Terminal I/O logger
-      const logger = new TerminalLogger(guard.withSource("system:terminal"));
-      (ws as any)._logger = logger;
-      logger.open();
-
       // Spawn Node.js helper that manages the PTY
       // (bun can't load node-pty native addon directly)
       const proc = Bun.spawn(["node", ptyHelperPath, cwd], {
@@ -563,9 +483,7 @@ const server = Bun.serve({
       terminalProcs.add(proc);
       (ws as any)._proc = proc;
 
-      const decoder = new TextDecoder();
-
-      // PTY stdout → WebSocket + log output
+      // PTY stdout → WebSocket
       (async () => {
         const reader = proc.stdout.getReader();
         try {
@@ -573,14 +491,13 @@ const server = Bun.serve({
             const { done, value } = await reader.read();
             if (done) break;
             ws.send(value);
-            logger.appendOutput(decoder.decode(value, { stream: true }));
           }
         } catch {}
         terminalProcs.delete(proc);
         try { ws.close(); } catch {}
       })();
 
-      // PTY stderr → WebSocket + log output
+      // PTY stderr → WebSocket
       (async () => {
         const reader = proc.stderr.getReader();
         try {
@@ -588,7 +505,6 @@ const server = Bun.serve({
             const { done, value } = await reader.read();
             if (done) break;
             ws.send(value);
-            logger.appendOutput(decoder.decode(value, { stream: true }));
           }
         } catch {}
       })();
@@ -601,18 +517,8 @@ const server = Bun.serve({
       const data = typeof message === "string" ? message : new TextDecoder().decode(message);
       proc.stdin.write(data);
       proc.stdin.flush();
-
-      // Log input (skip \x01 resize control messages)
-      if (data.length > 0 && data.charCodeAt(0) !== 0x01) {
-        const logger = (ws as any)._logger as TerminalLogger | undefined;
-        logger?.appendInput(data);
-      }
     },
     close(ws) {
-      // Flush and log terminal close
-      const logger = (ws as any)._logger as TerminalLogger | undefined;
-      logger?.close();
-
       const proc = (ws as any)._proc as import("bun").Subprocess | undefined;
       if (proc) {
         terminalProcs.delete(proc);
