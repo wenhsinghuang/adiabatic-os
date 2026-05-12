@@ -1,92 +1,83 @@
-// pty-helper.js — Node.js subprocess that manages a PTY.
-// Bun spawns this with node. Communication via stdin/stdout (binary).
+// pty-helper.cjs — Node subprocess that owns a real PTY.
+// Bun launches this because node-pty is a native Node addon.
 //
 // Protocol:
-//   stdin  → data to write to PTY (or \x01{cols,rows} for resize)
-//   stdout → data from PTY
-//   The first argument is the working directory.
+//   stdin  -> PTY input, or \x01{cols,rows} resize control message
+//   stdout -> PTY output
+//   argv[2] is the working directory.
 
-const { spawn } = require("child_process");
-const { mkdirSync } = require("fs");
-const { join } = require("path");
+const { chmodSync, existsSync, mkdirSync, statSync } = require("fs");
+const { dirname, join } = require("path");
+
+ensureNodePtySpawnHelperExecutable();
+
+const pty = require("node-pty");
 
 const cwd = process.argv[2] || process.cwd();
 const shell = process.env.SHELL || "/bin/sh";
-
-const fallbackHistoryDir = join(cwd, ".adiabatic");
-const fallbackHistoryFile = join(fallbackHistoryDir, "terminal_history");
-const fallbackShellArgs = shell.endsWith("zsh")
-  ? ["-f", "-i"]
+const shellArgs = shell.endsWith("zsh")
+  ? ["-f"]
   : shell.endsWith("bash")
-    ? ["--noprofile", "--norc", "-i"]
-    : ["-i"];
-
-const env = {
-  ...process.env,
-  TERM: "xterm-256color",
-  LANG: "en_US.UTF-8",
-};
-
-let term = null;
-let fallback = null;
+    ? ["--noprofile", "--norc"]
+    : [];
+const historyDir = join(cwd, ".adiabatic");
+const historyFile = join(historyDir, "terminal_history");
 
 try {
-  const pty = require("node-pty");
-  term = pty.spawn(shell, [], {
-    name: "xterm-256color",
-    cols: 80,
-    rows: 24,
-    cwd,
-    env,
-  });
-} catch (err) {
+  mkdirSync(historyDir, { recursive: true });
+} catch {}
+
+const term = pty.spawn(shell, shellArgs, {
+  name: "xterm-256color",
+  cols: 80,
+  rows: 24,
+  cwd,
+  env: {
+    ...process.env,
+    TERM: "xterm-256color",
+    LANG: "en_US.UTF-8",
+    HISTFILE: historyFile,
+  },
+});
+
+term.onData((data) => {
   try {
-    mkdirSync(fallbackHistoryDir, { recursive: true });
+    process.stdout.write(data);
   } catch {}
-  fallback = spawn(shell, fallbackShellArgs, {
-    cwd,
-    env: { ...env, HISTFILE: fallbackHistoryFile },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-}
+});
 
-if (term) {
-  // PTY output → stdout
-  term.onData((data) => {
-    try {
-      process.stdout.write(data);
-    } catch {}
-  });
+term.onExit(({ exitCode }) => {
+  process.exit(exitCode);
+});
 
-  // PTY exit → exit this process
-  term.onExit(({ exitCode }) => {
-    process.exit(exitCode);
-  });
-} else if (fallback) {
-  fallback.stdout.on("data", (data) => process.stdout.write(data));
-  fallback.stderr.on("data", (data) => process.stdout.write(data));
-  fallback.on("exit", (code) => process.exit(code ?? 0));
-}
-
-// stdin → PTY input (or resize command)
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   if (chunk.startsWith("\x01")) {
     try {
       const { cols, rows } = JSON.parse(chunk.slice(1));
-      if (cols && rows && term) term.resize(cols, rows);
+      if (cols && rows) term.resize(cols, rows);
     } catch {}
     return;
   }
-  if (term) {
-    term.write(chunk);
-  } else if (fallback?.stdin.writable) {
-    fallback.stdin.write(chunk);
-  }
+  term.write(chunk);
 });
 
 process.stdin.on("end", () => {
-  if (term) term.kill();
-  if (fallback) fallback.kill();
+  term.kill();
   process.exit(0);
 });
+
+function ensureNodePtySpawnHelperExecutable() {
+  if (process.platform !== "darwin") return;
+
+  const packageJson = require.resolve("node-pty/package.json");
+  const packageRoot = dirname(packageJson);
+  const helperPath = join(packageRoot, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper");
+
+  if (!existsSync(helperPath)) return;
+
+  const mode = statSync(helperPath).mode;
+  if ((mode & 0o111) !== 0) return;
+
+  chmodSync(helperPath, mode | 0o755);
+}
