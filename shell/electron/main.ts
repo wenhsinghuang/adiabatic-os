@@ -3,17 +3,20 @@
 // - First-launch: copies template/ → ~/Adiabatic/
 // - Opens renderer window
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, type WebContents } from "electron";
 import { spawn, type ChildProcess } from "child_process";
 import { existsSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 const TEMPLATE = join(__dirname, "..", "..", "template");
 const CORE_ENTRY = join(__dirname, "..", "..", "core", "src", "index.ts");
+const PTY_HELPER = join(__dirname, "..", "..", "core", "src", "pty-helper.cjs");
 const CORE_PORT = 3000;
 
 let bun: ChildProcess | null = null;
 let workspace = "";
+let nextTerminalId = 1;
+const terminalSessions = new Map<string, { proc: ChildProcess; ownerWebContentsId: number }>();
 
 function settingsPath(): string {
   return join(app.getPath("userData"), "settings.json");
@@ -77,6 +80,7 @@ async function switchWorkspace(nextWorkspace: string): Promise<string> {
     throw new Error("Workspace path is required");
   }
   if (normalized === workspace) return workspace;
+  disposeAllTerminals();
   await stopCore();
   workspace = normalized;
   saveWorkspacePath(workspace);
@@ -84,6 +88,60 @@ async function switchWorkspace(nextWorkspace: string): Promise<string> {
   startCore();
   await waitForCore();
   return workspace;
+}
+
+function createTerminal(sender: WebContents): { id: string } {
+  const id = `terminal-${nextTerminalId++}`;
+  const proc = spawn("node", [PTY_HELPER, workspace], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      LANG: "en_US.UTF-8",
+    },
+  });
+
+  terminalSessions.set(id, { proc, ownerWebContentsId: sender.id });
+
+  proc.stdout?.on("data", (data) => {
+    sender.send("terminal:data", { id, data: data.toString("utf8") });
+  });
+  proc.stderr?.on("data", (data) => {
+    sender.send("terminal:data", { id, data: data.toString("utf8") });
+  });
+  proc.on("exit", (code) => {
+    terminalSessions.delete(id);
+    sender.send("terminal:exit", { id, code });
+  });
+
+  return { id };
+}
+
+function getTerminalForSender(id: string, sender: WebContents) {
+  const session = terminalSessions.get(id);
+  if (!session || session.ownerWebContentsId !== sender.id) return null;
+  return session;
+}
+
+function disposeTerminal(id: string): void {
+  const session = terminalSessions.get(id);
+  if (!session) return;
+  terminalSessions.delete(id);
+  try { session.proc.kill(); } catch {}
+}
+
+function disposeTerminalsForWebContents(webContentsId: number): void {
+  for (const [id, session] of terminalSessions) {
+    if (session.ownerWebContentsId === webContentsId) {
+      disposeTerminal(id);
+    }
+  }
+}
+
+function disposeAllTerminals(): void {
+  for (const id of terminalSessions.keys()) {
+    disposeTerminal(id);
+  }
 }
 
 async function waitForCore(retries = 20, delay = 500): Promise<void> {
@@ -108,6 +166,10 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
       preload: join(__dirname, "preload.cjs"),
     },
+  });
+
+  win.on("closed", () => {
+    disposeTerminalsForWebContents(win.webContents.id);
   });
 
   // Dev mode: load Vite dev server. Prod: load built files.
@@ -136,6 +198,23 @@ app.whenReady().then(async () => {
     const path = await switchWorkspace(result.filePaths[0]);
     return { path };
   });
+  ipcMain.handle("terminal:create", (event) => createTerminal(event.sender));
+  ipcMain.on("terminal:input", (event, payload: { id: string; data: string }) => {
+    const session = getTerminalForSender(payload.id, event.sender);
+    if (!session?.proc.stdin?.writable) return;
+    session.proc.stdin.write(payload.data);
+  });
+  ipcMain.on("terminal:resize", (event, payload: { id: string; cols: number; rows: number }) => {
+    const session = getTerminalForSender(payload.id, event.sender);
+    if (!session?.proc.stdin?.writable) return;
+    session.proc.stdin.write("\x01" + JSON.stringify({ cols: payload.cols, rows: payload.rows }));
+  });
+  ipcMain.handle("terminal:dispose", (event, id: string) => {
+    const session = getTerminalForSender(id, event.sender);
+    if (!session) return { ok: true };
+    disposeTerminal(id);
+    return { ok: true };
+  });
   ensureWorkspace();
   startCore();
   await waitForCore();
@@ -143,6 +222,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  disposeAllTerminals();
   bun?.kill();
   app.quit();
 });

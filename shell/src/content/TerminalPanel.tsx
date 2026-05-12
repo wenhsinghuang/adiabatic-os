@@ -1,6 +1,6 @@
-// TerminalPanel — xterm.js terminal connected to core PTY via WebSocket.
+// TerminalPanel — xterm.js terminal connected to Electron PTY or browser dev WebSocket.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -17,8 +17,8 @@ type TerminalStatus = "connecting" | "connected" | "disconnected" | "error";
 export function TerminalPanel({ visible }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const resizeRef = useRef<(cols: number, rows: number) => void>(() => {});
   const visibleRef = useRef(visible);
   const [status, setStatus] = useState<TerminalStatus>("connecting");
 
@@ -51,47 +51,9 @@ export function TerminalPanel({ visible }: TerminalPanelProps) {
     termRef.current = term;
     fitRef.current = fit;
 
-    // Connect WebSocket
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
-
-    ws.binaryType = "arraybuffer";
-
-    ws.onopen = () => {
-      setStatus("connected");
-      // Send initial size to PTY
-      sendResize(ws, term.cols, term.rows);
-    };
-
-    ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(event.data));
-      } else {
-        term.write(event.data);
-      }
-    };
-
-    ws.onclose = () => {
-      setStatus("disconnected");
-      term.writeln("\r\n\x1b[90m~ Terminal disconnected ~\x1b[0m");
-    };
-
-    ws.onerror = () => {
-      setStatus("error");
-      term.writeln("\r\n\x1b[31m~ Connection error ~\x1b[0m");
-    };
-
-    // Send input to WebSocket
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
-    });
-
-    // Send resize events when terminal dimensions change
-    term.onResize(({ cols, rows }) => {
-      sendResize(ws, cols, rows);
-    });
+    const disposeTransport = window.adiabaticHost?.createTerminal
+      ? connectElectronTerminal(term, setStatus, resizeRef)
+      : connectWebSocketTerminal(term, setStatus, resizeRef);
 
     // Resize observer for fit
     const observer = new ResizeObserver(() => {
@@ -102,11 +64,11 @@ export function TerminalPanel({ visible }: TerminalPanelProps) {
 
     return () => {
       observer.disconnect();
-      ws.close();
+      disposeTransport();
       term.dispose();
       termRef.current = null;
-      wsRef.current = null;
       fitRef.current = null;
+      resizeRef.current = () => {};
     };
   }, []);
 
@@ -115,11 +77,10 @@ export function TerminalPanel({ visible }: TerminalPanelProps) {
     const id = window.setTimeout(() => {
       const term = termRef.current;
       const fit = fitRef.current;
-      const ws = wsRef.current;
-      if (!term || !fit || !ws) return;
+      if (!term || !fit) return;
       try {
         fit.fit();
-        sendResize(ws, term.cols, term.rows);
+        resizeRef.current(term.cols, term.rows);
         term.focus();
       } catch {
         // xterm can throw while the container is being reattached after a resize.
@@ -139,7 +100,113 @@ export function TerminalPanel({ visible }: TerminalPanelProps) {
   );
 }
 
-/** Send a resize message (SOH + JSON) so the server can resize the PTY. */
+function connectElectronTerminal(
+  term: Terminal,
+  setStatus: (status: TerminalStatus) => void,
+  resizeRef: MutableRefObject<(cols: number, rows: number) => void>,
+): () => void {
+  const host = window.adiabaticHost;
+  if (!host) return () => {};
+
+  let terminalId: string | null = null;
+  const pendingData: string[] = [];
+
+  const disposeData = host.onTerminalData(({ id, data }) => {
+    if (terminalId === null) {
+      pendingData.push(data);
+      return;
+    }
+    if (id === terminalId) term.write(data);
+  });
+
+  const disposeExit = host.onTerminalExit(({ id }) => {
+    if (id !== terminalId) return;
+    setStatus("disconnected");
+    term.writeln("\r\n\x1b[90m~ Terminal disconnected ~\x1b[0m");
+  });
+
+  const inputDisposable = term.onData((data) => {
+    if (terminalId) host.writeTerminal(terminalId, data);
+  });
+
+  const resizeDisposable = term.onResize(({ cols, rows }) => {
+    if (terminalId) host.resizeTerminal(terminalId, cols, rows);
+  });
+
+  host.createTerminal()
+    .then(({ id }) => {
+      terminalId = id;
+      resizeRef.current = (cols, rows) => host.resizeTerminal(id, cols, rows);
+      for (const data of pendingData.splice(0)) term.write(data);
+      setStatus("connected");
+      host.resizeTerminal(id, term.cols, term.rows);
+    })
+    .catch((err) => {
+      setStatus("error");
+      term.writeln(`\r\n\x1b[31m~ Terminal failed: ${String(err)} ~\x1b[0m`);
+    });
+
+  return () => {
+    disposeData();
+    disposeExit();
+    inputDisposable.dispose();
+    resizeDisposable.dispose();
+    if (terminalId) {
+      void host.disposeTerminal(terminalId);
+    }
+  };
+}
+
+function connectWebSocketTerminal(
+  term: Terminal,
+  setStatus: (status: TerminalStatus) => void,
+  resizeRef: MutableRefObject<(cols: number, rows: number) => void>,
+): () => void {
+  const ws = new WebSocket(WS_URL);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => {
+    setStatus("connected");
+    sendResize(ws, term.cols, term.rows);
+  };
+
+  ws.onmessage = (event) => {
+    if (event.data instanceof ArrayBuffer) {
+      term.write(new Uint8Array(event.data));
+    } else {
+      term.write(event.data);
+    }
+  };
+
+  ws.onclose = () => {
+    setStatus("disconnected");
+    term.writeln("\r\n\x1b[90m~ Terminal disconnected ~\x1b[0m");
+  };
+
+  ws.onerror = () => {
+    setStatus("error");
+    term.writeln("\r\n\x1b[31m~ Connection error ~\x1b[0m");
+  };
+
+  const inputDisposable = term.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(data);
+    }
+  });
+
+  const resizeDisposable = term.onResize(({ cols, rows }) => {
+    sendResize(ws, cols, rows);
+  });
+
+  resizeRef.current = (cols, rows) => sendResize(ws, cols, rows);
+
+  return () => {
+    inputDisposable.dispose();
+    resizeDisposable.dispose();
+    ws.close();
+  };
+}
+
 function sendResize(ws: WebSocket, cols: number, rows: number) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send("\x01" + JSON.stringify({ cols, rows }));
