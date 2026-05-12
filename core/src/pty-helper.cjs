@@ -7,9 +7,19 @@
 //   The first argument is the working directory.
 
 const { spawn } = require("child_process");
+const { mkdirSync } = require("fs");
+const { join } = require("path");
 
 const cwd = process.argv[2] || process.cwd();
 const shell = process.env.SHELL || "/bin/sh";
+
+const fallbackHistoryDir = join(cwd, ".adiabatic");
+const fallbackHistoryFile = join(fallbackHistoryDir, "terminal_history");
+const fallbackShellArgs = shell.endsWith("zsh")
+  ? ["-f", "-i"]
+  : shell.endsWith("bash")
+    ? ["--noprofile", "--norc", "-i"]
+    : ["-i"];
 
 const env = {
   ...process.env,
@@ -30,10 +40,12 @@ try {
     env,
   });
 } catch (err) {
-  process.stdout.write("\x1b[33m~ PTY unavailable; using shell pipe fallback ~\x1b[0m\r\n");
-  fallback = spawn(shell, ["-i"], {
+  try {
+    mkdirSync(fallbackHistoryDir, { recursive: true });
+  } catch {}
+  fallback = spawn(shell, fallbackShellArgs, {
     cwd,
-    env,
+    env: { ...env, HISTFILE: fallbackHistoryFile },
     stdio: ["pipe", "pipe", "pipe"],
   });
 }
