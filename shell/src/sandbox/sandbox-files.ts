@@ -31,9 +31,12 @@ export const SANDBOX_FILES: FileSystemTree = {
         file: {
           contents: `
 async function call(method, body) {
+  const match = window.location.pathname.match(/^\\/apps\\/([^/]+)\\//);
+  if (!match) throw new Error("Missing app identity");
+  const appId = decodeURIComponent(match[1]);
   const res = await fetch("/system/" + method, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Adiabatic-App-Id": appId },
     body: JSON.stringify(body ?? {}),
   });
   const data = await res.json();
@@ -161,22 +164,12 @@ import { existsSync } from "fs";
 const CORE_URL = "http://localhost:3000";
 const PORT = 4000;
 const APP_ID_HEADER = "X-Adiabatic-App-Id";
+const BRIDGE_TOKEN_HEADER = "X-Adiabatic-Bridge-Token";
+const BRIDGE_TOKEN = process.env.ADIABATIC_BRIDGE_TOKEN;
 
 function send(res, status, body, headers = {}) {
   res.writeHead(status, headers);
   res.end(body);
-}
-
-function appIdFromReferer(req) {
-  const referer = req.headers.referer;
-  if (!referer) return null;
-  try {
-    const url = new URL(referer);
-    const match = url.pathname.match(/^\\/apps\\/([^/]+)\\//);
-    return match ? decodeURIComponent(match[1]) : null;
-  } catch {
-    return null;
-  }
 }
 
 const server = createServer(async (req, res) => {
@@ -215,9 +208,13 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname.startsWith("/system/")) {
-    const appId = appIdFromReferer(req);
+    const rawAppId = req.headers[APP_ID_HEADER.toLowerCase()];
+    const appId = Array.isArray(rawAppId) ? rawAppId[0] : rawAppId;
     if (!appId) {
       return send(res, 403, JSON.stringify({ error: "Missing app identity" }), { "Content-Type": "application/json" });
+    }
+    if (!BRIDGE_TOKEN) {
+      return send(res, 500, JSON.stringify({ error: "Missing bridge token" }), { "Content-Type": "application/json" });
     }
 
     const method = url.pathname.slice("/system/".length);
@@ -246,7 +243,7 @@ const server = createServer(async (req, res) => {
     try {
       const coreRes = await fetch(CORE_URL + corePath, {
         method: coreMethod,
-        headers: { "Content-Type": "application/json", [APP_ID_HEADER]: appId },
+        headers: { "Content-Type": "application/json", [APP_ID_HEADER]: appId, [BRIDGE_TOKEN_HEADER]: BRIDGE_TOKEN },
         body: coreMethod === "DELETE" ? undefined : body,
       });
       const data = await coreRes.text();

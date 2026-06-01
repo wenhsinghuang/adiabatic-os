@@ -8,6 +8,14 @@ import { loadApps } from "./app-loader";
 import { ensureClaudeMd } from "./claude-md";
 import { ulid } from "./utils/ulid";
 import { SettingsStore } from "./settings";
+import {
+  APP_ID_HEADER,
+  BRIDGE_TOKEN_HEADER,
+  authenticateRequest,
+  requireSecret,
+  type AuthContext,
+  type AuthSecrets,
+} from "./auth";
 
 // Adiabatic OS — HTTP server entry point
 // All routes go through here. Guard is the only write path.
@@ -16,7 +24,10 @@ const workspacePath = resolve(process.argv[2] || process.cwd());
 const pagesDir = join(workspacePath, "pages");
 const appsDir = join(workspacePath, "apps");
 const adiabaticDir = join(workspacePath, ".adiabatic");
-const APP_ID_HEADER = "x-adiabatic-app-id";
+const authSecrets: AuthSecrets = {
+  coreToken: requireSecret("ADIABATIC_CORE_TOKEN"),
+  bridgeToken: requireSecret("ADIABATIC_BRIDGE_TOKEN"),
+};
 const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
   export const system: {
     query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
@@ -75,34 +86,53 @@ console.log(`[adiabatic] Workspace: ${workspacePath}`);
 console.log(`[adiabatic] Apps loaded: ${[...registry.apps.keys()].join(", ") || "(none)"}`);
 
 // CORS + cross-origin isolation (required for SharedArrayBuffer / WebContainer)
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Cross-Origin-Opener-Policy": "same-origin",
-  "Cross-Origin-Embedder-Policy": "credentialless",
-};
+const ALLOWED_ORIGINS = new Set([
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "null",
+]);
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", ...CORS },
-  });
+function corsHeaders(req: Request, extra?: Record<string, string>): Record<string, string> {
+  const origin = req.headers.get("origin");
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": [
+      "Authorization",
+      "Content-Type",
+      APP_ID_HEADER,
+      BRIDGE_TOKEN_HEADER,
+    ].join(", "),
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "credentialless",
+    Vary: "Origin",
+    ...extra,
+  };
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return headers;
+}
+
+function isAllowedHost(req: Request): boolean {
+  const rawHost = req.headers.get("host");
+  if (!rawHost) return false;
+  const host = rawHost.toLowerCase().replace(/:\d+$/, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
 }
 
 async function readBody<T>(req: Request): Promise<T> {
   return (await req.json()) as T;
 }
 
-function guardForRequest(req: Request, opts?: { requireAppIdentity?: boolean }): Guard {
-  const appId = req.headers.get(APP_ID_HEADER);
-  if (!appId) {
+function guardForRequest(auth: AuthContext, opts?: { requireAppIdentity?: boolean }): Guard {
+  if (auth.kind === "host") {
     if (opts?.requireAppIdentity) {
       throw new Error("Guard: app identity is required for this write path");
     }
     return guard;
   }
 
+  const appId = auth.appId;
   const app = registry.apps.get(appId);
   if (!app) {
     throw new Error(`Guard: unknown app identity: ${appId}`);
@@ -213,17 +243,32 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method;
+    const headers = corsHeaders(req);
+    const json = (data: unknown, status = 200): Response =>
+      new Response(JSON.stringify(data), {
+        status,
+        headers: { "Content-Type": "application/json", ...headers },
+      });
 
     // CORS preflight
     if (method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS });
+      return new Response(null, { status: 204, headers });
+    }
+
+    if (path.startsWith("/api/") && !isAllowedHost(req)) {
+      return json({ error: "invalid host" }, 403);
+    }
+
+    const auth = path.startsWith("/api/") ? authenticateRequest(req, authSecrets) : null;
+    if (path.startsWith("/api/") && !auth) {
+      return json({ error: "unauthorized" }, 401);
     }
 
     // -- Terminal WebSocket upgrade --
     if (path === "/api/terminal") {
       const upgraded = server.upgrade(req, { data: { cwd: workspacePath } });
       if (!upgraded) {
-        return new Response("WebSocket upgrade failed", { status: 400, headers: CORS });
+        return new Response("WebSocket upgrade failed", { status: 400, headers });
       }
       return undefined as unknown as Response;
     }
@@ -246,7 +291,7 @@ const server = Bun.serve({
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
-          ...CORS,
+          ...headers,
         },
       });
     }
@@ -260,7 +305,7 @@ const server = Bun.serve({
       // -- Docs --
       if (path === "/api/docs" && method === "POST") {
         const body = await readBody<{ id: string; content: string; metadata?: Record<string, unknown> }>(req);
-        guardForRequest(req).writeDoc(body.id, body.content, body.metadata);
+        guardForRequest(auth!).writeDoc(body.id, body.content, body.metadata);
         return json({ ok: true, id: body.id });
       }
 
@@ -273,7 +318,7 @@ const server = Bun.serve({
 
       if (path.startsWith("/api/docs/") && method === "DELETE") {
         const docId = decodeURIComponent(path.slice("/api/docs/".length));
-        const deleted = guardForRequest(req).deleteDoc(docId);
+        const deleted = guardForRequest(auth!).deleteDoc(docId);
         if (!deleted) return json({ error: "not found" }, 404);
         return json({ ok: true });
       }
@@ -284,7 +329,7 @@ const server = Bun.serve({
           type: string; startedAt: number;
           endedAt?: number; externalId?: string; payload: Record<string, unknown>;
         }>(req);
-        const id = guardForRequest(req).writeEvent(body);
+        const id = guardForRequest(auth!).writeEvent(body);
         return json({ ok: true, id });
       }
 
@@ -298,7 +343,7 @@ const server = Bun.serve({
       // -- Write (D2 DML + auto D0 log) --
       if (path === "/api/write" && method === "POST") {
         const body = await readBody<{ sql: string; params?: unknown[] }>(req);
-        guardForRequest(req, { requireAppIdentity: true }).write(body.sql, body.params);
+        guardForRequest(auth!, { requireAppIdentity: true }).write(body.sql, body.params);
         return json({ ok: true });
       }
 
@@ -307,7 +352,7 @@ const server = Bun.serve({
       if (schemaRequestMatch && method === "POST") {
         const kind = schemaRequestMatch[1] as SchemaOp;
         const body = await readBody<{ ddl: string | string[]; requestedBy?: string }>(req);
-        const requestedBy = body.requestedBy ?? req.headers.get(APP_ID_HEADER) ?? "coding-agent";
+        const requestedBy = body.requestedBy ?? (auth?.kind === "bridge" ? auth.appId : null) ?? "coding-agent";
         const result = await createSchemaRequest(kind, body.ddl, requestedBy);
         return json(result);
       }
@@ -446,13 +491,13 @@ const server = Bun.serve({
         const filePath = join(shellDir, path === "/" ? "index.html" : path);
         try {
           const info = await stat(filePath);
-          if (info.isFile()) return new Response(Bun.file(filePath), { headers: CORS });
+          if (info.isFile()) return new Response(Bun.file(filePath), { headers });
         } catch {}
         // SPA fallback: serve index.html for non-file routes
         try {
           const indexPath = join(shellDir, "index.html");
           await stat(indexPath);
-          return new Response(Bun.file(indexPath), { headers: CORS });
+          return new Response(Bun.file(indexPath), { headers });
         } catch {}
       }
 

@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from "fs";
 import { readFile, writeFile, mkdir, unlink, readdir, stat } from "fs/promises";
 import { join, relative, dirname } from "path";
 import type { Guard } from "./guard";
+import { resolveDocFilePath } from "./doc-id";
 
 // Working Tree — bidirectional sync between DB (source of truth) and pages/ directory.
 // DB → File: Guard.onDocChange callback materializes .mdx files
@@ -69,7 +70,7 @@ export class WorkingTree {
 
   // DB → File: materialize a doc as .mdx
   private async materializeFile(docId: string, content: string): Promise<void> {
-    const filePath = join(this.pagesDir, docId + ".mdx");
+    const filePath = resolveDocFilePath(this.pagesDir, docId);
 
     this.dbTriggered.add(filePath);
     try {
@@ -85,7 +86,7 @@ export class WorkingTree {
 
   // DB → File: remove a deleted doc's file
   private async removeFile(docId: string): Promise<void> {
-    const filePath = join(this.pagesDir, docId + ".mdx");
+    const filePath = resolveDocFilePath(this.pagesDir, docId);
     this.dbTriggered.add(filePath);
     try {
       await unlink(filePath).catch(() => {}); // ignore if already gone

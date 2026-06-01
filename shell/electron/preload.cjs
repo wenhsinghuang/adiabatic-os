@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("adiabaticHost", {
+  getCoreToken: () => ipcRenderer.invoke("auth:getCoreToken"),
+  getBridgeToken: () => ipcRenderer.invoke("auth:getBridgeToken"),
   getWorkspacePath: () => ipcRenderer.invoke("workspace:get"),
   chooseWorkspacePath: () => ipcRenderer.invoke("workspace:choose"),
   setWorkspacePath: (path) => ipcRenderer.invoke("workspace:set", path),

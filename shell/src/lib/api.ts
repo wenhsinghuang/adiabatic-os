@@ -2,14 +2,89 @@
 
 const BASE = "http://localhost:3000";
 
+export async function getCoreToken(): Promise<string> {
+  const token = await window.adiabaticHost?.getCoreToken();
+  if (!token) {
+    throw new Error("Core API requires the Electron host security token.");
+  }
+  return token;
+}
+
+export async function getBridgeToken(): Promise<string> {
+  const token = await window.adiabaticHost?.getBridgeToken();
+  if (!token) {
+    throw new Error("App bridge requires the Electron host security token.");
+  }
+  return token;
+}
+
+async function coreHeaders(options?: RequestInit): Promise<Headers> {
+  const headers = new Headers(options?.headers);
+  headers.set("Authorization", `Bearer ${await getCoreToken()}`);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return headers;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: await coreHeaders(options),
   });
-  const data = await res.json();
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data as T;
+}
+
+export function subscribeDocEvents(
+  onEvent: (event: { id: string }) => void,
+  onError?: (error: unknown) => void,
+): () => void {
+  const controller = new AbortController();
+
+  void (async () => {
+    try {
+      const res = await fetch(`${BASE}/api/docs/events`, {
+        headers: await coreHeaders(),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (!res.body) throw new Error("Doc event stream is unavailable");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const rawEvent = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const data = rawEvent
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice("data:".length).trim())
+            .join("\n");
+          if (data) onEvent(JSON.parse(data) as { id: string });
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) onError?.(err);
+    }
+  })();
+
+  return () => controller.abort();
 }
 
 // -- Docs --

@@ -2,6 +2,7 @@
 import { readFile } from "fs/promises";
 
 const baseUrl = process.env.ADIABATIC_CORE_URL ?? "http://localhost:3000";
+const coreToken = process.env.ADIABATIC_CORE_TOKEN;
 
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
@@ -69,15 +70,25 @@ async function waitForSchemaRequest(id: string): Promise<void> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
   return readResponse<T>(res);
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${baseUrl}${path}`);
+  const res = await fetch(`${baseUrl}${path}`, { headers: authHeaders() });
   return readResponse<T>(res);
+}
+
+function authHeaders(): Record<string, string> {
+  if (!coreToken) {
+    die("ADIABATIC_CORE_TOKEN is required");
+  }
+  return {
+    Authorization: `Bearer ${coreToken}`,
+    "Content-Type": "application/json",
+  };
 }
 
 async function readResponse<T>(res: Response): Promise<T> {

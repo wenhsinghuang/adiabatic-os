@@ -15,7 +15,7 @@
 
 import { WebContainer } from "@webcontainer/api";
 import { SANDBOX_FILES } from "./sandbox-files";
-import type { AppInfo } from "../lib/api";
+import { getAppSource, getBridgeToken, type AppInfo } from "../lib/api";
 
 let instance: WebContainer | null = null;
 let serverUrl: string | null = null;
@@ -66,11 +66,8 @@ export async function loadApps(apps: AppInfo[]): Promise<void> {
 
   // Fetch each app's source from core and write into the container
   for (const app of apps) {
-    // Fetch the raw source files from core
-    const res = await fetch(`http://localhost:3000/api/apps/${app.id}/source`);
-    if (!res.ok) continue;
-
-    const files = (await res.json()) as Record<string, string>;
+    const files = await getAppSource(app.id).catch(() => null);
+    if (!files) continue;
 
     // Write app files into /apps/{appId}/
     await instance.fs.mkdir(`/apps/${app.id}`, { recursive: true });
@@ -110,7 +107,11 @@ export async function startBridgeServer(): Promise<string> {
 
   bridgePromise = (async () => {
     console.log("[sandbox] Starting bridge server...");
-    const serverProcess = await instance!.spawn("node", ["bridge-server.js"]);
+    const serverProcess = await instance!.spawn("node", ["bridge-server.js"], {
+      env: {
+        ADIABATIC_BRIDGE_TOKEN: await getBridgeToken(),
+      },
+    });
 
     serverProcess.output.pipeTo(
       new WritableStream({
@@ -176,10 +177,7 @@ export function getContainer(): WebContainer | null {
 export async function reloadApp(appId: string): Promise<void> {
   if (!instance) throw new Error("WebContainer not booted");
 
-  const res = await fetch(`http://localhost:3000/api/apps/${appId}/source`);
-  if (!res.ok) throw new Error(`Failed to fetch app source: ${res.status}`);
-
-  const files = (await res.json()) as Record<string, string>;
+  const files = await getAppSource(appId);
   for (const [filename, content] of Object.entries(files)) {
     const parts = filename.split("/");
     if (parts.length > 1) {

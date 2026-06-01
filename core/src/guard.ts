@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { ulid } from "./utils/ulid";
 import { D0_SCHEMA_VERSION } from "./schema";
 import { createUnifiedPatch } from "./utils/unified-diff";
+import { validateDocId } from "./doc-id";
 
 // Guard — the only write path into the database.
 // Every mutation goes through here: permission check → execute → auto D0 log.
@@ -67,13 +68,21 @@ export class Guard {
   // -- Read (no permission check, no D0 log) --
 
   query(sql: string, params?: unknown[]): unknown[] {
-    const stmt = this.db.prepare(sql);
-    return params ? stmt.all(...params) : stmt.all();
+    return this.runReadOnly(() => {
+      const trimmed = sql.trim();
+      validateSingleStatement(trimmed, "system.query");
+      const stmt = this.db.prepare(trimmed);
+      return params ? stmt.all(...params) : stmt.all();
+    });
   }
 
   queryOne(sql: string, params?: unknown[]): unknown | null {
-    const stmt = this.db.prepare(sql);
-    return params ? stmt.get(...params) : stmt.get();
+    return this.runReadOnly(() => {
+      const trimmed = sql.trim();
+      validateSingleStatement(trimmed, "system.queryOne");
+      const stmt = this.db.prepare(trimmed);
+      return params ? stmt.get(...params) : stmt.get();
+    });
   }
 
   // -- D0: writeEvent (explicit event, no additional D0 log) --
@@ -100,6 +109,8 @@ export class Guard {
   // -- D1: writeDoc (upsert + auto D0 log) --
 
   writeDoc(id: string, content: string, metadata?: Record<string, unknown>): void {
+    validateDocId(id);
+
     const now = Date.now();
     const meta = metadata ? JSON.stringify(metadata) : null;
 
@@ -146,6 +157,8 @@ export class Guard {
   // -- D1: deleteDoc (hard delete + auto D0 snapshot) --
 
   deleteDoc(id: string): boolean {
+    validateDocId(id);
+
     // Read before delete — snapshot for D0 safety net
     const existing = this.stmts.getDoc ??= this.db.prepare(
       "SELECT id, content, metadata FROM docs WHERE id = ?"
@@ -401,6 +414,19 @@ export class Guard {
     );
     stmt.run(id, D0_SCHEMA_VERSION, this.source, type, null, now, null, JSON.stringify(payload));
   }
+
+  private runReadOnly<T>(fn: () => T): T {
+    const existing = this.db.prepare("PRAGMA query_only").get() as { query_only: number } | null;
+    const wasQueryOnly = existing?.query_only === 1;
+    this.db.run("PRAGMA query_only = ON");
+    try {
+      return fn();
+    } finally {
+      if (!wasQueryOnly) {
+        this.db.run("PRAGMA query_only = OFF");
+      }
+    }
+  }
 }
 
 interface TableColumn {
@@ -592,4 +618,13 @@ function containsStatementSeparator(sql: string): boolean {
     if (ch === ";") return true;
   }
   return false;
+}
+
+function validateSingleStatement(sql: string, method: string): void {
+  if (!sql) {
+    throw new Error(`Guard: ${method} requires SQL`);
+  }
+  if (containsStatementSeparator(sql)) {
+    throw new Error(`Guard: ${method} accepts one read-only statement without semicolons`);
+  }
 }

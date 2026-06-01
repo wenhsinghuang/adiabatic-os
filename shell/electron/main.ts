@@ -5,6 +5,7 @@
 
 import { app, BrowserWindow, dialog, ipcMain, type WebContents } from "electron";
 import { spawn, type ChildProcess } from "child_process";
+import { randomBytes } from "crypto";
 import { existsSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
@@ -12,6 +13,8 @@ const TEMPLATE = join(__dirname, "..", "..", "template");
 const CORE_ENTRY = join(__dirname, "..", "..", "core", "src", "index.ts");
 const PTY_HELPER = join(__dirname, "..", "..", "core", "src", "pty-helper.cjs");
 const CORE_PORT = 3000;
+const CORE_TOKEN = randomBytes(32).toString("base64url");
+const BRIDGE_TOKEN = randomBytes(32).toString("base64url");
 
 let bun: ChildProcess | null = null;
 let workspace = "";
@@ -52,6 +55,11 @@ function startCore(): void {
   console.log(`[electron] Starting Bun runtime...`);
   const child = spawn("bun", ["run", CORE_ENTRY, workspace], {
     stdio: "inherit",
+    env: {
+      ...process.env,
+      ADIABATIC_CORE_TOKEN: CORE_TOKEN,
+      ADIABATIC_BRIDGE_TOKEN: BRIDGE_TOKEN,
+    },
   });
   bun = child;
   child.on("exit", (code) => {
@@ -147,7 +155,10 @@ function disposeAllTerminals(): void {
 async function waitForCore(retries = 20, delay = 500): Promise<void> {
   for (let i = 0; i < retries; i++) {
     try {
-      await fetch(`http://localhost:${CORE_PORT}/api/apps`);
+      const res = await fetch(`http://localhost:${CORE_PORT}/api/apps`, {
+        headers: { Authorization: `Bearer ${CORE_TOKEN}` },
+      });
+      if (!res.ok) throw new Error(`Core returned ${res.status}`);
       return;
     } catch {
       await new Promise((r) => setTimeout(r, delay));
@@ -182,6 +193,8 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   workspace = loadWorkspacePath();
+  ipcMain.handle("auth:getCoreToken", () => CORE_TOKEN);
+  ipcMain.handle("auth:getBridgeToken", () => BRIDGE_TOKEN);
   ipcMain.handle("workspace:get", () => workspace);
   ipcMain.handle("workspace:set", async (_event, nextWorkspace: string) => {
     const path = await switchWorkspace(nextWorkspace);

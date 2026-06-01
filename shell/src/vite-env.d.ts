@@ -7,6 +7,8 @@ declare module "*.module.css" {
 
 interface Window {
   adiabaticHost?: {
+    getCoreToken(): Promise<string>;
+    getBridgeToken(): Promise<string>;
     getWorkspacePath(): Promise<string>;
     chooseWorkspacePath(): Promise<{ path: string | null }>;
     setWorkspacePath(path: string): Promise<{ path: string }>;

@@ -36,11 +36,8 @@ export function useDoc(docId: string) {
   // SSE subscription for external changes (debounced to handle fs.watch bursts)
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const es = new EventSource("http://localhost:3000/api/docs/events");
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as { id: string };
+    const unsubscribe = api.subscribeDocEvents(
+      (data) => {
         if (data.id !== docId || currentId.current !== docId) return;
 
         // Debounce: fs.watch often fires multiple events for one edit
@@ -53,11 +50,12 @@ export function useDoc(docId: string) {
             setDoc(d);
           }).catch(() => {});
         }, 300);
-      } catch {}
-    };
+      },
+      (err) => console.error("[useDoc] Event stream failed:", err),
+    );
 
     return () => {
-      es.close();
+      unsubscribe();
       if (debounceTimer) clearTimeout(debounceTimer);
     };
   }, [docId]);

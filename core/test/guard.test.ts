@@ -72,6 +72,14 @@ describe("Guard", () => {
     expect(events.length).toBe(0);
   });
 
+  test("writeDoc rejects unsafe doc ids", () => {
+    expect(() => guard.writeDoc("../outside", "nope")).toThrow("Invalid doc id");
+    expect(() => guard.writeDoc("/tmp/outside", "nope")).toThrow("Invalid doc id");
+    expect(() => guard.writeDoc("folder/../outside", "nope")).toThrow("Invalid doc id");
+    expect(() => guard.writeDoc("folder//outside", "nope")).toThrow("Invalid doc id");
+    expect(() => guard.writeDoc("folder\\outside", "nope")).toThrow("Invalid doc id");
+  });
+
   // -- deleteDoc --
 
   test("deleteDoc removes doc and logs snapshot", () => {
@@ -97,6 +105,10 @@ describe("Guard", () => {
 
   test("deleteDoc returns false for non-existent doc", () => {
     expect(guard.deleteDoc("nope")).toBe(false);
+  });
+
+  test("deleteDoc rejects unsafe doc ids", () => {
+    expect(() => guard.deleteDoc("../outside")).toThrow("Invalid doc id");
   });
 
   // -- writeEvent --
@@ -305,6 +317,34 @@ describe("Guard", () => {
     expect(docs.length).toBe(2);
     expect(docs[0].id).toBe("q/1");
     expect(docs[1].id).toBe("q/2");
+  });
+
+  test("query supports read-only WITH and PRAGMA statements", () => {
+    guard.writeDoc("q/1", "one");
+
+    const withRows = guard.query(
+      "WITH recent AS (SELECT id FROM docs WHERE id = ?) SELECT id FROM recent",
+      ["q/1"],
+    ) as any[];
+    expect(withRows).toEqual([{ id: "q/1" }]);
+
+    const columns = guard.query("PRAGMA table_info(docs)") as any[];
+    expect(columns.some((column) => column.name === "content")).toBe(true);
+  });
+
+  test("query rejects writes and multi-statement SQL", () => {
+    db.run("CREATE TABLE scratch (id TEXT PRIMARY KEY)");
+
+    expect(() => guard.query("INSERT INTO scratch (id) VALUES ('x')")).toThrow(
+      "readonly database",
+    );
+    expect(() => guard.query("PRAGMA user_version = 2")).toThrow("readonly database");
+    expect(() => guard.query("SELECT * FROM docs; SELECT * FROM events")).toThrow(
+      "one read-only statement",
+    );
+
+    const rows = db.prepare("SELECT * FROM scratch").all();
+    expect(rows).toEqual([]);
   });
 
   test("queryOne returns single result or null", () => {

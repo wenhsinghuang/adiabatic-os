@@ -30,7 +30,7 @@ async function bridgeCall(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-App-Id": appId,
+      "X-Adiabatic-App-Id": appId,
     },
     body: JSON.stringify(body),
   });
