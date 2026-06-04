@@ -13,6 +13,14 @@ interface EventRow {
   payload: string;
 }
 
+type JsonValue =
+  | null
+  | string
+  | number
+  | boolean
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
 // Simple line-level diff: returns array of { type: "same"|"add"|"del", text }
 interface DiffLine {
   type: "same" | "add" | "del";
@@ -57,8 +65,8 @@ function computeDiff(before: string, after: string): DiffLine[] {
   return result.reverse();
 }
 
-function parsePayload(payload: string): Record<string, unknown> {
-  try { return JSON.parse(payload); } catch { return {}; }
+function parsePayload(payload: string): JsonValue {
+  try { return JSON.parse(payload) as JsonValue; } catch { return {}; }
 }
 
 function typeColor(type: string): string {
@@ -194,7 +202,11 @@ function PatchBlock({ patch }: { patch: string }) {
   );
 }
 
-function PayloadDetail({ type, payload, onOpenDoc }: { type: string; payload: Record<string, unknown>; onOpenDoc?: (docId: string) => void }) {
+function PayloadDetail({ type, payload, onOpenDoc }: { type: string; payload: JsonValue; onOpenDoc?: (docId: string) => void }) {
+  if (!isJsonObject(payload)) {
+    return <pre className={styles.sqlBlock}>{JSON.stringify(payload, null, 2)}</pre>;
+  }
+
   // d1.write — new events store a git-style patch.
   if (type === "d1.write" && typeof payload.patch === "string") {
     const docId = payload.doc_id as string;
@@ -315,7 +327,8 @@ export function ActivityView({ onOpenDoc }: ActivityViewProps) {
     return `${Math.floor(diff / 86400)}d ago`;
   }
 
-  function previewText(type: string, payload: Record<string, unknown>): string {
+  function previewText(type: string, payload: JsonValue): string {
+    if (!isJsonObject(payload)) return "";
     if (payload.doc_id) return `${payload.doc_id}`;
     if (payload.table) return `${payload.table}`;
     return "";
@@ -375,4 +388,8 @@ export function ActivityView({ onOpenDoc }: ActivityViewProps) {
       </div>
     </div>
   );
+}
+
+function isJsonObject(value: JsonValue): value is { [key: string]: JsonValue } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

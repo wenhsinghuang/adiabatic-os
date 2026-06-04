@@ -131,6 +131,47 @@ describe("Guard", () => {
     expect(event.type).toBe("sleep.recorded");
   });
 
+  test("writeEvent accepts any JSON payload shape", () => {
+    const payloads = [
+      "raw text",
+      ["a", 1, true, null],
+      null,
+      42,
+      false,
+    ] as const;
+
+    for (const [i, payload] of payloads.entries()) {
+      guard.writeEvent({
+        type: `json.payload.${i}`,
+        startedAt: Date.now(),
+        payload,
+      });
+    }
+
+    const events = guard.query(
+      "SELECT payload FROM events WHERE type LIKE 'json.payload.%' ORDER BY type"
+    ) as any[];
+    expect(events.map((event) => JSON.parse(event.payload))).toEqual(payloads);
+  });
+
+  test("writeEvent rejects non-JSON payload values", () => {
+    expect(() =>
+      guard.writeEvent({
+        type: "bad.payload",
+        startedAt: Date.now(),
+        payload: { missing: undefined } as any,
+      })
+    ).toThrow("must not be undefined");
+
+    expect(() =>
+      guard.writeEvent({
+        type: "bad.payload",
+        startedAt: Date.now(),
+        payload: 1n as any,
+      })
+    ).toThrow("JSON-serializable");
+  });
+
   // -- write (D2) --
 
   test("write runs DML and auto-logs D0", () => {

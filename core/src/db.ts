@@ -43,6 +43,25 @@ CREATE TABLE IF NOT EXISTS docs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_docs_updated ON docs(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS connector_integrations (
+  id            TEXT PRIMARY KEY,
+  connector_id  TEXT NOT NULL,
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  status        TEXT NOT NULL DEFAULT 'idle',
+  config        JSON,
+  sync_state    JSON,
+  auth_ref      TEXT,
+  last_error    TEXT,
+  last_run_at   INTEGER,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_connector_integrations_connector
+  ON connector_integrations(connector_id);
+CREATE INDEX IF NOT EXISTS idx_connector_integrations_status
+  ON connector_integrations(status);
 `;
 
 export interface AdiabaticDB {

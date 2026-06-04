@@ -3,6 +3,7 @@ import { ulid } from "./utils/ulid";
 import { D0_SCHEMA_VERSION } from "./schema";
 import { createUnifiedPatch } from "./utils/unified-diff";
 import { validateDocId } from "./doc-id";
+import { assertJsonValue, type JsonValue } from "./json";
 
 // Guard — the only write path into the database.
 // Every mutation goes through here: permission check → execute → auto D0 log.
@@ -13,7 +14,7 @@ export interface EventInput {
   externalId?: string;
   startedAt: number;
   endedAt?: number;
-  payload: Record<string, unknown>;
+  payload: JsonValue;
 }
 
 export interface GuardOptions {
@@ -88,6 +89,7 @@ export class Guard {
   // -- D0: writeEvent (explicit event, no additional D0 log) --
 
   writeEvent(event: EventInput): string {
+    validateEventInput(event);
     const id = ulid();
     const stmt = this.stmts.insertEvent ??= this.db.prepare(
       `INSERT INTO events (id, schema_version, source, type, external_id, started_at, ended_at, payload)
@@ -618,6 +620,19 @@ function containsStatementSeparator(sql: string): boolean {
     if (ch === ";") return true;
   }
   return false;
+}
+
+function validateEventInput(event: EventInput): void {
+  if (!event.type || event.type.trim() !== event.type) {
+    throw new Error("Guard: event requires a type");
+  }
+  if (!Number.isFinite(event.startedAt)) {
+    throw new Error("Guard: event requires a finite startedAt timestamp");
+  }
+  if (event.endedAt !== undefined && !Number.isFinite(event.endedAt)) {
+    throw new Error("Guard: event endedAt must be finite when provided");
+  }
+  assertJsonValue(event.payload, "Guard event payload");
 }
 
 function validateSingleStatement(sql: string, method: string): void {

@@ -16,6 +16,7 @@ import {
   type AuthContext,
   type AuthSecrets,
 } from "./auth";
+import type { JsonValue } from "./json";
 
 // Adiabatic OS — HTTP server entry point
 // All routes go through here. Guard is the only write path.
@@ -29,6 +30,14 @@ const authSecrets: AuthSecrets = {
   bridgeToken: requireSecret("ADIABATIC_BRIDGE_TOKEN"),
 };
 const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
+  type JsonValue =
+    | null
+    | string
+    | number
+    | boolean
+    | JsonValue[]
+    | { [key: string]: JsonValue };
+
   export const system: {
     query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
     write(sql: string, params?: unknown[]): Promise<{ ok: true }>;
@@ -39,7 +48,7 @@ const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
       startedAt: number;
       endedAt?: number;
       externalId?: string;
-      payload: Record<string, unknown>;
+      payload: JsonValue;
     }): Promise<{ ok: true; id: string }>;
   };
 }
@@ -327,7 +336,7 @@ const server = Bun.serve({
       if (path === "/api/events" && method === "POST") {
         const body = await readBody<{
           type: string; startedAt: number;
-          endedAt?: number; externalId?: string; payload: Record<string, unknown>;
+          endedAt?: number; externalId?: string; payload: JsonValue;
         }>(req);
         const id = guardForRequest(auth!).writeEvent(body);
         return json({ ok: true, id });

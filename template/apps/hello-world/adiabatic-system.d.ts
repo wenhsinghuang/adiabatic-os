@@ -1,4 +1,12 @@
 declare module "@adiabatic/system" {
+  type JsonValue =
+    | null
+    | string
+    | number
+    | boolean
+    | JsonValue[]
+    | { [key: string]: JsonValue };
+
   export const system: {
     query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
     write(sql: string, params?: unknown[]): Promise<{ ok: true }>;
@@ -9,7 +17,7 @@ declare module "@adiabatic/system" {
       startedAt: number;
       endedAt?: number;
       externalId?: string;
-      payload: Record<string, unknown>;
+      payload: JsonValue;
     }): Promise<{ ok: true; id: string }>;
   };
 }

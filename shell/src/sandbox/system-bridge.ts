@@ -4,6 +4,14 @@
 
 import { getServerUrl } from "./webcontainer";
 
+export type JsonValue =
+  | null
+  | string
+  | number
+  | boolean
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
 export interface System {
   query(sql: string, params?: unknown[]): Promise<unknown[]>;
   write(sql: string, params?: unknown[]): Promise<void>;
@@ -14,7 +22,7 @@ export interface System {
     startedAt: number;
     endedAt?: number;
     externalId?: string;
-    payload: Record<string, unknown>;
+    payload: JsonValue;
   }): Promise<string>;
 }
 
@@ -68,7 +76,7 @@ export function createSystemBridge(appId: string): System {
       startedAt: number;
       endedAt?: number;
       externalId?: string;
-      payload: Record<string, unknown>;
+      payload: JsonValue;
     }): Promise<string> {
       const result = (await bridgeCall(appId, "writeEvent", event)) as { id: string };
       return result.id;

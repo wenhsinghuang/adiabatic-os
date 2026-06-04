@@ -33,6 +33,11 @@ describe("DB", () => {
     ).get();
     expect(docs).toBeTruthy();
 
+    const connectorIntegrations = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='connector_integrations'"
+    ).get();
+    expect(connectorIntegrations).toBeTruthy();
+
     close();
   });
 
@@ -50,6 +55,26 @@ describe("DB", () => {
     expect(names).toContain("ended_at");
     expect(names).toContain("payload");
     expect(names).toContain("created_at");
+
+    close();
+  });
+
+  test("connector integrations table has runtime state columns", () => {
+    const { db, close } = openDB(workspace);
+    const columns = db.prepare("PRAGMA table_info(connector_integrations)").all() as { name: string }[];
+    const names = columns.map((c) => c.name);
+
+    expect(names).toContain("id");
+    expect(names).toContain("connector_id");
+    expect(names).toContain("enabled");
+    expect(names).toContain("status");
+    expect(names).toContain("config");
+    expect(names).toContain("sync_state");
+    expect(names).toContain("auth_ref");
+    expect(names).toContain("last_error");
+    expect(names).toContain("last_run_at");
+    expect(names).toContain("created_at");
+    expect(names).toContain("updated_at");
 
     close();
   });
