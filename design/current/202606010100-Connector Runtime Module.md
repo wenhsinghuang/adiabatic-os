@@ -17,7 +17,7 @@ ConnectorHost / supervisor
   -> launches an isolated connector runtime
   -> passes bound system capabilities
   -> receives guard.writeEvent(...) calls
-  -> injects source as connector:<instance-id>
+  -> injects source as connector:<connector_id>[:integration_key]
   -> Guard.writeEvent(...)
   -> events
 ```
@@ -32,8 +32,9 @@ System / core
   ConnectorHost        supervisor, launcher, capability issuer
   Trigger runtime      decides when poll/import runs happen
   Shell                integration UI and auth UX
-  Secret store         credentials
-  Integration state    config, status, checkpoint
+  Secret store         credentials, via unified auth/secrets module
+  Integration registry installed runtime instances in .adiabatic DB
+  Integration state    config, status, checkpoint, schedule in .adiabatic DB
 
 Plugin world
   Connector manifest   static declaration
@@ -43,67 +44,262 @@ Plugin world
 
 Host is system. Connector is plugin. Built-in connectors are still plugins; they are just shipped with the system.
 
+The key split is:
+
+```text
+connector package      installed code and static manifest
+connector integration  one runtime instance of a connector package
+```
+
+A connector package can be singleton, like `app-commits` or `terminal`, or it can support multiple integrations, like `google-calendar` with `work` and `personal` integrations. Connector authors still write single-integration logic. The system owns integration lifecycle, credential binding, scheduling, and source scoping.
+
+## Workspace Layout
+
+Installed connectors live in the workspace as normal top-level folders:
+
+```text
+workspace/
+  apps/
+  pages/
+  connectors/
+  .adiabatic/
+```
+
+`connectors/` contains installed connector packages:
+
+```text
+connectors/
+  app-commits/
+    connector.yaml
+    index.mjs
+  google-calendar/
+    connector.yaml
+    index.mjs
+```
+
+Each `connectors/<connector_id>/` directory is a connector package root. The package root contains the manifest and connector entry code. The manifest id must match the folder name:
+
+```text
+connectors/app-commits/connector.yaml -> id: app-commits
+connectors/google-calendar/connector.json -> id: google-calendar
+```
+
+This keeps install, remove, list, and source naming unambiguous.
+
+`connectors/<connector_id>/` is plugin material. `.adiabatic/` is runtime/system state. The connector package should be inspectable, editable, diffable, and removable without being treated as the source of truth for runtime checkpoint data or credentials.
+
+## Install, Remove, And Built-Ins
+
+Installing a connector means adding `connectors/<connector_id>/`. Removing a connector means removing that folder.
+
+Built-in connectors are distribution material, not a separate runtime category. First launch or explicit install can materialize a built-in connector by copying it into the same workspace path:
+
+```text
+system built-ins/app-commits -> workspace/connectors/app-commits
+```
+
+After materialization, the runtime treats it exactly like any other connector package. The supervisor scans workspace `connectors/`; it should not need to know whether a connector originally came from the system bundle, a downloaded package, or user-authored code.
+
+Remove semantics are also uniform:
+
+```text
+remove app-commits -> delete workspace/connectors/app-commits
+```
+
+Removing a built-in connector should not cause the system to silently restore it on the next boot. Reinstall/update should be an explicit user action.
+
+Removing a connector package is non-destructive to runtime state by default:
+
+```text
+remove connector package
+  delete connectors/<connector_id>/
+  keep integration config
+  keep checkpoint/state
+  keep auth_ref and stored credentials
+  mark integration non-runnable / missing package
+  disable schedules while package is missing
+```
+
+This makes remove reversible. Reinstalling a connector with the same id can reconnect to existing config, auth, and checkpoint state.
+
+Destructive cleanup should be a separate explicit action:
+
+```text
+purge / forget connector
+  remove connectors/<connector_id>/ if present
+  delete integration config and checkpoint state
+  revoke/delete credentials referenced by auth_ref
+  delete or disable connector schedules
+  keep historical D0 events
+```
+
+Historical D0 events are append-only facts. Removing or purging a connector should not rewrite past `events`.
+
+Upgrade policy:
+
+- do not silently overwrite a materialized connector folder that the user may have edited
+- track connector version/hash later so the shell can show update availability
+- update/reinstall should be explicit and should preserve or intentionally migrate `.adiabatic` runtime state
+- invalid or in-progress connector folders should be reported and skipped, not crash workspace boot
+
+## Connector Integrations
+
+A connector integration is one runtime instance of a connector package. It is system-owned runtime state, stored under `.adiabatic`, not in the connector package folder.
+
+```text
+id               internal integration row id
+connector_id      package id from connectors/<connector_id>/connector.yaml
+integration_key   optional user-defined key under connector_id
+```
+
+Singleton connectors use no integration key:
+
+```text
+connector_id: app-commits
+integration_key: null
+events.source: connector:app-commits
+```
+
+Runnable multiple-integration connectors require a user-defined key:
+
+```text
+connector_id: google-calendar
+integration_key: work
+events.source: connector:google-calendar:work
+
+connector_id: google-calendar
+integration_key: personal
+events.source: connector:google-calendar:personal
+```
+
+The integration key is not inferred by the system. It is chosen by the user when creating the integration. It is also the user-facing integration name. The system only validates it:
+
+```text
+pattern: [a-z0-9][a-z0-9-]*
+unique within connector_id
+stable after creation unless an explicit rename/migration exists
+```
+
+Auth provider metadata, such as an email address, can help the UI explain which account was connected, but it should not silently decide the integration key or become part of D0 source provenance.
+
+Integration rows can temporarily exist in setup state before they are runnable. A setup row gives the UI somewhere to attach auth, config, and requirement progress, but it must not run or emit D0 events until the integration has a valid source identity:
+
+```text
+singleton integration
+  source identity is valid with integration_key = null
+
+multiple integration
+  source identity is valid only after user sets integration_key
+```
+
+Integration lifecycle:
+
+```text
+install connector package
+  add connectors/<connector_id>/
+  ensure the first integration row
+  copy runtime.defaultSchedule into the integration schedule
+
+create integration
+  add another runtime instance under connector_id
+  only available when integrations.mode is multiple
+  bind config, auth_ref, schedule, and state namespace
+
+remove integration
+  stop scheduling and running that runtime instance
+  keep or purge runtime/auth data according to explicit user action
+
+uninstall connector package
+  delete connectors/<connector_id>/
+  keep integrations as non-runnable / missing package
+
+reinstall connector package
+  reconnect existing integrations with matching connector_id
+```
+
+Install always creates or ensures the first integration. Singleton and multiple connectors do not have different first-integration flow. The integration may be immediately runnable or may be in setup, depending on auth, config, platform requirements, and source identity requirements.
+
+For singleton connectors, the UI should not expose "Add account" or "Create integration" because there can only be one integration. If auth is required, the user flow is "Connect", which binds credentials to that integration.
+
+For multiple-integration connectors, the same first integration appears after install. The UI can show it as "Needs setup" or "Not connected" until the user provides the required integration key, config, auth, and platform requirements. The same connector management UI can also expose "Add integration" or "Add account" for additional integrations.
+
+`integrations.mode` controls cardinality, not whether the first integration exists. Auth type, required config, active platform requirements, and source identity determine whether the first integration needs a connect/setup flow.
+
 ## Connector Manifest
 
 The manifest is the static plugin declaration. It is file-based so it is easy to inspect, review, version, and modify.
 
+The manifest lives at the connector package root:
+
+```text
+connectors/<connector_id>/connector.yaml
+connectors/<connector_id>/connector.yml
+connectors/<connector_id>/connector.json
+```
+
 ```yaml
 id: app-commits
 name: App Commits
-entry: ./index.ts
+entry: ./index.mjs
 runtime:
-  mode: watch
+  mode: poll
+  defaultSchedule: "*/15 * * * *"
+integrations:
+  mode: singleton
 platforms:
-  - darwin
-  - linux
-  - windows
+  darwin: {}
+  linux: {}
+  windows: {}
 auth:
   type: none
-events:
-  - app.commit
 ```
 
 Poll connector example:
 
 ```yaml
-id: calendar
-name: Calendar
-entry: ./index.ts
+id: google-calendar
+name: Google Calendar
+entry: ./index.mjs
 runtime:
   mode: poll
-  schedule: every 15m
+  defaultSchedule: "*/15 * * * *"
+integrations:
+  mode: multiple
 platforms:
-  - darwin
-  - linux
-  - windows
-  - ios
-  - android
-  - cloud
+  darwin: {}
+  linux: {}
+  windows: {}
+  ios: {}
+  android: {}
+  cloud: {}
 auth:
   type: oauth2
   provider: google
   scopes:
     - https://www.googleapis.com/auth/calendar.readonly
-events:
-  - calendar.event
 ```
 
 The manifest declares what the system needs to know:
 
 - `id` and `name`
 - `entry`
-- runtime mode and schedule
-- platform compatibility
-- required capabilities
+- runtime mode and default schedule
+- integration cardinality
+- structured platform compatibility and requirements
 - auth type
 - default config schema, later
-- event types emitted, for documentation and UI
 
-It should not contain secrets or mutable sync checkpoints.
+The manifest id must match the containing folder name. `entry` is resolved relative to the connector package root and must stay inside that root.
+
+The manifest should not contain secrets, auth tokens, enabled/disabled status, mutable config, or sync checkpoints. The connector folder is plugin material, not runtime state.
+
+`runtime.defaultSchedule` is only valid for `poll` connectors. It is a creation default for new integrations, not the scheduler's long-term source of truth. When an integration is created, the system copies the default into the integration schedule. After that, the scheduler reads the integration's own schedule.
+
+`integrations.mode` defaults to `singleton` when omitted. Use `multiple` only when the same connector package naturally supports multiple runtime instances, such as separate accounts or source scopes.
 
 ## Runtime Modes
 
-Mode is host/scheduler metadata. Connector code still has one entrypoint.
+Mode is package-level host/scheduler metadata. Connector code still has one entrypoint.
 
 ```text
 watch   long-running runtime; exits when signal is aborted
@@ -114,10 +310,27 @@ import  manual one-pass run over bounded input
 Examples:
 
 - `watch`: terminal, app commits watcher, macOS accessibility capture.
-- `poll`: calendar, Oura, GitHub API.
+- `poll`: Google Calendar, Oura, GitHub API.
 - `import`: Obsidian vault, Notion export, CSV/archive import.
 
 Do not add `stream` as a separate mode yet. High-throughput streams are watch connectors with batching and backpressure policy.
+
+Mode is not user-editable in the integration UI because it is coupled to the connector code contract. Schedule is integration runtime policy and can be user-editable later.
+
+Trigger semantics:
+
+```text
+watch connector
+  core up -> run enabled singleton/matching integrations continuously
+  core down -> stops
+
+poll connector
+  core up -> scheduler evaluates due integration schedules
+  core down -> no execution
+  next core startup -> due integrations run once as catch-up
+```
+
+Missed cron ticks collapse into one catch-up run. Connectors should use state cursors to catch up source data.
 
 ## Connector Code Contract
 
@@ -161,6 +374,8 @@ The connector author should only need to understand:
 
 They should not need to understand host internals, `withSource()`, app identity, DB handles, scheduler internals, or shell auth UX.
 
+Do not expose integration identity in the connector context by default. The host already scopes `guard`, `auth`, `state`, and `config` to the current integration. Most connector code should not care whether it is running for `work`, `personal`, or a singleton runtime instance.
+
 ## Bound Guard
 
 The connector-facing guard is a bound capability, not the raw core `Guard`.
@@ -186,27 +401,35 @@ type ConnectorEventInput = {
 
 `JsonValue` means JSON-serializable data: `null`, string, finite number, boolean, arrays, and plain objects. The payload does not have to be an object. Runtime validation rejects `undefined`, functions, `BigInt`, circular references, and non-plain objects.
 
-The runtime injects source as `connector:<instance-id>`.
+The runtime injects source from connector id plus optional integration key.
 
-First version can use connector id as instance id:
+Singleton integrations:
 
 ```text
 connector:app-commits
 connector:terminal
 ```
 
-Multi-account connectors should later use instance ids:
+Multiple integrations:
 
 ```text
-connector:google-calendar-personal
-connector:google-calendar-work
+connector:google-calendar:work
+connector:google-calendar:personal
 ```
 
-This matters because D0 dedup is keyed by `(source, external_id)`.
+This matters because D0 dedup is keyed by `(source, external_id)`. The connector author never provides source or integration key.
 
 ## Auth
 
-Auth is system-managed. Connectors declare auth requirements; host and shell implement the flow.
+Auth is system-managed. Connectors declare standardized credential or account requirements; host and shell implement the flow. Auth covers flows the system can reasonably standardize across connectors:
+
+```text
+none
+apiKey
+oauth2
+```
+
+Secret material belongs to the unified auth/secrets module, not to `connectors/<connector_id>/` and not to connector-owned files.
 
 Manifest examples:
 
@@ -229,7 +452,7 @@ auth:
     - https://www.googleapis.com/auth/calendar.readonly
 ```
 
-Connector code receives an auth capability handle, not raw credential state.
+Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer.
 
 ```ts
 type ConnectorAuthHandle =
@@ -272,64 +495,141 @@ type ConnectorStateHandle<TState> = {
 Examples:
 
 - `app-commits`: last seen commit SHA.
-- `calendar`: sync token.
+- `google-calendar`: sync token.
 - `oura`: last synced day.
 - `terminal`: current session checkpoint or last flushed chunk pointer.
 - `import`: last imported file hash or offset.
 
 State is not product data, not D0, and not secret storage. It is runtime bookkeeping so the connector can resume.
 
-Persisted state belongs in a system-owned integration table, not in connector YAML.
+Persisted state belongs in `.adiabatic/adiabatic.db`, in a system-owned integration table, not in connector YAML or the workspace connector folder. It is scoped per integration. It has the same storage status as `events` and `docs`: workspace-owned system data managed by the substrate.
 
-## Platform And Capability Gating
+## Platform Requirements
 
-Platform compatibility belongs in the manifest.
+Platform compatibility and platform-coupled setup requirements belong together in the manifest.
 
 ```yaml
 platforms:
-  - darwin
-  - linux
-  - windows
-  - ios
-  - android
-  - cloud
+  darwin:
+    requirements:
+      - macos-accessibility
+  windows:
+    requirements:
+      - windows-ui-automation
+  linux: {}
 ```
 
-Platform-specific local connectors can declare narrower support:
+Each key under `platforms` declares support for that platform. An empty object means the connector supports the platform without extra setup requirements.
+
+Requirements are connector-specific setup gates, not system auth backends. They cover local permissions, platform APIs, source-specific setup, or other prerequisites that are too platform-coupled or source-specific for the substrate to implement directly.
+
+Example local connector:
 
 ```yaml
 id: macos-ax
+name: macOS Accessibility
+entry: ./index.mjs
 runtime:
   mode: watch
+integrations:
+  mode: singleton
 platforms:
-  - darwin
-capabilities:
-  - macos.accessibility
+  darwin:
+    requirements:
+      - macos-accessibility
 auth:
-  type: localPermission
+  type: none
 ```
+
+The connector package provides handlers for requirement ids:
+
+```ts
+export const requirements = {
+  "macos-accessibility": {
+    label: "Accessibility",
+    description: "Required to observe active windows and UI events.",
+
+    async check(ctx) {
+      return {
+        status: "missing",
+        message: "Accessibility access is not granted.",
+      };
+    },
+
+    async request(ctx) {
+      return {
+        status: "pending",
+        message: "Grant access in System Settings.",
+      };
+    },
+  },
+};
+```
+
+Minimal requirement handler contract:
+
+```ts
+type RequirementStatus =
+  | { status: "satisfied"; message?: string }
+  | { status: "missing"; message?: string }
+  | { status: "pending"; message?: string }
+  | { status: "error"; message: string };
+
+type RequirementHandler = {
+  label: string;
+  description?: string;
+  check(ctx: RequirementContext): Promise<RequirementStatus>;
+  request?(ctx: RequirementContext): Promise<RequirementStatus>;
+};
+```
+
+System behavior:
+
+```text
+load manifest
+select current platform entry
+for each requirement id:
+  load connector requirement handler
+  call check()
+  if not satisfied, keep integration in setup / needs requirement
+
+user clicks Grant / Set Up
+  call request() if present
+  call check() again
+
+before run
+  call check() for active platform requirements
+  if any requirement is not satisfied, block run
+```
+
+This keeps substrate responsibility small. The system owns lifecycle, setup UI shell, status storage, and run gating. The connector owns platform-specific check/request implementation, labels, help text, settings links, and source-specific setup behavior.
 
 The host decides whether a connector can be enabled or run on the current platform. A macOS-only connector should simply not run on mobile. Mobile can have separate connector runtimes and platform-specific connectors.
 
 ## Integration State
 
-Connector definition and connector instance state are separate.
+Connector package definition and connector integration state are separate.
 
 ```text
-connector.yaml
-  static plugin declaration
+connectors/<connector_id>/connector.yaml
+  static package declaration and code package
 
-connector_integrations table
-  enabled/status/config/sync_state/auth_ref/last_error/last_run_at
+.adiabatic/adiabatic.db connector_integrations table
+  id / connector_id / integration_key / enabled / status
+  config / sync_state / auth_ref / schedule_cron
+  last_error / last_run_at / next_run_at
 
-secret store
+connectors/<connector_id>/ removal
+  removes the installed connector package
+
+unified auth/secrets module
   tokens and API keys
 
 D0 events
-  connector output
+  connector integration output
 ```
 
-The table is system state, not plugin code. It supports shell UI, status inspection, retries, scheduling, and reconnect/disconnect UX.
+The table is system state, not plugin code. It supports shell UI, status inspection, retries, scheduling, and reconnect/disconnect UX. Deleting `connectors/<connector_id>/` removes the installed package; it does not rewrite historical D0 events or blindly delete system-owned runtime rows.
 
 ## Import Versus App
 
@@ -377,6 +677,8 @@ System owns:
 - isolation
 - source injection
 - auth UX and credential storage
+- requirement setup UI shell and run gating
+- integration lifecycle
 - integration state persistence
 - high-throughput queue and batch policy
 
@@ -384,6 +686,7 @@ Connector owns:
 
 - source-specific capture/fetch logic
 - source-specific redaction
+- platform requirement check/request handlers
 - event type and payload shape
 - external id choice
 - checkpoint state shape
@@ -405,6 +708,7 @@ Why:
 - clear stable `externalId` from commit SHA
 - useful immediately for relating code changes to D0 history
 - exercises manifest, runtime, state, and D0 source injection without auth complexity
+- can be shipped as built-in material, then copied to `connectors/app-commits`
 
 The second built-in should be `terminal`, after capture policy is explicit:
 
@@ -420,6 +724,8 @@ The second built-in should be `terminal`, after capture policy is explicit:
 - no connector-owned schema migrations
 - no outbound action connectors
 - no connector-owned OAuth UI
+- no connector-owned multi-account lifecycle
+- no substrate-owned catalog of every platform permission flow
 - no raw credential injection into connector code
 - no durable remote webhook delivery guarantees yet
 
@@ -436,20 +742,23 @@ core/src/connectors/
   state.ts          connector integration state handles
   guard.ts          bound connector guard facade
   types.ts          public connector contract
+  install.ts        install/remove/materialize connector folders in workspace connectors/
 ```
 
-The system-owned runtime state is persisted in `connector_integrations`:
+The target system-owned runtime state is persisted in `connector_integrations`:
 
 ```text
-id / connector_id / enabled / status / config / sync_state / auth_ref
-last_error / last_run_at / created_at / updated_at
+id / connector_id / integration_key / enabled / status / config
+sync_state / auth_ref / schedule_cron / last_error / last_run_at / next_run_at
+created_at / updated_at
 ```
 
-The core invariant is implemented:
+The core invariant:
 
 ```text
 connector code calls guard.writeEvent(event)
-  -> events.source = connector:<instance-id>
+  -> singleton events.source = connector:<connector_id>
+  -> multi-integration events.source = connector:<connector_id>:<integration_key>
 ```
 
 Connector code does not see `ConnectorHost.emit`, `withSource`, or separate `start` / `sync` APIs.
@@ -457,7 +766,10 @@ Connector code does not see `ConnectorHost.emit`, `withSource`, or separate `sta
 Still pending outside the core connector system:
 
 - shell integration management UI
-- real secret-store backend beyond the injectable secret-store interface
+- integration-key-aware runtime schema, setup status, and source builder
+- `runtime.defaultSchedule` manifest validation and integration schedule copy
+- structured `platforms` manifest validation and connector requirement handlers
+- unified auth/secrets module adapter beyond the current injectable secret-store interface
 - trigger runtime wiring for poll schedules
 - worker/process-level connector isolation
 - high-throughput queue and transactional batch writer
