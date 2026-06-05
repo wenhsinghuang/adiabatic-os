@@ -392,7 +392,7 @@ type BoundConnectorGuard = {
 ```ts
 type ConnectorEventInput = {
   type: string;
-  externalId?: string;
+  externalId: string;
   startedAt: number;
   endedAt?: number;
   payload: JsonValue;
@@ -400,6 +400,8 @@ type ConnectorEventInput = {
 ```
 
 `JsonValue` means JSON-serializable data: `null`, string, finite number, boolean, arrays, and plain objects. The payload does not have to be an object. Runtime validation rejects `undefined`, functions, `BigInt`, circular references, and non-plain objects.
+
+For connector-facing writes, `externalId` is required. It is the stable idempotency key for the source item within the bound connector source. Poll retries, catch-up runs, and connector restarts must produce the same `externalId` for the same upstream item. If the upstream system does not expose a native id, the connector must derive a deterministic key from stable source identity such as URL, path, commit SHA, provider object id, or a hash of those fields.
 
 The runtime injects source from connector id plus optional integration key.
 
@@ -417,7 +419,7 @@ connector:google-calendar:work
 connector:google-calendar:personal
 ```
 
-This matters because D0 dedup is keyed by `(source, external_id)`. The connector author never provides source or integration key.
+This matters because D0 dedup is keyed by `(source, external_id)`. The connector author never provides source or integration key, but they must provide the per-item external id. Core D0 may still allow nullable `external_id` for non-connector/system events; the connector contract should not.
 
 ## Auth
 
