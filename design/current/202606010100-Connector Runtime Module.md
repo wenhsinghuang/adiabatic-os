@@ -13,8 +13,8 @@ The connector contract should not describe what kind of source the connector is.
 ```text
 ConnectorHost / supervisor
   -> reads connector manifest
-  -> checks platform and auth
-  -> launches an isolated connector runtime
+  -> checks package trust, platform, and auth
+  -> launches a connector runner process
   -> passes bound system capabilities
   -> receives guard.writeEvent(...) calls
   -> injects source as connector:<connector_id>[:integration_key]
@@ -30,15 +30,19 @@ Connector code never receives a writable DB handle, never provides `source`, and
 System / core
   Guard                write boundary
   ConnectorHost        supervisor, launcher, capability issuer
+  Connector registry   workspace connector discovery and package trust status
+  Connector runner     process execution boundary for one connector integration
+  Capability broker    host-side proxy for guard, state, auth, and source authority
   Trigger runtime      decides when poll/import runs happen
   Shell                integration UI and auth UX
   Secret store         credentials, via unified auth/secrets module
+  Official catalog     signed/hash source for official connector packages
   Integration registry installed runtime instances in .adiabatic DB
   Integration state    config, status, checkpoint, schedule in .adiabatic DB
 
 Plugin world
   Connector manifest   static declaration
-  Connector runtime    isolated run unit
+  Connector runtime    process execution unit
   Connector code       source capture/fetch/redact/normalize
 ```
 
@@ -55,7 +59,7 @@ A connector package can be singleton, like `app-commits` or `terminal`, or it ca
 
 ## Workspace Layout
 
-Installed connectors live in the workspace as normal top-level folders:
+Connector package folders live in the workspace as normal top-level folders:
 
 ```text
 workspace/
@@ -65,7 +69,7 @@ workspace/
   .adiabatic/
 ```
 
-`connectors/` contains installed connector packages:
+`connectors/` contains connector packages:
 
 ```text
 connectors/
@@ -88,6 +92,79 @@ This keeps install, remove, list, and source naming unambiguous.
 
 `connectors/<connector_id>/` is plugin material. `.adiabatic/` is runtime/system state. The connector package should be inspectable, editable, diffable, and removable without being treated as the source of truth for runtime checkpoint data or credentials.
 
+Folder existence is not runnable authority. A connector folder can be discovered and inspected without being allowed to execute. Runtime execution requires a trust decision based on the current package content hash:
+
+```text
+workspace/connectors/<connector_id>/
+  discovered package material
+
+.adiabatic/
+  integration state
+  custom human approval records
+  cached official catalog metadata
+```
+
+This keeps private and user-authored connectors possible while preventing arbitrary or LLM-modified connector code from being scheduled just because a folder exists.
+
+## Trust And Provenance
+
+Connector v1 does not use a sandbox as its primary security model. Connectors are dynamically discovered from `workspace/connectors/*`, but only trusted package content is runnable.
+
+The package content hash is the runtime trust key:
+
+```text
+current_hash = hash connector package files
+
+if current_hash matches signed official catalog entry:
+  status = official trusted
+  badge = Official
+  runnable = true
+
+else if current_hash matches a human-approved custom hash:
+  status = custom trusted
+  badge = Custom
+  runnable = true
+
+else if connector was previously trusted but current_hash changed:
+  status = modified
+  badge = Modified / Needs Approval
+  runnable = false
+
+else:
+  status = untrusted
+  badge = Custom / Needs Approval
+  runnable = false
+```
+
+Official status does not come from a mutable workspace DB flag. It comes from matching the current package hash against an official catalog entry whose origin is verified by the host. The official catalog is expected to be downloaded from the official R2 registry at startup, app download, or periodic update time, then cached locally for runtime lookup. A bundled catalog can be used as an offline fallback. R2 is distribution storage; the trust root should be signed catalog/package metadata or an equivalent host-verifiable official hash source.
+
+The workspace DB may cache catalog data and records of what the workspace has seen, but it should not be the authority for saying a connector is official. It is the authority for human-approved custom hashes:
+
+```text
+connector_custom_approvals
+  connector_id
+  approved_hash
+  approved_at
+```
+
+Custom approval is human-only. Apps, connectors, LLM tools, background jobs, and bridge APIs must not be able to silently approve a connector hash. Approval should be a shell/native user action after the user reviews the connector package. Any package change changes `current_hash`, invalidates the prior approval, and requires human approval again.
+
+If an official connector is edited and then approved by the user, it becomes a custom trusted connector for that hash. It should no longer display the Official badge until its content hash again matches the official catalog.
+
+Trust checks happen at execution boundaries:
+
+```text
+poll/import
+  check current hash before each run
+
+watch
+  check current hash before starting the runner process
+  already-running watch processes are not continuously rehashed by default
+  next restart blocks if package content changed
+```
+
+Future file watching can mark a running watch connector modified and stop it, but that is not required for the v1 trust model.
+
 ## Install, Remove, And Built-Ins
 
 Installing a connector means adding `connectors/<connector_id>/`. Removing a connector means removing that folder.
@@ -98,7 +175,7 @@ Built-in connectors are distribution material, not a separate runtime category. 
 system built-ins/app-commits -> workspace/connectors/app-commits
 ```
 
-After materialization, the runtime treats it exactly like any other connector package. The supervisor scans workspace `connectors/`; it should not need to know whether a connector originally came from the system bundle, a downloaded package, or user-authored code.
+After materialization, the runtime treats it exactly like any other connector package location, but not all package locations are runnable. The registry scans workspace `connectors/`, validates manifests, computes content hashes, and classifies packages as official, custom trusted, modified, missing, or untrusted before any connector code is imported.
 
 Remove semantics are also uniform:
 
@@ -138,7 +215,7 @@ Historical D0 events are append-only facts. Removing or purging a connector shou
 Upgrade policy:
 
 - do not silently overwrite a materialized connector folder that the user may have edited
-- track connector version/hash later so the shell can show update availability
+- track connector version/hash so the shell can show update availability and modified status
 - update/reinstall should be explicit and should preserve or intentionally migrate `.adiabatic` runtime state
 - invalid or in-progress connector folders should be reported and skipped, not crash workspace boot
 
@@ -197,8 +274,20 @@ Integration lifecycle:
 ```text
 install connector package
   add connectors/<connector_id>/
+  compute package hash
+  classify official/custom trust status
   ensure the first integration row
   copy runtime.defaultSchedule into the integration schedule
+
+discover untrusted connector package
+  add or find connectors/<connector_id>/
+  load manifest and compute package hash
+  mark as custom / needs approval
+  do not schedule or run until human approval
+
+human approve custom connector package
+  record connector_id + current package hash
+  allow runs until package content changes
 
 create integration
   add another runtime instance under connector_id
@@ -215,6 +304,7 @@ uninstall connector package
 
 reinstall connector package
   reconnect existing integrations with matching connector_id
+  recompute package hash and trust status
 ```
 
 Install always creates or ensures the first integration. Singleton and multiple connectors do not have different first-integration flow. The integration may be immediately runnable or may be in setup, depending on auth, config, platform requirements, and source identity requirements.
@@ -332,6 +422,105 @@ poll connector
 
 Missed cron ticks collapse into one catch-up run. Connectors should use state cursors to catch up source data.
 
+## Runtime Components
+
+The connector runtime is split into explicit host-owned components:
+
+```text
+WorkspaceConnectorRegistry
+  scan workspace/connectors/*
+  load and validate manifest
+  resolve entry path
+  compute package content hash
+  classify package trust status
+  register trusted package metadata
+  never import connector code before trust passes
+
+ConnectorIntegrationStore
+  read/write .adiabatic DB connector_integrations
+  owns config, state, auth_ref, schedule, status, and timestamps
+
+ConnectorSupervisor
+  public orchestration API
+  install/remove/register/list/ensureIntegration/run/start/abort
+  coordinates registry, integration store, runner, and scheduler
+
+ConnectorRunner
+  runs exactly one integration execution
+  builds scoped connector context
+  checks trust, platform requirements, auth, setup state, and source identity
+  injects bound guard source
+  imports connector entry only after all run gates pass
+  calls run(context)
+
+ConnectorScheduler
+  reads integration schedules
+  starts poll runs when due
+  starts watch connectors on core up
+  stops watch connectors on core down
+```
+
+`ConnectorRunner` should be a separate process runner in the full runtime. This is not a sandbox claim. The process boundary exists for connector lifecycle, crash isolation, cancellation, and future runner backend flexibility. Trust still comes from official hash/signature verification or human-approved custom hashes.
+
+```text
+poll/import
+  host checks trust
+  spawn runner process
+  run once
+  exit
+
+watch
+  host checks trust
+  spawn long-lived runner process
+  abort/kill on core stop, disable, remove, or restart
+```
+
+The runner process does not receive a DB handle, raw secret store, source authority, or scheduler internals. It receives IPC-backed capability proxies that preserve the connector-facing contract.
+
+## Capability Broker
+
+The capability broker is the host-side authority layer between a connector runner process and the core substrate.
+
+Connector code still sees:
+
+```ts
+run({ guard, auth, state, config, signal })
+```
+
+But inside a runner process these handles are IPC proxies:
+
+```text
+connector code
+  guard.writeEvent(event)
+    -> IPC
+    -> host capability broker
+    -> validate event
+    -> inject source
+    -> Guard.writeEvent(...)
+
+connector code
+  state.get/set(...)
+    -> IPC
+    -> host capability broker
+    -> scoped integration state
+
+connector code
+  auth.getToken()
+    -> IPC
+    -> host capability broker
+    -> unified auth/secrets module
+```
+
+The broker owns:
+
+- D0 write validation and source injection
+- integration-scoped state access
+- auth token access and refresh
+- trust/run gate enforcement for active runs
+- cancellation and run status reporting
+
+This keeps connector code from receiving ambient authority while preserving a small author-facing API.
+
 ## Connector Code Contract
 
 Connector code should expose one run entrypoint.
@@ -351,6 +540,8 @@ export default defineConnector({
   },
 });
 ```
+
+For v1, connector package entries are JavaScript ESM modules loaded from `entry`. Official connectors can be authored in TypeScript, but installed package material should expose a built ESM entry. Other languages require a future runner backend and are not part of the current connector contract.
 
 The public context is intentionally small:
 
@@ -621,6 +812,14 @@ connectors/<connector_id>/connector.yaml
   config / sync_state / auth_ref / schedule_cron
   last_error / last_run_at / next_run_at
 
+.adiabatic/adiabatic.db connector_custom_approvals table
+  connector_id / approved_hash / approved_at
+
+.adiabatic cached official catalog metadata
+  locally cached official id/version/hash/signature data
+  downloaded from official registry / R2
+  not the authority by itself unless host verification passes
+
 connectors/<connector_id>/ removal
   removes the installed connector package
 
@@ -631,7 +830,7 @@ D0 events
   connector integration output
 ```
 
-The table is system state, not plugin code. It supports shell UI, status inspection, retries, scheduling, and reconnect/disconnect UX. Deleting `connectors/<connector_id>/` removes the installed package; it does not rewrite historical D0 events or blindly delete system-owned runtime rows.
+The tables are system state, not plugin code. They support shell UI, status inspection, trust gating, retries, scheduling, and reconnect/disconnect UX. Deleting `connectors/<connector_id>/` removes the installed package; it does not rewrite historical D0 events or blindly delete system-owned runtime rows.
 
 ## Import Versus App
 
@@ -676,13 +875,22 @@ System owns:
 - runtime policy
 - scheduling
 - platform gating
-- isolation
+- connector package discovery
+- trust classification and run gating
+- process runner lifecycle
+- capability broker
 - source injection
 - auth UX and credential storage
 - requirement setup UI shell and run gating
 - integration lifecycle
 - integration state persistence
 - high-throughput queue and batch policy
+
+Shell owns:
+
+- human-only custom connector approval UX
+- official/custom/modified/missing status display
+- review surfaces before approving a custom package hash
 
 Connector owns:
 
@@ -700,6 +908,12 @@ Guard owns:
 - append-only event invariants
 - SQLite transaction boundaries
 
+Official registry owns:
+
+- official connector catalog metadata
+- approved package hash/version/signature records
+- downloadable connector distribution artifacts
+
 ## Built-In Connector Order
 
 The first built-in should be `app-commits`.
@@ -711,6 +925,7 @@ Why:
 - useful immediately for relating code changes to D0 history
 - exercises manifest, runtime, state, and D0 source injection without auth complexity
 - can be shipped as built-in material, then copied to `connectors/app-commits`
+- can be marked Official when its package hash matches the official catalog
 
 The second built-in should be `terminal`, after capture policy is explicit:
 
@@ -730,6 +945,10 @@ The second built-in should be `terminal`, after capture policy is explicit:
 - no substrate-owned catalog of every platform permission flow
 - no raw credential injection into connector code
 - no durable remote webhook delivery guarantees yet
+- no sandbox as the v1 connector security model
+- no automatic approval for custom or modified connector code
+- no mutable DB flag that can make a connector official
+- no app, connector, LLM, or bridge API path for human-only connector approval
 
 ## Current Implementation
 
@@ -768,10 +987,13 @@ Connector code does not see `ConnectorHost.emit`, `withSource`, or separate `sta
 Still pending outside the core connector system:
 
 - shell integration management UI
+- workspace connector trust gate, package hashing, and official/custom/modified status
+- cached official catalog download/verification from the official registry / R2
+- human-only custom connector approval flow
 - integration-key-aware runtime schema, setup status, and source builder
 - `runtime.defaultSchedule` manifest validation and integration schedule copy
 - structured `platforms` manifest validation and connector requirement handlers
 - unified auth/secrets module adapter beyond the current injectable secret-store interface
 - trigger runtime wiring for poll schedules
-- worker/process-level connector isolation
+- separate connector runner process and host capability broker
 - high-throughput queue and transactional batch writer

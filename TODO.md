@@ -40,6 +40,12 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Dispatcher in host shell
   - Dispatcher reads trigger table, watches D0, and cold-starts apps
 
+- [ ] D0 event subscription / hooks
+  - Guard API: `subscribe({ type }, fn)` or equivalent event stream
+  - Event-trigger source for the trigger runtime
+  - Shared substrate for app subscribe and connector subscribe
+  - All automation/event flow should continue to pass through D0
+
 - [ ] Shell redesign
 
 - [ ] CI/CD and R2 artifact push
