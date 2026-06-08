@@ -154,22 +154,23 @@ auth:
       },
       definition,
     );
-    supervisor.ensureIntegration({
+    const integration = supervisor.ensureIntegration({
       connectorId: "app-commits",
       config: { label: "integration", extra: true },
     });
 
-    await supervisor.run("app-commits", { config: { label: "override" } });
+    expect(integration.id).not.toBe("app-commits");
+    await supervisor.run(integration.id, { config: { label: "override" } });
 
     const event = db.prepare("SELECT * FROM events WHERE type = ?").get("app.commit") as any;
     expect(event.source).toBe("connector:app-commits");
     expect(event.external_id).toBe("abc123");
     expect(JSON.parse(event.payload)).toEqual({ sha: "abc123", label: "override" });
 
-    const integration = supervisor.getIntegration<unknown, { cursor: string }>("app-commits");
-    expect(integration?.status).toBe("idle");
-    expect(integration?.syncState).toEqual({ cursor: "abc123" });
-    expect(integration?.lastRunAt).toBeGreaterThan(0);
+    const stored = supervisor.getIntegration<unknown, { cursor: string }>(integration.id);
+    expect(stored?.status).toBe("idle");
+    expect(stored?.syncState).toEqual({ cursor: "abc123" });
+    expect(stored?.lastRunAt).toBeGreaterThan(0);
   });
 
   test("supports multiple connector instances with separate sources and state", async () => {
@@ -196,19 +197,71 @@ auth:
       },
       definition,
     );
-    supervisor.ensureIntegration({ connectorId: "calendar", integrationKey: "personal", config: { externalId: "same" } });
-    supervisor.ensureIntegration({ connectorId: "calendar", integrationKey: "work", config: { externalId: "same" } });
+    const personal = supervisor.ensureIntegration({ connectorId: "calendar", integrationKey: "personal", config: { externalId: "same" } });
+    const work = supervisor.ensureIntegration({ connectorId: "calendar", integrationKey: "work", config: { externalId: "same" } });
 
-    await supervisor.run("calendar:personal");
-    await supervisor.run("calendar:work");
+    expect(personal.id).not.toBe("calendar:personal");
+    expect(work.id).not.toBe("calendar:work");
+    await supervisor.run(personal.id);
+    await supervisor.run(work.id);
 
     const rows = db.prepare("SELECT source, external_id FROM events ORDER BY source").all() as any[];
     expect(rows).toEqual([
       { source: "connector:calendar:personal", external_id: "same" },
       { source: "connector:calendar:work", external_id: "same" },
     ]);
-    expect(supervisor.getIntegration("calendar:personal")?.syncState).toEqual({ seen: "same" });
-    expect(supervisor.getIntegration("calendar:work")?.syncState).toEqual({ seen: "same" });
+    expect(supervisor.getIntegration(personal.id)?.syncState).toEqual({ seen: "same" });
+    expect(supervisor.getIntegration(work.id)?.syncState).toEqual({ seen: "same" });
+  });
+
+  test("edits a multi-integration setup row into a keyed integration", async () => {
+    const definition: ConnectorDefinition<{ externalId: string }, { seen: string }> = {
+      async run({ guard, state, config }) {
+        await guard.writeEvent({
+          type: "calendar.event",
+          externalId: config.externalId,
+          startedAt: 2100,
+          payload: { id: config.externalId },
+        });
+        await state.set({ seen: config.externalId });
+      },
+    };
+
+    supervisor.register(
+      {
+        id: "calendar",
+        name: "Calendar",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "multiple" },
+        auth: { type: "none" },
+      },
+      definition,
+    );
+
+    const setup = supervisor.ensureFirstIntegration("calendar");
+    expect(setup.integrationKey).toBeUndefined();
+    expect(setup.setupStatus).toBe("setup");
+    expect(supervisor.list()[0].source).toBeUndefined();
+
+    const ready = supervisor.updateIntegration<{ externalId: string }, { seen: string }>(setup.id, {
+      integrationKey: "work",
+      setupStatus: "ready",
+      config: { externalId: "event-1" },
+    });
+    expect(ready.id).toBe(setup.id);
+    expect(ready.integrationKey).toBe("work");
+    expect(ready.setupStatus).toBe("ready");
+    expect(supervisor.list()[0].source).toBe("connector:calendar:work");
+
+    await supervisor.run(ready.id);
+
+    const event = db.prepare("SELECT source, external_id FROM events").get() as any;
+    expect(event).toEqual({ source: "connector:calendar:work", external_id: "event-1" });
+    expect(supervisor.getIntegration(ready.id)?.syncState).toEqual({ seen: "event-1" });
+    expect(() =>
+      supervisor.updateIntegration(ready.id, { integrationKey: "personal" })
+    ).toThrow("rename requires an explicit migration");
   });
 
   test("provides auth as a capability handle", async () => {
@@ -239,7 +292,7 @@ auth:
     const integration = supervisor.ensureIntegration({ connectorId: "oura" });
     await supervisor.getAuthManager().setToken(integration.authRef!, "secret-token");
 
-    await supervisor.run("oura");
+    await supervisor.run(integration.id);
 
     expect(tokenSeen).toBe("secret-token");
     const event = db.prepare("SELECT source, type FROM events").get() as any;
@@ -272,9 +325,9 @@ auth:
         },
       },
     );
-    supervisor.ensureIntegration({ connectorId: "json-feed" });
+    const integration = supervisor.ensureIntegration({ connectorId: "json-feed" });
 
-    await supervisor.run("json-feed");
+    await supervisor.run(integration.id);
 
     const event = db.prepare("SELECT payload FROM events WHERE type = ?").get("json.string") as any;
     expect(JSON.parse(event.payload)).toBe("hello");
@@ -299,9 +352,9 @@ auth:
         },
       },
     );
-    supervisor.ensureIntegration({ connectorId: "id-feed" });
+    const integration = supervisor.ensureIntegration({ connectorId: "id-feed" });
 
-    await supervisor.run("id-feed");
+    await supervisor.run(integration.id);
   });
 
   test("fails auth connectors without credentials and records integration error", async () => {
@@ -320,12 +373,12 @@ auth:
         },
       },
     );
-    supervisor.ensureIntegration({ connectorId: "oura" });
+    const integration = supervisor.ensureIntegration({ connectorId: "oura" });
 
-    await expect(supervisor.run("oura")).rejects.toThrow("missing credentials");
-    const integration = supervisor.getIntegration("oura");
-    expect(integration?.status).toBe("error");
-    expect(integration?.lastError).toContain("missing credentials");
+    await expect(supervisor.run(integration.id)).rejects.toThrow("missing credentials");
+    const stored = supervisor.getIntegration(integration.id);
+    expect(stored?.status).toBe("error");
+    expect(stored?.lastError).toContain("missing credentials");
   });
 
   test("gates integrations by platform", () => {
@@ -383,16 +436,16 @@ auth:
         },
       },
     );
-    supervisor.ensureIntegration({ connectorId: "terminal" });
+    const integration = supervisor.ensureIntegration({ connectorId: "terminal" });
 
-    const handle = supervisor.start("terminal");
+    const handle = supervisor.start(integration.id);
     expect(supervisor.list()[0].running).toBe(true);
     handle.abort();
     await handle.promise;
 
     expect(supervisor.list()[0].running).toBe(false);
-    expect(supervisor.getIntegration("terminal")?.status).toBe("idle");
-    expect(supervisor.getIntegration("terminal")?.syncState).toEqual({ stopped: true });
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ stopped: true });
   });
 
   test("installs connectors as workspace folders, registers them, and removes the folder", async () => {
@@ -436,10 +489,12 @@ auth:
 
     const manifests = await registerWorkspaceConnectors(supervisor, workspace);
     expect(manifests.map((manifest) => manifest.id)).toEqual(["calendar"]);
+    const integration = supervisor.list()[0];
+    expect(integration.id).not.toBe("calendar");
 
-    await expect(supervisor.run("calendar")).rejects.toThrow("not trusted");
+    await expect(supervisor.run(integration.id)).rejects.toThrow("not trusted");
     await supervisor.approveCurrentPackage("calendar");
-    await supervisor.run("calendar");
+    await supervisor.run(integration.id);
 
     const event = db.prepare("SELECT source, type, external_id FROM events").get() as any;
     expect(event).toEqual({
@@ -447,8 +502,8 @@ auth:
       type: "calendar.install-test",
       external_id: "installed",
     });
-    expect(supervisor.getIntegration("calendar")?.syncState).toEqual({ installed: true });
-    expect(supervisor.getIntegration("calendar")?.trustStatus).toBe("custom");
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ installed: true });
+    expect(supervisor.getIntegration(integration.id)?.trustStatus).toBe("custom");
 
     expect(await removeInstalledConnector(workspace, "calendar")).toBe(true);
     expect(existsSync(installed.dir)).toBe(false);
@@ -517,10 +572,10 @@ auth:
     );
 
     const manifest = await supervisor.registerDirectory(dir);
-    supervisor.ensureIntegration({ connectorId: manifest.id });
-    await expect(supervisor.run("demo")).rejects.toThrow("not trusted");
+    const integration = supervisor.ensureIntegration({ connectorId: manifest.id });
+    await expect(supervisor.run(integration.id)).rejects.toThrow("not trusted");
     await supervisor.approveCurrentPackage("demo");
-    await supervisor.run("demo");
+    await supervisor.run(integration.id);
 
     const event = db.prepare("SELECT source, type, external_id FROM events").get() as any;
     expect(event).toEqual({
@@ -528,7 +583,7 @@ auth:
       type: "demo.event",
       external_id: "loaded",
     });
-    expect(supervisor.getIntegration("demo")?.syncState).toEqual({ loaded: true });
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ loaded: true });
   });
 
   test("rejects connector entries outside connector directory", () => {

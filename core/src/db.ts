@@ -129,7 +129,10 @@ function migrateExistingSchema(db: Database): void {
   if (!hasIntegrationColumn("package_hash")) {
     db.run("ALTER TABLE connector_integrations ADD COLUMN package_hash TEXT");
   }
+  db.run("DROP INDEX IF EXISTS idx_connector_integrations_identity");
   db.run(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_integrations_identity ON connector_integrations(connector_id, COALESCE(integration_key, ''))"
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_integrations_identity
+     ON connector_integrations(connector_id, integration_key)
+     WHERE integration_key IS NOT NULL`
   );
 }

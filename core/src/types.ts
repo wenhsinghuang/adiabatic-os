@@ -33,6 +33,7 @@ export type {
   InstalledConnector,
   InstallConnectorOptions,
   RegisterWorkspaceConnectorsOptions,
+  UpdateIntegrationInput,
 } from "./connectors";
 
 // System API type — what apps see through the bridge

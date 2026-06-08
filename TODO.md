@@ -49,5 +49,7 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 - [ ] Shell redesign
 
 - [ ] CI/CD and R2 artifact push
+  - GitHub Actions compiles `template/connectors/` packages into the official connector catalog.
+  - Publish official connector catalog/package hashes to R2 for runtime official trust lookup.
 
 - [ ] landing page + discord 

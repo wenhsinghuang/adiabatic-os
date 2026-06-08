@@ -6,6 +6,7 @@ import type {
   ConnectorTrustStatus,
 } from "./types";
 import { validateConnectorId, validateIntegrationKey } from "./manifest";
+import { ulid } from "../utils/ulid";
 
 interface IntegrationRow {
   id: string;
@@ -41,6 +42,11 @@ export interface EnsureIntegrationInput<TConfig = unknown> {
   authRef?: string;
 }
 
+export type UpdateIntegrationInput<TConfig = unknown> = Omit<
+  EnsureIntegrationInput<TConfig>,
+  "id" | "connectorId"
+>;
+
 export class ConnectorIntegrationStore {
   constructor(private db: Database) {}
 
@@ -49,43 +55,60 @@ export class ConnectorIntegrationStore {
   ): ConnectorIntegration<TConfig, TState> {
     validateConnectorId(input.connectorId);
     const integrationKey = normalizeIntegrationKey(input.integrationKey);
-    const id = input.id ?? integrationIdFor(input.connectorId, integrationKey);
 
-    const existing = this.get<TConfig, TState>(id) ?? this.getByIdentity<TConfig, TState>(
-      input.connectorId,
-      integrationKey,
-    );
+    const existing = input.id
+      ? this.get<TConfig, TState>(input.id)
+      : this.getByIdentity<TConfig, TState>(input.connectorId, integrationKey);
     const now = Date.now();
     if (existing) {
+      if (existing.connectorId !== input.connectorId) {
+        throw new Error(`Connector integration ${existing.id} belongs to ${existing.connectorId}`);
+      }
       const nextConfig = input.config === undefined ? existing.config : input.config;
       const nextEnabled = input.enabled ?? existing.enabled;
       const nextSetup = input.setupStatus ?? existing.setupStatus;
+      const nextIntegrationKey = input.integrationKey === undefined
+        ? existing.integrationKey
+        : integrationKey;
+      validateIntegrationKeyTransition(existing, nextIntegrationKey);
+      this.assertIdentityAvailable(existing.connectorId, nextIntegrationKey, existing.id);
       const nextStatus: ConnectorIntegrationStatus = nextEnabled
         ? nextSetup === "setup" ? "setup" : existing.status === "disabled" || existing.status === "setup" ? "idle" : existing.status
         : "disabled";
+      const nextScheduleCron = input.scheduleCron === undefined
+        ? existing.scheduleCron
+        : input.scheduleCron ?? undefined;
+      const nextRunAt = input.nextRunAt === undefined
+        ? existing.nextRunAt
+        : input.nextRunAt ?? undefined;
+      const nextPackageHash = input.packageHash ?? existing.packageHash;
+      const nextTrustStatus = input.trustStatus ?? existing.trustStatus;
+      const nextAuthRef = input.authRef ?? existing.authRef ?? defaultAuthRef(existing.id);
       this.db.prepare(
         `UPDATE connector_integrations
          SET enabled = ?,
+             integration_key = ?,
              status = ?,
              setup_status = ?,
-             trust_status = COALESCE(?, trust_status),
-             schedule_cron = COALESCE(?, schedule_cron),
-             next_run_at = COALESCE(?, next_run_at),
-             package_hash = COALESCE(?, package_hash),
+             trust_status = ?,
+             schedule_cron = ?,
+             next_run_at = ?,
+             package_hash = ?,
              config = ?,
-             auth_ref = COALESCE(?, auth_ref),
+             auth_ref = ?,
              updated_at = ?
          WHERE id = ?`
       ).run(
         nextEnabled ? 1 : 0,
+        nextIntegrationKey ?? null,
         nextStatus,
         nextSetup,
-        input.trustStatus ?? null,
-        input.scheduleCron ?? null,
-        input.nextRunAt ?? null,
-        input.packageHash ?? null,
+        nextTrustStatus,
+        nextScheduleCron ?? null,
+        nextRunAt ?? null,
+        nextPackageHash ?? null,
         stringifyJson(nextConfig),
-        input.authRef ?? null,
+        nextAuthRef ?? null,
         now,
         existing.id,
       );
@@ -93,6 +116,7 @@ export class ConnectorIntegrationStore {
     }
 
     const enabled = input.enabled ?? true;
+    const id = input.id ?? newIntegrationId();
     const setupStatus = input.setupStatus ?? "ready";
     const status: ConnectorIntegrationStatus = enabled
       ? setupStatus === "setup" ? "setup" : "idle"
@@ -115,11 +139,26 @@ export class ConnectorIntegrationStore {
       input.packageHash ?? null,
       stringifyJson(input.config),
       null,
-      input.authRef ?? defaultAuthRef(input.connectorId, integrationKey),
+      input.authRef ?? defaultAuthRef(id),
       now,
       now,
     );
     return this.get<TConfig, TState>(id)!;
+  }
+
+  update<TConfig = unknown, TState = unknown>(
+    id: string,
+    input: UpdateIntegrationInput<TConfig>,
+  ): ConnectorIntegration<TConfig, TState> {
+    const existing = this.get(id);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${id}`);
+    }
+    return this.ensure<TConfig, TState>({
+      ...input,
+      id,
+      connectorId: existing.connectorId,
+    });
   }
 
   get<TConfig = unknown, TState = unknown>(
@@ -135,12 +174,19 @@ export class ConnectorIntegrationStore {
   ): ConnectorIntegration<TConfig, TState> | undefined {
     validateConnectorId(connectorId);
     const key = normalizeIntegrationKey(integrationKey);
-    const row = this.db.prepare(
-      `SELECT * FROM connector_integrations
-       WHERE connector_id = ? AND COALESCE(integration_key, '') = COALESCE(?, '')
-       ORDER BY created_at
-       LIMIT 1`
-    ).get(connectorId, key ?? null) as IntegrationRow | null;
+    const row = key
+      ? this.db.prepare(
+        `SELECT * FROM connector_integrations
+         WHERE connector_id = ? AND integration_key = ?
+         ORDER BY created_at
+         LIMIT 1`
+      ).get(connectorId, key) as IntegrationRow | null
+      : this.db.prepare(
+        `SELECT * FROM connector_integrations
+         WHERE connector_id = ? AND integration_key IS NULL
+         ORDER BY created_at
+         LIMIT 1`
+      ).get(connectorId) as IntegrationRow | null;
     return row ? rowToIntegration<TConfig, TState>(row) : undefined;
   }
 
@@ -176,6 +222,18 @@ export class ConnectorIntegrationStore {
       `UPDATE connector_integrations SET ${column} = ?, updated_at = ? WHERE id = ?`
     ).run(stringifyJson(value), Date.now(), id);
   }
+
+  private assertIdentityAvailable(
+    connectorId: string,
+    integrationKey: string | undefined,
+    currentId: string,
+  ): void {
+    if (!integrationKey) return;
+    const existing = this.getByIdentity(connectorId, integrationKey);
+    if (existing && existing.id !== currentId) {
+      throw new Error(`Connector integration key is already in use: ${connectorId}:${integrationKey}`);
+    }
+  }
 }
 
 export function createConnectorStateHandle<TState>(
@@ -192,20 +250,31 @@ export function createConnectorStateHandle<TState>(
   };
 }
 
-export function integrationIdFor(connectorId: string, integrationKey?: string): string {
-  validateConnectorId(connectorId);
-  const key = normalizeIntegrationKey(integrationKey);
-  return key ? `${connectorId}:${key}` : connectorId;
+export function newIntegrationId(): string {
+  return ulid();
 }
 
-export function defaultAuthRef(connectorId: string, integrationKey?: string): string {
-  return `connector:${connectorId}${integrationKey ? `:${integrationKey}` : ""}:auth`;
+export function defaultAuthRef(integrationId: string): string {
+  return `connector-integration:${integrationId}:auth`;
 }
 
 function normalizeIntegrationKey(key: string | undefined): string | undefined {
   if (key === undefined || key === "") return undefined;
   validateIntegrationKey(key);
   return key;
+}
+
+function validateIntegrationKeyTransition(
+  existing: ConnectorIntegration,
+  nextKey: string | undefined,
+): void {
+  if (existing.integrationKey === nextKey) return;
+  if (existing.integrationKey) {
+    throw new Error("Connector integration key rename requires an explicit migration");
+  }
+  if (existing.setupStatus !== "setup") {
+    throw new Error("Connector integration key can only be set during setup");
+  }
 }
 
 function rowToIntegration<TConfig, TState>(row: IntegrationRow): ConnectorIntegration<TConfig, TState> {

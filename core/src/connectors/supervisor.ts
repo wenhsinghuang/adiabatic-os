@@ -14,8 +14,8 @@ import { ConnectorRuntime, validateConnectorDefinition } from "./runtime";
 import {
   ConnectorIntegrationStore,
   createConnectorStateHandle,
-  defaultAuthRef,
   type EnsureIntegrationInput,
+  type UpdateIntegrationInput,
 } from "./state";
 import type {
   ConnectorDefinition,
@@ -157,8 +157,25 @@ export class ConnectorSupervisor {
       scheduleCron,
       packageHash,
       trustStatus,
-      authRef: input.authRef ?? defaultAuthRef(input.connectorId, input.integrationKey),
     });
+  }
+
+  updateIntegration<TConfig = unknown, TState = unknown>(
+    instanceId: string,
+    input: UpdateIntegrationInput<TConfig>,
+  ): ConnectorIntegration<TConfig, TState> {
+    const existing = this.store.get(instanceId);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(existing.connectorId);
+    if (!isPlatformSupported(registration.manifest, this.platform)) {
+      throw new Error(`Connector ${existing.connectorId} is not supported on ${this.platform}`);
+    }
+    if ((registration.manifest.integrations?.mode ?? "singleton") === "singleton" && input.integrationKey) {
+      throw new Error(`Connector ${existing.connectorId} supports only one integration`);
+    }
+    return this.store.update<TConfig, TState>(instanceId, input);
   }
 
   ensureFirstIntegration(connectorId: string): ConnectorIntegration {
