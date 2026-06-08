@@ -38,6 +38,7 @@ describe("Connector system", () => {
     supervisor = new ConnectorSupervisor({
       db,
       guard: new Guard({ db, source: "system:test" }),
+      host: { workspacePath: workspace },
       platform: "darwin",
       authManager: new ConnectorAuthManager(secrets),
     });
@@ -130,9 +131,10 @@ auth:
 
   test("runs a connector with bound guard, config, and persistent state", async () => {
     const definition: ConnectorDefinition<{ label: string; extra?: boolean }, { cursor: string }> = {
-      async run({ guard, state, config }) {
+      async run({ guard, state, config, host }) {
         expect(await state.get()).toBeUndefined();
         expect(config).toEqual({ label: "override", extra: true });
+        expect(host.workspacePath).toBe(workspace);
         await guard.writeEvent({
           type: "app.commit",
           externalId: "abc123",
@@ -297,12 +299,27 @@ auth:
     );
     const integration = supervisor.ensureIntegration({ connectorId: "oura" });
     expect(integration.setupStatus).toBe("setup");
+    await expect(supervisor.connectIntegration(integration.id)).rejects.toThrow("requires credentials");
+    expect(() =>
+      supervisor.updateIntegration(integration.id, { setupStatus: "ready" })
+    ).toThrow("requires credentials");
     await supervisor.getAuthManager().setToken(integration.authRef!, "secret-token");
-    const ready = supervisor.updateIntegration(integration.id, { setupStatus: "ready" });
+    const ready = await supervisor.connectIntegration(integration.id);
+    expect(
+      supervisor.updateIntegration(ready.id, { config: { sample: true } }).setupStatus
+    ).toBe("ready");
+    expect(() =>
+      supervisor.updateIntegration(ready.id, { authRef: "missing-token-ref" })
+    ).toThrow("authRef changes must use connectIntegration");
 
-    await supervisor.run(ready.id);
+    await supervisor.getAuthManager().setToken("rotated-ref", "rotated-token");
+    const rotated = await supervisor.connectIntegration(ready.id, { authRef: "rotated-ref" });
+    expect(rotated.setupStatus).toBe("ready");
+    expect(rotated.authRef).toBe("rotated-ref");
 
-    expect(tokenSeen).toBe("secret-token");
+    await supervisor.run(rotated.id);
+
+    expect(tokenSeen).toBe("rotated-token");
     const event = db.prepare("SELECT source, type FROM events").get() as any;
     expect(event).toEqual({ source: "connector:oura", type: "oura.sample" });
   });
@@ -394,6 +411,7 @@ auth:
     const linuxSupervisor = new ConnectorSupervisor({
       db,
       guard: new Guard({ db, source: "system:test" }),
+      host: { workspacePath: workspace },
       platform: "linux",
     });
     linuxSupervisor.register(

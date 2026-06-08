@@ -72,11 +72,16 @@ export interface ConnectorStateHandle<TState = unknown> {
   set(state: TState): Promise<void>;
 }
 
+export interface ConnectorHostContext {
+  workspacePath: string;
+}
+
 export interface ConnectorRunContext<TConfig = unknown, TState = unknown> {
   guard: BoundConnectorGuard;
   auth: ConnectorAuthHandle;
   state: ConnectorStateHandle<TState>;
   config: TConfig;
+  host: ConnectorHostContext;
   signal: AbortSignal;
 }
 

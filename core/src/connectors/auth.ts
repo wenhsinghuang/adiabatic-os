@@ -33,6 +33,10 @@ export class ConnectorAuthManager {
     await this.secrets.delete(authRef);
   }
 
+  async hasToken(authRef: string): Promise<boolean> {
+    return Boolean(await this.secrets.get(authRef));
+  }
+
   createHandle(auth: ConnectorAuthSpec, integration: ConnectorIntegration): ConnectorAuthHandle {
     if (auth.type === "none") {
       return { type: "none" };
@@ -55,4 +59,3 @@ export class ConnectorAuthManager {
     };
   }
 }
-

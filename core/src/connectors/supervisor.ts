@@ -19,6 +19,7 @@ import {
 } from "./state";
 import type {
   ConnectorDefinition,
+  ConnectorHostContext,
   ConnectorIntegration,
   ConnectorManifest,
   ConnectorOfficialCatalogEntry,
@@ -46,6 +47,7 @@ interface ActiveRun {
 export interface ConnectorSupervisorOptions {
   db: Database;
   guard: Guard;
+  host: ConnectorHostContext;
   platform?: ConnectorPlatform;
   authManager?: ConnectorAuthManager;
   officialCatalog?: ConnectorOfficialCatalogEntry[];
@@ -64,10 +66,12 @@ export class ConnectorSupervisor {
   private authManager: ConnectorAuthManager;
   private platform: ConnectorPlatform;
   private guard: Guard;
+  private host: ConnectorHostContext;
   private registry: WorkspaceConnectorRegistry;
 
   constructor(opts: ConnectorSupervisorOptions) {
     this.guard = opts.guard;
+    this.host = opts.host;
     this.store = new ConnectorIntegrationStore(opts.db);
     this.authManager = opts.authManager ?? new ConnectorAuthManager();
     this.platform = opts.platform ?? currentConnectorPlatform();
@@ -147,6 +151,7 @@ export class ConnectorSupervisor {
       integrationKey: input.integrationKey,
       setupStatus: input.setupStatus,
       requiresAuth: (registration.manifest.auth ?? { type: "none" }).type !== "none",
+      authReady: false,
     });
     const scheduleCron = input.scheduleCron === undefined
       ? registration.manifest.runtime.defaultSchedule
@@ -175,16 +180,56 @@ export class ConnectorSupervisor {
     if (!isPlatformSupported(registration.manifest, this.platform)) {
       throw new Error(`Connector ${existing.connectorId} is not supported on ${this.platform}`);
     }
+    if (input.authRef !== undefined && input.authRef !== existing.authRef) {
+      throw new Error(`Connector integration ${instanceId} authRef changes must use connectIntegration`);
+    }
     const mode = registration.manifest.integrations?.mode ?? "singleton";
+    const requiresAuth = (registration.manifest.auth ?? { type: "none" }).type !== "none";
     const setupStatus = validateIntegrationLifecycle({
       connectorId: existing.connectorId,
       mode,
       integrationKey: input.integrationKey ?? existing.integrationKey,
       setupStatus: input.setupStatus ?? existing.setupStatus,
-      requiresAuth: (registration.manifest.auth ?? { type: "none" }).type !== "none",
+      requiresAuth,
+      authReady: !requiresAuth || existing.setupStatus === "ready",
     });
     return this.store.update<TConfig, TState>(instanceId, {
       ...input,
+      setupStatus,
+    });
+  }
+
+  async connectIntegration<TConfig = unknown, TState = unknown>(
+    instanceId: string,
+    input: UpdateIntegrationInput<TConfig> = {},
+  ): Promise<ConnectorIntegration<TConfig, TState>> {
+    const existing = this.store.get(instanceId);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(existing.connectorId);
+    const auth = registration.manifest.auth ?? { type: "none" };
+    if (auth.type === "none") {
+      throw new Error(`Connector ${existing.connectorId} does not require auth`);
+    }
+    if (!isPlatformSupported(registration.manifest, this.platform)) {
+      throw new Error(`Connector ${existing.connectorId} is not supported on ${this.platform}`);
+    }
+    const authRef = input.authRef ?? existing.authRef;
+    if (!authRef || !(await this.authManager.hasToken(authRef))) {
+      throw new Error(`Connector integration ${instanceId} requires credentials before it can be ready`);
+    }
+    const setupStatus = validateIntegrationLifecycle({
+      connectorId: existing.connectorId,
+      mode: registration.manifest.integrations?.mode ?? "singleton",
+      integrationKey: input.integrationKey ?? existing.integrationKey,
+      setupStatus: "ready",
+      requiresAuth: true,
+      authReady: true,
+    });
+    return this.store.update<TConfig, TState>(instanceId, {
+      ...input,
+      authRef,
       setupStatus,
     });
   }
@@ -283,6 +328,7 @@ export class ConnectorSupervisor {
           auth: this.authManager.createHandle(registration.manifest.auth ?? { type: "none" }, integration),
           state: createConnectorStateHandle(this.store, instanceId),
           config: mergeConfig(registration.manifest.config, integration.config, opts?.config),
+          host: this.host,
           signal: controller.signal,
         };
         const runtime = new ConnectorRuntime({
@@ -386,17 +432,25 @@ function validateIntegrationLifecycle(opts: {
   integrationKey?: string;
   setupStatus?: "setup" | "ready";
   requiresAuth?: boolean;
+  authReady?: boolean;
 }): "setup" | "ready" {
   if (opts.mode === "singleton") {
     if (opts.integrationKey) {
       throw new Error(`Connector ${opts.connectorId} supports only one integration`);
     }
-    return opts.setupStatus ?? (opts.requiresAuth ? "setup" : "ready");
+    const setupStatus = opts.setupStatus ?? (opts.requiresAuth ? "setup" : "ready");
+    if (setupStatus === "ready" && opts.requiresAuth && !opts.authReady) {
+      throw new Error(`Connector ${opts.connectorId} integration requires credentials before it can be ready`);
+    }
+    return setupStatus;
   }
 
   const setupStatus = opts.setupStatus ?? (opts.integrationKey && !opts.requiresAuth ? "ready" : "setup");
   if (setupStatus === "ready" && !opts.integrationKey) {
     throw new Error(`Connector ${opts.connectorId} integration requires an integration_key before it can be ready`);
+  }
+  if (setupStatus === "ready" && opts.requiresAuth && !opts.authReady) {
+    throw new Error(`Connector ${opts.connectorId} integration requires credentials before it can be ready`);
   }
   return setupStatus;
 }

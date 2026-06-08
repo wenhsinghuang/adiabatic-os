@@ -484,7 +484,7 @@ The capability broker is the host-side authority layer between a connector runne
 Connector code still sees:
 
 ```ts
-run({ guard, auth, state, config, signal })
+run({ guard, auth, state, config, host, signal })
 ```
 
 But inside a runner process these handles are IPC proxies:
@@ -511,6 +511,8 @@ connector code
     -> unified auth/secrets module
 ```
 
+`host.workspacePath` is host-owned runtime context. It must be supplied uniformly by the connector host, not patched into integration config and not special-cased by connector id.
+
 The broker owns:
 
 - D0 write validation and source injection
@@ -527,7 +529,7 @@ Connector code should expose one run entrypoint.
 
 ```ts
 export default defineConnector({
-  async run({ guard, auth, state, config, signal }) {
+  async run({ guard, auth, state, config, host, signal }) {
     // Capture, fetch, redact, normalize.
     await guard.writeEvent({
       type: "source.event",
@@ -551,7 +553,12 @@ type ConnectorRunContext<TConfig, TState> = {
   auth: ConnectorAuthHandle;
   state: ConnectorStateHandle<TState>;
   config: TConfig;
+  host: ConnectorHostContext;
   signal: AbortSignal;
+};
+
+type ConnectorHostContext = {
+  workspacePath: string;
 };
 ```
 
@@ -560,7 +567,8 @@ The connector author should only need to understand:
 - `guard.writeEvent(...)`
 - `auth` as a capability handle
 - `state` as private checkpoint storage
-- `config` as user/system configuration
+- `config` as manifest, integration, and run override configuration
+- `host` as stable host-owned runtime context
 - `signal` for cancellation
 
 They should not need to understand host internals, `withSource()`, app identity, DB handles, scheduler internals, or shell auth UX.

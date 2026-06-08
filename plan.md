@@ -44,6 +44,10 @@ adiabatic-os/                              ← dev repo
 │   │   └── hello-world/                   ← 示範 app
 │   │       ├── manifest.json              ← 權限宣告
 │   │       └── index.tsx                  ← Component + backend
+│   ├── connectors/
+│   │   └── app-commits/                   ← built-in materialized as normal connector
+│   │       ├── connector.yaml
+│   │       └── index.mjs
 │   └── pages/                             ← Working tree（空，runtime 會 materialize）
 │
 ├── shell/                                 ← Electron app（未來）
@@ -59,6 +63,8 @@ adiabatic-os/                              ← dev repo
 │   └── adiabatic.db                       ← 用戶的資料（runtime 管理，跟 workspace 綁定）
 ├── apps/                                  ← 用戶的 app（Claude Code 在這裡寫）
 │   └── hello-world/
+├── connectors/                            ← installed connectors; remove = delete folder
+│   └── app-commits/
 └── pages/                                 ← working tree（.mdx，runtime 自動同步）
 ```
 

@@ -4,21 +4,21 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default {
-  async run({ guard, state, config, signal }) {
+  async run({ guard, state, host, signal }) {
     const previous = await state.get();
     const lastSha = previous && typeof previous.lastSha === "string"
       ? previous.lastSha
       : undefined;
-    const workspacePath = config && typeof config.workspacePath === "string"
-      ? config.workspacePath
-      : process.cwd();
+    if (!host || typeof host.workspacePath !== "string") {
+      throw new Error("App Commits requires host.workspacePath");
+    }
     const range = lastSha ? `${lastSha}..HEAD` : "HEAD";
 
     let stdout = "";
     try {
       const result = await execFileAsync("git", [
         "-C",
-        workspacePath,
+        host.workspacePath,
         "log",
         "--reverse",
         "--format=%H%x00%ct%x00%an%x00%ae%x00%s",
