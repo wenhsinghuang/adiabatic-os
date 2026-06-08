@@ -141,10 +141,13 @@ export class ConnectorSupervisor {
     }
 
     const mode = registration.manifest.integrations?.mode ?? "singleton";
-    if (mode === "singleton" && input.integrationKey) {
-      throw new Error(`Connector ${input.connectorId} supports only one integration`);
-    }
-    const setupStatus = input.setupStatus ?? (mode === "multiple" && !input.integrationKey ? "setup" : "ready");
+    const setupStatus = validateIntegrationLifecycle({
+      connectorId: input.connectorId,
+      mode,
+      integrationKey: input.integrationKey,
+      setupStatus: input.setupStatus,
+      requiresAuth: (registration.manifest.auth ?? { type: "none" }).type !== "none",
+    });
     const scheduleCron = input.scheduleCron === undefined
       ? registration.manifest.runtime.defaultSchedule
       : input.scheduleCron ?? undefined;
@@ -172,17 +175,25 @@ export class ConnectorSupervisor {
     if (!isPlatformSupported(registration.manifest, this.platform)) {
       throw new Error(`Connector ${existing.connectorId} is not supported on ${this.platform}`);
     }
-    if ((registration.manifest.integrations?.mode ?? "singleton") === "singleton" && input.integrationKey) {
-      throw new Error(`Connector ${existing.connectorId} supports only one integration`);
-    }
-    return this.store.update<TConfig, TState>(instanceId, input);
+    const mode = registration.manifest.integrations?.mode ?? "singleton";
+    const setupStatus = validateIntegrationLifecycle({
+      connectorId: existing.connectorId,
+      mode,
+      integrationKey: input.integrationKey ?? existing.integrationKey,
+      setupStatus: input.setupStatus ?? existing.setupStatus,
+      requiresAuth: (registration.manifest.auth ?? { type: "none" }).type !== "none",
+    });
+    return this.store.update<TConfig, TState>(instanceId, {
+      ...input,
+      setupStatus,
+    });
   }
 
   ensureFirstIntegration(connectorId: string): ConnectorIntegration {
     const registration = this.requireRegistration(connectorId);
     return this.ensureIntegration({
       connectorId,
-      setupStatus: registration.manifest.integrations?.mode === "multiple" ? "setup" : "ready",
+      setupStatus: firstIntegrationSetupStatus(registration.manifest),
     });
   }
 
@@ -367,4 +378,30 @@ function mergeConfig(...configs: unknown[]): unknown {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateIntegrationLifecycle(opts: {
+  connectorId: string;
+  mode: "singleton" | "multiple";
+  integrationKey?: string;
+  setupStatus?: "setup" | "ready";
+  requiresAuth?: boolean;
+}): "setup" | "ready" {
+  if (opts.mode === "singleton") {
+    if (opts.integrationKey) {
+      throw new Error(`Connector ${opts.connectorId} supports only one integration`);
+    }
+    return opts.setupStatus ?? (opts.requiresAuth ? "setup" : "ready");
+  }
+
+  const setupStatus = opts.setupStatus ?? (opts.integrationKey && !opts.requiresAuth ? "ready" : "setup");
+  if (setupStatus === "ready" && !opts.integrationKey) {
+    throw new Error(`Connector ${opts.connectorId} integration requires an integration_key before it can be ready`);
+  }
+  return setupStatus;
+}
+
+function firstIntegrationSetupStatus(manifest: ConnectorManifest): "setup" | "ready" {
+  if (manifest.integrations?.mode === "multiple") return "setup";
+  return (manifest.auth ?? { type: "none" }).type === "none" ? "ready" : "setup";
 }

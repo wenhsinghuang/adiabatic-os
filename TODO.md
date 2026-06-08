@@ -14,6 +14,7 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Materialize built-ins into `connectors/<id>/`, no runtime special case
   - built-in: Terminal connector
   - built-in: App commits connector
+  - ConnectorScheduler: on core boot, start trusted watch integrations and evaluate due poll schedules.
 
 - [ ] Guard CLI
 
@@ -51,5 +52,8 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 - [ ] CI/CD and R2 artifact push
   - GitHub Actions compiles `template/connectors/` packages into the official connector catalog.
   - Publish official connector catalog/package hashes to R2 for runtime official trust lookup.
+  - Placeholder official catalog URL until CI publishes the real R2 artifact:
+    `https://r2-placeholder.adiabatic-os.invalid/connectors/official-catalog.json`
+  - Replace placeholder URL and wire core startup catalog loading after CI/R2 publishing is live.
 
 - [ ] landing page + discord 

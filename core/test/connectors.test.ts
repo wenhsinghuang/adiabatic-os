@@ -243,6 +243,12 @@ auth:
     expect(setup.integrationKey).toBeUndefined();
     expect(setup.setupStatus).toBe("setup");
     expect(supervisor.list()[0].source).toBeUndefined();
+    expect(() =>
+      supervisor.ensureIntegration({ connectorId: "calendar", setupStatus: "ready" })
+    ).toThrow("requires an integration_key");
+    expect(() =>
+      supervisor.updateIntegration(setup.id, { setupStatus: "ready" })
+    ).toThrow("requires an integration_key");
 
     const ready = supervisor.updateIntegration<{ externalId: string }, { seen: string }>(setup.id, {
       integrationKey: "work",
@@ -290,9 +296,11 @@ auth:
       definition,
     );
     const integration = supervisor.ensureIntegration({ connectorId: "oura" });
+    expect(integration.setupStatus).toBe("setup");
     await supervisor.getAuthManager().setToken(integration.authRef!, "secret-token");
+    const ready = supervisor.updateIntegration(integration.id, { setupStatus: "ready" });
 
-    await supervisor.run(integration.id);
+    await supervisor.run(ready.id);
 
     expect(tokenSeen).toBe("secret-token");
     const event = db.prepare("SELECT source, type FROM events").get() as any;
@@ -375,10 +383,11 @@ auth:
     );
     const integration = supervisor.ensureIntegration({ connectorId: "oura" });
 
-    await expect(supervisor.run(integration.id)).rejects.toThrow("missing credentials");
+    expect(integration.setupStatus).toBe("setup");
+    await expect(supervisor.run(integration.id)).rejects.toThrow("not set up");
     const stored = supervisor.getIntegration(integration.id);
-    expect(stored?.status).toBe("error");
-    expect(stored?.lastError).toContain("missing credentials");
+    expect(stored?.status).toBe("setup");
+    expect(stored?.lastError).toBeUndefined();
   });
 
   test("gates integrations by platform", () => {

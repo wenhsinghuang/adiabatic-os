@@ -74,6 +74,7 @@ const connectorManifests = await registerWorkspaceConnectors(connectorSupervisor
     console.warn(`[adiabatic] Skipping connector ${connectorDir}: ${message}`);
   },
 });
+seedWorkspaceConnectorConfig(connectorSupervisor, workspacePath);
 let registry = await loadApps(appsDir);
 const workingTree = new WorkingTree({ guard, pagesDir });
 await workingTree.start();
@@ -217,6 +218,20 @@ function rejectSchemaRequest(id: string): SchemaRequest {
   if (!request) throw new Error(`Schema request not found: ${id}`);
   if (request.status === "pending") request.status = "rejected";
   return request;
+}
+
+function seedWorkspaceConnectorConfig(supervisor: ConnectorSupervisor, workspacePath: string): void {
+  for (const integration of supervisor.list()) {
+    if (integration.connectorId !== "app-commits") continue;
+    const config = isPlainObject(integration.config)
+      ? { ...integration.config, workspacePath }
+      : { workspacePath };
+    supervisor.updateIntegration(integration.id, { config });
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
 }
 
 async function readAppFiles(appDir: string): Promise<Record<string, string>> {
