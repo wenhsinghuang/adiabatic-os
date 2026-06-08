@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { openDB } from "../src/db";
@@ -8,7 +8,12 @@ import {
   ConnectorSupervisor,
   MemoryConnectorSecretStore,
   ConnectorAuthManager,
+  installConnector,
+  listInstalledConnectorDirs,
   loadConnectorManifest,
+  materializeBuiltInConnector,
+  registerWorkspaceConnectors,
+  removeInstalledConnector,
   resolveConnectorEntry,
   sourceForConnector,
   validateConnectorManifest,
@@ -53,17 +58,19 @@ name: Calendar
 entry: ./index.mjs
 runtime:
   mode: poll
-  schedule: every 15m
+  defaultSchedule: "*/15 * * * *"
+integrations:
+  mode: multiple
 platforms:
-  - darwin
-  - cloud
+  darwin:
+    requirements:
+      - macos-accessibility
+  cloud: {}
 auth:
   type: oauth2
   provider: google
   scopes:
     - https://www.googleapis.com/auth/calendar.readonly
-events:
-  - calendar.event
 `,
     );
 
@@ -72,14 +79,17 @@ events:
       id: "calendar",
       name: "Calendar",
       entry: "./index.mjs",
-      runtime: { mode: "poll", schedule: "every 15m" },
-      platforms: ["darwin", "cloud"],
+      runtime: { mode: "poll", defaultSchedule: "*/15 * * * *" },
+      integrations: { mode: "multiple" },
+      platforms: {
+        darwin: { requirements: ["macos-accessibility"] },
+        cloud: { requirements: [] },
+      },
       auth: {
         type: "oauth2",
         provider: "google",
         scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
       },
-      events: ["calendar.event"],
     });
   });
 
@@ -96,18 +106,30 @@ events:
       validateConnectorManifest({ ...base, runtime: { mode: "stream" as any } })
     ).toThrow("invalid runtime mode");
     expect(() =>
-      validateConnectorManifest({ ...base, runtime: { mode: "watch", schedule: "every 1m" } })
-    ).toThrow("schedule is only valid");
+      validateConnectorManifest({ ...base, runtime: { mode: "watch", defaultSchedule: "every 1m" } })
+    ).toThrow("defaultSchedule is only valid");
     expect(() =>
-      validateConnectorManifest({ ...base, platforms: ["haiku" as any] })
+      validateConnectorManifest({ ...base, runtime: { mode: "poll", schedule: "every 1m" } as any })
+    ).toThrow("runtime.schedule is no longer supported");
+    expect(() =>
+      validateConnectorManifest({ ...base, platforms: ["darwin" as any] as any })
+    ).toThrow("structured object");
+    expect(() =>
+      validateConnectorManifest({ ...base, platforms: { haiku: {} } as any })
     ).toThrow("invalid platform");
+    expect(() =>
+      validateConnectorManifest({ ...base, integrations: { mode: "many" as any } })
+    ).toThrow("invalid integrations mode");
     expect(() =>
       validateConnectorManifest({ ...base, auth: { type: "oauth2", provider: "" } })
     ).toThrow("oauth2 auth requires provider");
+    expect(() =>
+      validateConnectorManifest({ ...base, auth: { type: "localPermission" } as any })
+    ).toThrow("invalid auth type");
   });
 
   test("runs a connector with bound guard, config, and persistent state", async () => {
-    const definition: ConnectorDefinition<{ label: string }, { cursor: string }> = {
+    const definition: ConnectorDefinition<{ label: string; extra?: boolean }, { cursor: string }> = {
       async run({ guard, state, config }) {
         expect(await state.get()).toBeUndefined();
         expect(config).toEqual({ label: "override", extra: true });
@@ -169,23 +191,24 @@ events:
         name: "Calendar",
         entry: "./index.ts",
         runtime: { mode: "poll" },
+        integrations: { mode: "multiple" },
         auth: { type: "none" },
       },
       definition,
     );
-    supervisor.ensureIntegration({ id: "calendar-personal", connectorId: "calendar", config: { externalId: "same" } });
-    supervisor.ensureIntegration({ id: "calendar-work", connectorId: "calendar", config: { externalId: "same" } });
+    supervisor.ensureIntegration({ connectorId: "calendar", integrationKey: "personal", config: { externalId: "same" } });
+    supervisor.ensureIntegration({ connectorId: "calendar", integrationKey: "work", config: { externalId: "same" } });
 
-    await supervisor.run("calendar-personal");
-    await supervisor.run("calendar-work");
+    await supervisor.run("calendar:personal");
+    await supervisor.run("calendar:work");
 
     const rows = db.prepare("SELECT source, external_id FROM events ORDER BY source").all() as any[];
     expect(rows).toEqual([
-      { source: "connector:calendar-personal", external_id: "same" },
-      { source: "connector:calendar-work", external_id: "same" },
+      { source: "connector:calendar:personal", external_id: "same" },
+      { source: "connector:calendar:work", external_id: "same" },
     ]);
-    expect(supervisor.getIntegration("calendar-personal")?.syncState).toEqual({ seen: "same" });
-    expect(supervisor.getIntegration("calendar-work")?.syncState).toEqual({ seen: "same" });
+    expect(supervisor.getIntegration("calendar:personal")?.syncState).toEqual({ seen: "same" });
+    expect(supervisor.getIntegration("calendar:work")?.syncState).toEqual({ seen: "same" });
   });
 
   test("provides auth as a capability handle", async () => {
@@ -196,6 +219,7 @@ events:
         tokenSeen = await auth.getToken();
         await guard.writeEvent({
           type: "oura.sample",
+          externalId: "sample-1",
           startedAt: 3000,
           payload: { ok: true },
         });
@@ -235,11 +259,13 @@ events:
         async run({ guard }) {
           await guard.writeEvent({
             type: "json.string",
+            externalId: "json-string",
             startedAt: 3100,
             payload: "hello",
           });
           await expect(guard.writeEvent({
             type: "json.bad",
+            externalId: "json-bad",
             startedAt: 3101,
             payload: (() => undefined) as any,
           })).rejects.toThrow("JSON-serializable");
@@ -252,6 +278,30 @@ events:
 
     const event = db.prepare("SELECT payload FROM events WHERE type = ?").get("json.string") as any;
     expect(JSON.parse(event.payload)).toBe("hello");
+  });
+
+  test("connector guard requires externalId", async () => {
+    supervisor.register(
+      {
+        id: "id-feed",
+        name: "ID Feed",
+        entry: "./index.ts",
+        runtime: { mode: "import" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ guard }) {
+          await expect(guard.writeEvent({
+            type: "id-feed.event",
+            startedAt: 3110,
+            payload: { ok: true },
+          } as any)).rejects.toThrow("externalId");
+        },
+      },
+    );
+    supervisor.ensureIntegration({ connectorId: "id-feed" });
+
+    await supervisor.run("id-feed");
   });
 
   test("fails auth connectors without credentials and records integration error", async () => {
@@ -290,8 +340,12 @@ events:
         name: "macOS Accessibility",
         entry: "./index.ts",
         runtime: { mode: "watch" },
-        platforms: ["darwin"],
-        auth: { type: "localPermission", permission: "macos.accessibility" },
+        platforms: {
+          darwin: {
+            requirements: ["macos-accessibility"],
+          },
+        },
+        auth: { type: "none" },
       },
       { async run() {} },
     );
@@ -314,6 +368,7 @@ events:
         async run({ signal, state, guard }) {
           await guard.writeEvent({
             type: "terminal.session.started",
+            externalId: "s1",
             startedAt: 4000,
             payload: { session: "s1" },
           });
@@ -340,6 +395,93 @@ events:
     expect(supervisor.getIntegration("terminal")?.syncState).toEqual({ stopped: true });
   });
 
+  test("installs connectors as workspace folders, registers them, and removes the folder", async () => {
+    const sourceDir = join(workspace, "source-connectors", "calendar");
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(
+      join(sourceDir, "connector.yaml"),
+      `id: calendar
+name: Calendar
+entry: ./index.mjs
+runtime:
+  mode: import
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(sourceDir, "index.mjs"),
+      `export default {
+  async run({ guard, state }) {
+    await guard.writeEvent({
+      type: "calendar.install-test",
+      externalId: "installed",
+      startedAt: 4500,
+      payload: { installed: true },
+    });
+    await state.set({ installed: true });
+  },
+};
+`,
+    );
+
+    const installed = await installConnector({ sourceDir, workspacePath: workspace });
+    expect(installed.dir).toBe(join(workspace, "connectors", "calendar"));
+    expect(readFileSync(join(installed.dir, "connector.yaml"), "utf8")).toContain("id: calendar");
+    expect(await listInstalledConnectorDirs(workspace)).toEqual([installed.dir]);
+
+    const manifests = await registerWorkspaceConnectors(supervisor, workspace);
+    expect(manifests.map((manifest) => manifest.id)).toEqual(["calendar"]);
+
+    await expect(supervisor.run("calendar")).rejects.toThrow("not trusted");
+    await supervisor.approveCurrentPackage("calendar");
+    await supervisor.run("calendar");
+
+    const event = db.prepare("SELECT source, type, external_id FROM events").get() as any;
+    expect(event).toEqual({
+      source: "connector:calendar",
+      type: "calendar.install-test",
+      external_id: "installed",
+    });
+    expect(supervisor.getIntegration("calendar")?.syncState).toEqual({ installed: true });
+    expect(supervisor.getIntegration("calendar")?.trustStatus).toBe("custom");
+
+    expect(await removeInstalledConnector(workspace, "calendar")).toBe(true);
+    expect(existsSync(installed.dir)).toBe(false);
+    expect(await listInstalledConnectorDirs(workspace)).toEqual([]);
+  });
+
+  test("materializes built-in connectors through the same workspace connectors path", async () => {
+    const sourceDir = join(workspace, "built-in-connectors", "app-commits");
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(
+      join(sourceDir, "connector.json"),
+      JSON.stringify({
+        id: "app-commits",
+        name: "App Commits",
+        entry: "./index.mjs",
+        runtime: { mode: "poll", defaultSchedule: "*/15 * * * *" },
+        integrations: { mode: "singleton" },
+        platforms: { darwin: {} },
+        auth: { type: "none" },
+      }),
+    );
+    writeFileSync(
+      join(sourceDir, "index.mjs"),
+      "export default { async run() {} };\n",
+    );
+
+    const installed = await materializeBuiltInConnector({ sourceDir, workspacePath: workspace });
+    expect(installed.dir).toBe(join(workspace, "connectors", "app-commits"));
+    expect((await loadConnectorManifest(installed.dir)).id).toBe("app-commits");
+    await expect(materializeBuiltInConnector({ sourceDir, workspacePath: workspace }))
+      .rejects.toThrow("Connector already installed: app-commits");
+  });
+
   test("loads connector runtime from directory entry", async () => {
     const dir = join(workspace, "connectors", "demo");
     mkdirSync(dir, { recursive: true });
@@ -350,10 +492,12 @@ name: Demo
 entry: ./index.mjs
 runtime:
   mode: import
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
 auth:
   type: none
-events:
-  - demo.event
 `,
     );
     writeFileSync(
@@ -374,6 +518,8 @@ events:
 
     const manifest = await supervisor.registerDirectory(dir);
     supervisor.ensureIntegration({ connectorId: manifest.id });
+    await expect(supervisor.run("demo")).rejects.toThrow("not trusted");
+    await supervisor.approveCurrentPackage("demo");
     await supervisor.run("demo");
 
     const event = db.prepare("SELECT source, type, external_id FROM events").get() as any;
@@ -391,6 +537,7 @@ events:
 
   test("uses the connector source namespace helper", () => {
     expect(sourceForConnector("terminal")).toBe("connector:terminal");
+    expect(sourceForConnector("calendar", "work")).toBe("connector:calendar:work");
     expect(() => sourceForConnector("../terminal")).toThrow("Invalid connector id");
   });
 });

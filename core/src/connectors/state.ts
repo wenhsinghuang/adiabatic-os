@@ -1,12 +1,23 @@
 import type { Database } from "bun:sqlite";
-import type { ConnectorIntegration, ConnectorIntegrationStatus } from "./types";
-import { validateConnectorId } from "./manifest";
+import type {
+  ConnectorIntegration,
+  ConnectorIntegrationStatus,
+  ConnectorSetupStatus,
+  ConnectorTrustStatus,
+} from "./types";
+import { validateConnectorId, validateIntegrationKey } from "./manifest";
 
 interface IntegrationRow {
   id: string;
   connector_id: string;
+  integration_key: string | null;
   enabled: number;
   status: ConnectorIntegrationStatus;
+  setup_status: ConnectorSetupStatus;
+  trust_status: ConnectorTrustStatus;
+  schedule_cron: string | null;
+  next_run_at: number | null;
+  package_hash: string | null;
   config: string | null;
   sync_state: string | null;
   auth_ref: string | null;
@@ -19,7 +30,13 @@ interface IntegrationRow {
 export interface EnsureIntegrationInput<TConfig = unknown> {
   id?: string;
   connectorId: string;
+  integrationKey?: string;
   enabled?: boolean;
+  setupStatus?: ConnectorSetupStatus;
+  trustStatus?: ConnectorTrustStatus;
+  scheduleCron?: string | null;
+  nextRunAt?: number | null;
+  packageHash?: string;
   config?: TConfig;
   authRef?: string;
 }
@@ -31,45 +48,74 @@ export class ConnectorIntegrationStore {
     input: EnsureIntegrationInput<TConfig>,
   ): ConnectorIntegration<TConfig, TState> {
     validateConnectorId(input.connectorId);
-    const id = input.id ?? input.connectorId;
-    validateConnectorId(id);
+    const integrationKey = normalizeIntegrationKey(input.integrationKey);
+    const id = input.id ?? integrationIdFor(input.connectorId, integrationKey);
 
-    const existing = this.get<TConfig, TState>(id);
+    const existing = this.get<TConfig, TState>(id) ?? this.getByIdentity<TConfig, TState>(
+      input.connectorId,
+      integrationKey,
+    );
     const now = Date.now();
     if (existing) {
       const nextConfig = input.config === undefined ? existing.config : input.config;
       const nextEnabled = input.enabled ?? existing.enabled;
+      const nextSetup = input.setupStatus ?? existing.setupStatus;
       const nextStatus: ConnectorIntegrationStatus = nextEnabled
-        ? existing.status === "disabled" ? "idle" : existing.status
+        ? nextSetup === "setup" ? "setup" : existing.status === "disabled" || existing.status === "setup" ? "idle" : existing.status
         : "disabled";
       this.db.prepare(
         `UPDATE connector_integrations
-         SET enabled = ?, status = ?, config = ?, auth_ref = COALESCE(?, auth_ref), updated_at = ?
+         SET enabled = ?,
+             status = ?,
+             setup_status = ?,
+             trust_status = COALESCE(?, trust_status),
+             schedule_cron = COALESCE(?, schedule_cron),
+             next_run_at = COALESCE(?, next_run_at),
+             package_hash = COALESCE(?, package_hash),
+             config = ?,
+             auth_ref = COALESCE(?, auth_ref),
+             updated_at = ?
          WHERE id = ?`
       ).run(
         nextEnabled ? 1 : 0,
         nextStatus,
+        nextSetup,
+        input.trustStatus ?? null,
+        input.scheduleCron ?? null,
+        input.nextRunAt ?? null,
+        input.packageHash ?? null,
         stringifyJson(nextConfig),
         input.authRef ?? null,
         now,
-        id,
+        existing.id,
       );
-      return this.get<TConfig, TState>(id)!;
+      return this.get<TConfig, TState>(existing.id)!;
     }
 
     const enabled = input.enabled ?? true;
+    const setupStatus = input.setupStatus ?? "ready";
+    const status: ConnectorIntegrationStatus = enabled
+      ? setupStatus === "setup" ? "setup" : "idle"
+      : "disabled";
     this.db.prepare(
       `INSERT INTO connector_integrations
-       (id, connector_id, enabled, status, config, sync_state, auth_ref, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, connector_id, integration_key, enabled, status, setup_status, trust_status,
+        schedule_cron, next_run_at, package_hash, config, sync_state, auth_ref, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       input.connectorId,
+      integrationKey ?? null,
       enabled ? 1 : 0,
-      enabled ? "idle" : "disabled",
+      status,
+      setupStatus,
+      input.trustStatus ?? "missing",
+      input.scheduleCron ?? null,
+      input.nextRunAt ?? null,
+      input.packageHash ?? null,
       stringifyJson(input.config),
       null,
-      input.authRef ?? defaultAuthRef(id),
+      input.authRef ?? defaultAuthRef(input.connectorId, integrationKey),
       now,
       now,
     );
@@ -83,8 +129,23 @@ export class ConnectorIntegrationStore {
     return row ? rowToIntegration<TConfig, TState>(row) : undefined;
   }
 
+  getByIdentity<TConfig = unknown, TState = unknown>(
+    connectorId: string,
+    integrationKey?: string,
+  ): ConnectorIntegration<TConfig, TState> | undefined {
+    validateConnectorId(connectorId);
+    const key = normalizeIntegrationKey(integrationKey);
+    const row = this.db.prepare(
+      `SELECT * FROM connector_integrations
+       WHERE connector_id = ? AND COALESCE(integration_key, '') = COALESCE(?, '')
+       ORDER BY created_at
+       LIMIT 1`
+    ).get(connectorId, key ?? null) as IntegrationRow | null;
+    return row ? rowToIntegration<TConfig, TState>(row) : undefined;
+  }
+
   list(): ConnectorIntegration[] {
-    return (this.db.prepare("SELECT * FROM connector_integrations ORDER BY id").all() as IntegrationRow[])
+    return (this.db.prepare("SELECT * FROM connector_integrations ORDER BY connector_id, integration_key").all() as IntegrationRow[])
       .map((row) => rowToIntegration(row));
   }
 
@@ -99,6 +160,15 @@ export class ConnectorIntegrationStore {
        SET status = ?, last_error = ?, updated_at = ?, last_run_at = CASE WHEN ? THEN ? ELSE last_run_at END
        WHERE id = ?`
     ).run(status, error ?? null, now, status === "idle" ? 1 : 0, now, id);
+  }
+
+  setTrustForConnector(connectorId: string, trustStatus: ConnectorTrustStatus, packageHash?: string): void {
+    validateConnectorId(connectorId);
+    this.db.prepare(
+      `UPDATE connector_integrations
+       SET trust_status = ?, package_hash = COALESCE(?, package_hash), updated_at = ?
+       WHERE connector_id = ?`
+    ).run(trustStatus, packageHash ?? null, Date.now(), connectorId);
   }
 
   private updateJsonColumn(id: string, column: "config" | "sync_state", value: unknown): void {
@@ -122,16 +192,34 @@ export function createConnectorStateHandle<TState>(
   };
 }
 
-export function defaultAuthRef(instanceId: string): string {
-  return `connector:${instanceId}:auth`;
+export function integrationIdFor(connectorId: string, integrationKey?: string): string {
+  validateConnectorId(connectorId);
+  const key = normalizeIntegrationKey(integrationKey);
+  return key ? `${connectorId}:${key}` : connectorId;
+}
+
+export function defaultAuthRef(connectorId: string, integrationKey?: string): string {
+  return `connector:${connectorId}${integrationKey ? `:${integrationKey}` : ""}:auth`;
+}
+
+function normalizeIntegrationKey(key: string | undefined): string | undefined {
+  if (key === undefined || key === "") return undefined;
+  validateIntegrationKey(key);
+  return key;
 }
 
 function rowToIntegration<TConfig, TState>(row: IntegrationRow): ConnectorIntegration<TConfig, TState> {
   return {
     id: row.id,
     connectorId: row.connector_id,
+    integrationKey: row.integration_key ?? undefined,
     enabled: row.enabled === 1,
     status: row.status,
+    setupStatus: row.setup_status,
+    trustStatus: row.trust_status,
+    scheduleCron: row.schedule_cron ?? undefined,
+    nextRunAt: row.next_run_at ?? undefined,
+    packageHash: row.package_hash ?? undefined,
     config: parseJson(row.config) as TConfig | undefined,
     syncState: parseJson(row.sync_state) as TState | undefined,
     authRef: row.auth_ref ?? undefined,
@@ -149,4 +237,3 @@ function parseJson(value: string | null): unknown {
 function stringifyJson(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value);
 }
-

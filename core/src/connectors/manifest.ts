@@ -2,13 +2,17 @@ import { readFile, readdir } from "fs/promises";
 import { join } from "path";
 import type {
   ConnectorAuthSpec,
+  ConnectorIntegrationMode,
   ConnectorManifest,
   ConnectorPlatform,
+  ConnectorPlatformsSpec,
   ConnectorRuntimeMode,
 } from "./types";
 
 const CONNECTOR_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const INTEGRATION_KEY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CONNECTOR_MODES = new Set<ConnectorRuntimeMode>(["watch", "poll", "import"]);
+const INTEGRATION_MODES = new Set<ConnectorIntegrationMode>(["singleton", "multiple"]);
 const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
   "darwin",
   "linux",
@@ -17,11 +21,17 @@ const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
   "android",
   "cloud",
 ]);
-const AUTH_TYPES = new Set(["none", "apiKey", "oauth2", "localPermission"]);
+const AUTH_TYPES = new Set(["none", "apiKey", "oauth2"]);
 
 export function validateConnectorId(id: string): void {
   if (!CONNECTOR_ID_PATTERN.test(id)) {
     throw new Error(`Invalid connector id: ${id}`);
+  }
+}
+
+export function validateIntegrationKey(key: string): void {
+  if (!INTEGRATION_KEY_PATTERN.test(key)) {
+    throw new Error(`Invalid connector integration key: ${key}`);
   }
 }
 
@@ -36,21 +46,26 @@ export function validateConnectorManifest(manifest: ConnectorManifest): Connecto
   if (!manifest.runtime || !CONNECTOR_MODES.has(manifest.runtime.mode)) {
     throw new Error(`Connector ${manifest.id} has invalid runtime mode`);
   }
-  if (manifest.runtime.mode !== "poll" && manifest.runtime.schedule) {
-    throw new Error(`Connector ${manifest.id} schedule is only valid for poll runtime`);
+  if ("schedule" in manifest.runtime) {
+    throw new Error(`Connector ${manifest.id} runtime.schedule is no longer supported; use runtime.defaultSchedule`);
   }
-  for (const platform of manifest.platforms ?? []) {
-    if (!CONNECTOR_PLATFORMS.has(platform)) {
-      throw new Error(`Connector ${manifest.id} has invalid platform: ${platform}`);
-    }
+  if (manifest.runtime.mode !== "poll" && manifest.runtime.defaultSchedule) {
+    throw new Error(`Connector ${manifest.id} defaultSchedule is only valid for poll runtime`);
   }
+
+  const integrations = manifest.integrations ?? { mode: "singleton" };
+  if (!INTEGRATION_MODES.has(integrations.mode)) {
+    throw new Error(`Connector ${manifest.id} has invalid integrations mode`);
+  }
+
+  const platforms = validatePlatformsSpec(manifest.id, manifest.platforms);
   validateAuthSpec(manifest.id, manifest.auth ?? { type: "none" });
   return {
     ...manifest,
+    integrations,
     auth: manifest.auth ?? { type: "none" },
-    platforms: manifest.platforms ?? [],
+    platforms,
     capabilities: manifest.capabilities ?? [],
-    events: manifest.events ?? [],
   };
 }
 
@@ -71,8 +86,9 @@ export function isPlatformSupported(
   manifest: ConnectorManifest,
   platform: ConnectorPlatform,
 ): boolean {
-  const platforms = manifest.platforms ?? [];
-  return platforms.length === 0 || platforms.includes(platform);
+  const platforms = manifest.platforms ?? {};
+  const declared = Object.keys(platforms);
+  return declared.length === 0 || platform in platforms;
 }
 
 export async function loadConnectorManifest(connectorDir: string): Promise<ConnectorManifest> {
@@ -98,88 +114,96 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
   }
 }
 
-function parseSimpleYaml(text: string): unknown {
-  const root: Record<string, unknown> = {};
-  const lines = text.split(/\r?\n/);
-  let currentObjectKey: string | null = null;
-  let currentArrayKey: string | null = null;
-  let currentArrayParent: Record<string, unknown> = root;
-
-  for (const rawLine of lines) {
-    const withoutComment = rawLine.replace(/\s+#.*$/, "");
-    if (!withoutComment.trim()) continue;
-
-    const indent = withoutComment.match(/^ */)?.[0].length ?? 0;
-    const line = withoutComment.trim();
-
-    if (indent === 0) {
-      currentObjectKey = null;
-      currentArrayKey = null;
-      currentArrayParent = root;
-
-      const match = line.match(/^([^:]+):(.*)$/);
-      if (!match) throw new Error(`Invalid connector YAML line: ${rawLine}`);
-      const key = match[1].trim();
-      const value = match[2].trim();
-      if (!value) {
-        root[key] = {};
-        currentObjectKey = key;
-      } else {
-        root[key] = parseYamlScalar(value);
-      }
-      continue;
-    }
-
-    if (indent === 2 && currentObjectKey) {
-      const parent = root[currentObjectKey] as Record<string, unknown>;
-      if (line.startsWith("- ")) {
-        if (!Array.isArray(root[currentObjectKey])) root[currentObjectKey] = [];
-        (root[currentObjectKey] as unknown[]).push(parseYamlScalar(line.slice(2).trim()));
-        continue;
-      }
-
-      const match = line.match(/^([^:]+):(.*)$/);
-      if (!match) throw new Error(`Invalid connector YAML line: ${rawLine}`);
-      const key = match[1].trim();
-      const value = match[2].trim();
-      if (!value) {
-        parent[key] = [];
-        currentArrayKey = key;
-        currentArrayParent = parent;
-      } else {
-        parent[key] = parseYamlScalar(value);
-      }
-      continue;
-    }
-
-    if (indent === 2 && line.startsWith("- ")) {
-      if (!currentArrayKey) {
-        const lastArrayKey = Object.keys(root).find((key) => Array.isArray(root[key]));
-        if (!lastArrayKey) throw new Error(`Invalid connector YAML line: ${rawLine}`);
-        currentArrayKey = lastArrayKey;
-        currentArrayParent = root;
-      }
-      (currentArrayParent[currentArrayKey] as unknown[]).push(parseYamlScalar(line.slice(2).trim()));
-      continue;
-    }
-
-    if (indent === 4 && currentArrayKey) {
-      if (!line.startsWith("- ")) throw new Error(`Invalid connector YAML line: ${rawLine}`);
-      (currentArrayParent[currentArrayKey] as unknown[]).push(parseYamlScalar(line.slice(2).trim()));
-      continue;
-    }
-
-    throw new Error(`Unsupported connector YAML shape: ${rawLine}`);
+function validatePlatformsSpec(
+  connectorId: string,
+  platforms: ConnectorPlatformsSpec | undefined,
+): ConnectorPlatformsSpec {
+  if (platforms === undefined) return {};
+  if (Array.isArray(platforms) || typeof platforms !== "object" || platforms === null) {
+    throw new Error(`Connector ${connectorId} platforms must be a structured object`);
   }
 
-  return root;
+  const normalized: ConnectorPlatformsSpec = {};
+  for (const [platform, spec] of Object.entries(platforms)) {
+    if (!CONNECTOR_PLATFORMS.has(platform as ConnectorPlatform)) {
+      throw new Error(`Connector ${connectorId} has invalid platform: ${platform}`);
+    }
+    if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
+      throw new Error(`Connector ${connectorId} platform ${platform} must be an object`);
+    }
+    const requirements = spec.requirements ?? [];
+    if (!Array.isArray(requirements) || !requirements.every((value) => typeof value === "string" && value.length > 0)) {
+      throw new Error(`Connector ${connectorId} platform ${platform} requirements must be strings`);
+    }
+    normalized[platform as ConnectorPlatform] = { requirements };
+  }
+  return normalized;
+}
+
+function parseSimpleYaml(text: string): unknown {
+  const lines = text
+    .split(/\r?\n/)
+    .map((rawLine) => ({
+      raw: rawLine,
+      withoutComment: rawLine.replace(/\s+#.*$/, ""),
+    }))
+    .filter((line) => line.withoutComment.trim())
+    .map((line) => ({
+      raw: line.raw,
+      indent: line.withoutComment.match(/^ */)?.[0].length ?? 0,
+      text: line.withoutComment.trim(),
+    }));
+
+  function parseBlock(index: number, indent: number): { value: unknown; index: number } {
+    if (index >= lines.length) return { value: {}, index };
+    if (lines[index].indent < indent) return { value: {}, index };
+    if (lines[index].indent > indent) {
+      throw new Error(`Unsupported connector YAML indentation: ${lines[index].raw}`);
+    }
+
+    if (lines[index].text.startsWith("- ")) {
+      const array: unknown[] = [];
+      while (index < lines.length && lines[index].indent === indent && lines[index].text.startsWith("- ")) {
+        const item = lines[index].text.slice(2).trim();
+        index += 1;
+        if (!item) {
+          const nested = parseBlock(index, indent + 2);
+          array.push(nested.value);
+          index = nested.index;
+        } else {
+          array.push(parseYamlScalar(item));
+        }
+      }
+      return { value: array, index };
+    }
+
+    const object: Record<string, unknown> = {};
+    while (index < lines.length && lines[index].indent === indent && !lines[index].text.startsWith("- ")) {
+      const match = lines[index].text.match(/^([^:]+):(.*)$/);
+      if (!match) throw new Error(`Invalid connector YAML line: ${lines[index].raw}`);
+      const key = match[1].trim();
+      const value = match[2].trim();
+      index += 1;
+      if (!value) {
+        const nested = parseBlock(index, indent + 2);
+        object[key] = nested.value;
+        index = nested.index;
+      } else {
+        object[key] = parseYamlScalar(value);
+      }
+    }
+    return { value: object, index };
+  }
+
+  return parseBlock(0, 0).value;
 }
 
 function parseYamlScalar(value: string): unknown {
   const unquoted = value.replace(/^["']|["']$/g, "");
+  if (unquoted === "{}") return {};
+  if (unquoted === "[]") return [];
   if (unquoted === "true") return true;
   if (unquoted === "false") return false;
   if (/^-?\d+(\.\d+)?$/.test(unquoted)) return Number(unquoted);
   return unquoted;
 }
-

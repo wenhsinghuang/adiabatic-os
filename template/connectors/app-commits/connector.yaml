@@ -1,0 +1,14 @@
+id: app-commits
+name: App Commits
+entry: ./index.mjs
+runtime:
+  mode: poll
+  defaultSchedule: "*/15 * * * *"
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+  linux: {}
+  windows: {}
+auth:
+  type: none

@@ -1,4 +1,3 @@
-import type { EventInput } from "../guard";
 import type { JsonValue } from "../json";
 
 export type MaybePromise<T> = T | Promise<T>;
@@ -17,27 +16,44 @@ export type ConnectorPlatform =
 export type ConnectorAuthSpec =
   | { type: "none" }
   | { type: "apiKey"; label?: string }
-  | { type: "oauth2"; provider: string; scopes?: string[] }
-  | { type: "localPermission"; permission?: string };
+  | { type: "oauth2"; provider: string; scopes?: string[] };
 
 export interface ConnectorRuntimeSpec {
   mode: ConnectorRuntimeMode;
-  schedule?: string;
+  defaultSchedule?: string;
 }
+
+export type ConnectorIntegrationMode = "singleton" | "multiple";
+
+export interface ConnectorIntegrationsSpec {
+  mode: ConnectorIntegrationMode;
+}
+
+export interface ConnectorPlatformSpec {
+  requirements?: string[];
+}
+
+export type ConnectorPlatformsSpec = Partial<Record<ConnectorPlatform, ConnectorPlatformSpec>>;
 
 export interface ConnectorManifest<TConfig = JsonObject> {
   id: string;
   name: string;
   entry: string;
   runtime: ConnectorRuntimeSpec;
-  platforms?: ConnectorPlatform[];
+  integrations?: ConnectorIntegrationsSpec;
+  platforms?: ConnectorPlatformsSpec;
   capabilities?: string[];
   auth?: ConnectorAuthSpec;
-  events?: string[];
   config?: TConfig;
 }
 
-export type ConnectorEventInput = Omit<EventInput, "schemaVersion">;
+export interface ConnectorEventInput {
+  type: string;
+  externalId: string;
+  startedAt: number;
+  endedAt?: number;
+  payload: JsonValue;
+}
 
 export interface BoundConnectorGuard {
   writeEvent(event: ConnectorEventInput): Promise<{ id: string }>;
@@ -47,7 +63,7 @@ export interface BoundConnectorGuard {
 export type ConnectorAuthHandle =
   | { type: "none" }
   | {
-      type: "apiKey" | "oauth2" | "localPermission";
+      type: "apiKey" | "oauth2";
       getToken(): Promise<string>;
     };
 
@@ -71,8 +87,14 @@ export interface ConnectorDefinition<TConfig = unknown, TState = unknown> {
 export interface ConnectorIntegration<TConfig = unknown, TState = unknown> {
   id: string;
   connectorId: string;
+  integrationKey: string | undefined;
   enabled: boolean;
   status: ConnectorIntegrationStatus;
+  setupStatus: ConnectorSetupStatus;
+  trustStatus: ConnectorTrustStatus;
+  scheduleCron: string | undefined;
+  nextRunAt: number | undefined;
+  packageHash: string | undefined;
   config: TConfig | undefined;
   syncState: TState | undefined;
   authRef: string | undefined;
@@ -82,7 +104,33 @@ export interface ConnectorIntegration<TConfig = unknown, TState = unknown> {
   updatedAt: number;
 }
 
-export type ConnectorIntegrationStatus = "idle" | "running" | "error" | "disabled";
+export type ConnectorIntegrationStatus = "setup" | "idle" | "running" | "error" | "disabled";
+export type ConnectorSetupStatus = "setup" | "ready";
+export type ConnectorTrustStatus = "official" | "custom" | "modified" | "untrusted" | "missing";
+
+export type ConnectorPackageTrustStatus = ConnectorTrustStatus | "invalid";
+
+export interface ConnectorPackageTrust {
+  status: ConnectorPackageTrustStatus;
+  runnable: boolean;
+  badge: "Official" | "Custom" | "Modified" | "Untrusted" | "Missing" | "Invalid";
+  reason?: string;
+}
+
+export interface ConnectorOfficialCatalogEntry {
+  id: string;
+  hash: string;
+  version?: string;
+}
+
+export interface ConnectorPackageRecord {
+  connectorId: string;
+  dir: string;
+  manifest: ConnectorManifest;
+  entryPath: string;
+  contentHash: string;
+  trust: ConnectorPackageTrust;
+}
 
 export interface ConnectorRunHandle {
   instanceId: string;

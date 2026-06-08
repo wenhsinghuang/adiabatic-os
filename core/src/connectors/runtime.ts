@@ -28,6 +28,9 @@ export function validateConnectorEvent(event: ConnectorEventInput): void {
   if (!event.type || event.type.trim() !== event.type) {
     throw new Error("Connector event requires a type");
   }
+  if (!event.externalId || event.externalId.trim() !== event.externalId) {
+    throw new Error("Connector event requires an externalId");
+  }
   if (!Number.isFinite(event.startedAt)) {
     throw new Error("Connector event requires a finite startedAt timestamp");
   }

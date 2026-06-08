@@ -6,6 +6,7 @@ import type { SchemaOp } from "./guard";
 import { WorkingTree } from "./working-tree";
 import { loadApps } from "./app-loader";
 import { ensureClaudeMd } from "./claude-md";
+import { ConnectorSupervisor, registerWorkspaceConnectors } from "./connectors";
 import { ulid } from "./utils/ulid";
 import { SettingsStore } from "./settings";
 import {
@@ -65,6 +66,14 @@ const { db, close: closeDB } = openDB(workspacePath);
 const guard = new Guard({ db, source: "system:server" });
 const settings = new SettingsStore(adiabaticDir);
 await settings.update({ workspacePath });
+const connectorSupervisor = new ConnectorSupervisor({ db, guard });
+const connectorManifests = await registerWorkspaceConnectors(connectorSupervisor, workspacePath, {
+  skipInvalid: true,
+  onError(connectorDir, err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[adiabatic] Skipping connector ${connectorDir}: ${message}`);
+  },
+});
 let registry = await loadApps(appsDir);
 const workingTree = new WorkingTree({ guard, pagesDir });
 await workingTree.start();
@@ -93,6 +102,7 @@ guard.docChangeSubscribers.push((id) => {
 
 console.log(`[adiabatic] Workspace: ${workspacePath}`);
 console.log(`[adiabatic] Apps loaded: ${[...registry.apps.keys()].join(", ") || "(none)"}`);
+console.log(`[adiabatic] Connectors loaded: ${connectorManifests.map((manifest) => manifest.id).join(", ") || "(none)"}`);
 
 // CORS + cross-origin isolation (required for SharedArrayBuffer / WebContainer)
 const ALLOWED_ORIGINS = new Set([
@@ -388,6 +398,19 @@ const server = Bun.serve({
       if (rejectMatch && method === "POST") {
         const request = rejectSchemaRequest(decodeURIComponent(rejectMatch[1]));
         return json({ request });
+      }
+
+      // -- Connectors --
+      if (path === "/api/connectors" && method === "GET") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        return json({ connectors: connectorSupervisor.list() });
+      }
+
+      const approveConnectorMatch = path.match(/^\/api\/connectors\/([^/]+)\/approve$/);
+      if (approveConnectorMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const manifest = await connectorSupervisor.approveCurrentPackage(decodeURIComponent(approveConnectorMatch[1]));
+        return json({ ok: true, manifest });
       }
 
       // -- Apps --

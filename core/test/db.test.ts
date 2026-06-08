@@ -38,6 +38,11 @@ describe("DB", () => {
     ).get();
     expect(connectorIntegrations).toBeTruthy();
 
+    const connectorApprovals = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='connector_custom_approvals'"
+    ).get();
+    expect(connectorApprovals).toBeTruthy();
+
     close();
   });
 
@@ -66,8 +71,14 @@ describe("DB", () => {
 
     expect(names).toContain("id");
     expect(names).toContain("connector_id");
+    expect(names).toContain("integration_key");
     expect(names).toContain("enabled");
     expect(names).toContain("status");
+    expect(names).toContain("setup_status");
+    expect(names).toContain("trust_status");
+    expect(names).toContain("schedule_cron");
+    expect(names).toContain("next_run_at");
+    expect(names).toContain("package_hash");
     expect(names).toContain("config");
     expect(names).toContain("sync_state");
     expect(names).toContain("auth_ref");

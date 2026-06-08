@@ -5,3 +5,5 @@ export * from "./auth";
 export * from "./state";
 export * from "./runtime";
 export * from "./supervisor";
+export * from "./install";
+export * from "./registry";
