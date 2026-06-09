@@ -601,6 +601,8 @@ type ConnectorEventInput = {
 
 For connector-facing writes, `externalId` is required. It is the stable idempotency key for the source item within the bound connector source. Poll retries, catch-up runs, and connector restarts must produce the same `externalId` for the same upstream item. If the upstream system does not expose a native id, the connector must derive a deterministic key from stable source identity such as URL, path, commit SHA, provider object id, or a hash of those fields.
 
+At the connector guard boundary, a duplicate `(source, externalId)` is a no-op that returns the existing event id. This does not update or rewrite D0. It only means the upstream item has already been materialized into append-only D0, so connector retry should not fail on the database dedup index. This idempotent duplicate handling is connector-facing behavior, not necessarily the global behavior of raw `Guard.writeEvent()`.
+
 The runtime injects source from connector id plus optional integration key.
 
 Singleton integrations:

@@ -25,24 +25,18 @@ export async function syncOnce({ guard, state, host, signal }) {
   assertWorkspaceHost(host);
 
   const previous = await state.get();
-  const previousApps = readAppCursors(previous);
-  const nextApps = { ...previousApps };
-  let changed = false;
+  const base = isObject(previous) ? previous : {};
+  const currentApps = { ...readAppCursors(previous) };
 
   for (const repo of await listAppRepos(host.workspacePath)) {
     if (signal.aborted) return;
 
-    const lastSha = readLastSha(previousApps, repo.appId);
+    const lastSha = readLastSha(currentApps, repo.appId);
     const newestSha = await syncAppRepo({ guard, repo, lastSha, signal });
     if (newestSha && newestSha !== lastSha) {
-      nextApps[repo.appId] = { lastSha: newestSha };
-      changed = true;
+      currentApps[repo.appId] = { lastSha: newestSha };
+      await state.set({ ...base, apps: currentApps });
     }
-  }
-
-  if (changed) {
-    const base = isObject(previous) ? previous : {};
-    await state.set({ ...base, apps: nextApps });
   }
 }
 
@@ -76,7 +70,10 @@ async function syncAppRepo({ guard, repo, lastSha, signal }) {
 
 async function readGitLog(repoDir, lastSha, signal) {
   const range = lastSha ? `${lastSha}..HEAD` : "HEAD";
+  return readGitLogRange(repoDir, range, signal, { fallbackToHead: Boolean(lastSha) });
+}
 
+async function readGitLogRange(repoDir, range, signal, opts = {}) {
   try {
     const result = await execFileAsync("git", [
       "-C",
@@ -94,6 +91,9 @@ async function readGitLog(repoDir, lastSha, signal) {
       : "";
     if (stderr.includes("does not have any commits yet") || stderr.includes("ambiguous argument 'HEAD'")) {
       return "";
+    }
+    if (opts.fallbackToHead && isInvalidRevisionError(stderr)) {
+      return readGitLogRange(repoDir, "HEAD", signal);
     }
     throw err;
   }
@@ -169,4 +169,11 @@ function isObject(value) {
 
 function isNotFoundError(err) {
   return Boolean(err) && typeof err === "object" && err.code === "ENOENT";
+}
+
+function isInvalidRevisionError(stderr) {
+  return stderr.includes("Invalid revision range")
+    || stderr.includes("unknown revision")
+    || stderr.includes("bad revision")
+    || stderr.includes("ambiguous argument");
 }

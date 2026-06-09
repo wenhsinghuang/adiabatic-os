@@ -383,6 +383,46 @@ auth:
     await supervisor.run(integration.id);
   });
 
+  test("connector guard treats duplicate externalId writes as idempotent", async () => {
+    const ids: string[] = [];
+    supervisor.register(
+      {
+        id: "retry-feed",
+        name: "Retry Feed",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ guard }) {
+          const first = await guard.writeEvent({
+            type: "retry.sample",
+            externalId: "same-event",
+            startedAt: 3500,
+            payload: { attempt: 1 },
+          });
+          const second = await guard.writeEvent({
+            type: "retry.sample",
+            externalId: "same-event",
+            startedAt: 3500,
+            payload: { attempt: 2 },
+          });
+          ids.push(first.id, second.id);
+        },
+      },
+    );
+
+    const integration = supervisor.ensureIntegration({ connectorId: "retry-feed" });
+    await supervisor.run(integration.id);
+
+    expect(ids[0]).toBe(ids[1]);
+    const rows = db.prepare("SELECT source, external_id, payload FROM events").all() as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source).toBe("connector:retry-feed");
+    expect(rows[0].external_id).toBe("same-event");
+    expect(JSON.parse(rows[0].payload)).toEqual({ attempt: 1 });
+  });
+
   test("fails auth connectors without credentials and records integration error", async () => {
     supervisor.register(
       {
@@ -477,7 +517,10 @@ auth:
   });
 
   test("app-commits syncs app git repos with per-app cursors", async () => {
-    const { syncOnce } = await import("../../template/connectors/app-commits/index.mjs");
+    const appCommitsUrl = new URL("../../template/connectors/app-commits/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(appCommitsUrl) as {
+      syncOnce(context: unknown): Promise<void>;
+    };
     const appDir = join(workspace, "apps", "hello-world");
     mkdirSync(appDir, { recursive: true });
     execFileSync("git", ["-C", appDir, "init"], { stdio: "ignore" });
@@ -534,6 +577,22 @@ auth:
     expect(events).toHaveLength(2);
     expect(events[1].externalId).toBe(`hello-world:${secondSha}`);
     expect(events[1].payload.subject).toBe("Update app");
+    expect(syncState).toEqual({
+      apps: {
+        "hello-world": { lastSha: secondSha },
+      },
+    });
+
+    syncState = {
+      apps: {
+        "hello-world": { lastSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" },
+      },
+    };
+    const fallbackStart = events.length;
+    await syncOnce(context);
+    expect(events).toHaveLength(fallbackStart + 2);
+    expect(events[fallbackStart].payload.subject).toBe("Initial app");
+    expect(events[fallbackStart + 1].payload.subject).toBe("Update app");
     expect(syncState).toEqual({
       apps: {
         "hello-world": { lastSha: secondSha },
