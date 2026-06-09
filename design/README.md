@@ -23,8 +23,8 @@ Read these to understand the system as it is designed today. Every doc carries a
 
 ## Other folders
 
-- `process/` — derivations and design discussions; how the canon was reached. Not contracts.
-- `archive/` — superseded docs, each with a tombstone header saying what replaced it and why. Pre-project notes (2025) also live here.
+- `process/` — derivations and design discussions; how the canon was reached. Not contracts. Includes open questions (e.g. the unified-entropy-metric doubt, `202604070520-Thought.md`) that must be answered before their parked workstreams restart.
+- `archive/` — superseded docs (tombstone header says what replaced them and why), pre-project notes (2025), and use-case candidate notes (health system, time tracking, belief-task alignment) awaiting cold-start use-case selection.
 
 ## Lifecycle rule
 

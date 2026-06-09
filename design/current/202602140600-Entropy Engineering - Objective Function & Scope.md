@@ -86,4 +86,5 @@ App 可以是 Optimizer 的 output artifact。用戶管決策。
 - **20260214** — 初版：Entropy Engineering（OS 層、content-agnostic、minimize E）與 Utility Intelligence（app 層、content-aware、maximize insight）分離。
 - **20260304** — 合併：content-agnostic 不成立（三個 entropy proxy 都需要理解 content）；改善 app 本身就是降 interaction entropy；一個 Optimizer、一個 objective、三種 action space。
 - **20260304 再修正** — 合併過度。minimize E 和 maximize U 本質上是兩個 objective（substrate 秩序 vs domain judgment）。回到兩層結構，但理由從 content-agnostic vs content-aware 改為 objective 本質不同。Uninstall test 邊界重新定義為 minimize E vs maximize U。
+- **20260407**（2026-06-10 補記）— **Open question，未決**：unified entropy metric 被質疑 — multi-objective 沒有 global minimum，unified metric 本質上 opinionated，跟 non-opinionated platform 定位衝突；候選替代是 view-specific multi-agent lenses（wiki / life-utility / memory agents，各自有 optimization target）。質疑停留在質疑階段，還沒有答案。重啟 Optimizer 設計前必須先回答這題。原始推導見 `process/202604070520-Thought.md`。
 - **20260610** — 整篇標記 parked：哲學不變，但不是當前 deliverable。P0 = cold start（substrate + connectors + 真實資料）。Optimizer 的第一個務實測試應該是：cold start 之後，用 LLM agent + promote/demote API 跑週期性整理，驗證「越用越有序」是否需要專職 Optimizer 還是 agent 就夠。
