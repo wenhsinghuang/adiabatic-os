@@ -55,7 +55,17 @@ connector package      installed code and static manifest
 connector integration  one runtime instance of a connector package
 ```
 
-A connector package can be singleton, like `app-commits` or `terminal`, or it can support multiple integrations, like `google-calendar` with `work` and `personal` integrations. Connector authors still write single-integration logic. The system owns integration lifecycle, credential binding, scheduling, and source scoping.
+A connector package can be singleton, like `app-commits`, or it can support multiple integrations, like `google-calendar` with `work` and `personal` integrations. Connector authors still write single-integration logic. The system owns integration lifecycle, credential binding, scheduling, and source scoping.
+
+Three concepts are orthogonal and must not be merged:
+
+```text
+source identity     who the events come from: connector_id + optional integration_key
+runtime target      where the integration executes: a device/host, or the official cloud
+cardinality         whether the user can create more integrations (integrations.mode)
+```
+
+Singleton means one workspace-scoped source identity. It does not mean local-only, it does not mean the integration has no runtime target, and it does not mean it cannot run on cloud. `app-commits` is singleton because it observes workspace shared state — two machines running it would observe the same source, not two sources. Device-specific local collection is `multiple`: each device is a distinct source identity with its own integration. This includes `terminal` and activity watchers — two Macs' terminal sessions are different sources and must not share `connector:terminal`.
 
 ## Workspace Layout
 
@@ -313,7 +323,50 @@ For singleton connectors, the UI should not expose "Add account" or "Create inte
 
 For multiple-integration connectors, the same first integration appears after install. The UI can show it as "Needs setup" or "Not connected" until the user provides the required integration key, config, auth, and platform requirements. The same connector management UI can also expose "Add integration" or "Add account" for additional integrations.
 
-`integrations.mode` controls cardinality, not whether the first integration exists. Auth type, required config, active platform requirements, and source identity determine whether the first integration needs a connect/setup flow.
+`integrations.mode` controls source identity cardinality, not runtime placement and not whether the first integration exists. Auth type, required config, active platform requirements, and source identity determine whether the first integration needs a connect/setup flow.
+
+## Runtime Target
+
+Every integration is one source identity assigned to exactly one runtime target.
+
+```text
+An integration never runs on more than one runtime target.
+A runtime target has exactly one platform (darwin / ios / android / cloud / ...).
+Manifest platforms are compatibility declarations for target selection, not runtime identity.
+```
+
+`platform` answers "can this connector run on this kind of target, and with which requirements". `runtime target` answers "which device/host actually owns this integration's execution". Two Macs are both `darwin` but are different runtime targets. `cloud` is the official managed execution platform, treated as a special target; a local host must not declare itself as cloud.
+
+Because one integration binds to one target, multiple manifest platforms are alternative placements, never simultaneous lanes. Multi-device collection is expressed as multiple integrations (one per device), not as one integration running in multiple places. A `platformMode: exclusive | additive` manifest field was considered and rejected; it is unnecessary under this model.
+
+v1 implementation rule — the runtime target is implicit:
+
+```text
+current implementation
+  the only runtime target is the current host process
+  no devices table
+  no connector_integrations.runtime_device_id column
+  active platform requirements are selected by the current host platform
+```
+
+There is no persisted host binding in v1, so there is no such thing as "registered on this host". Multi-host or shared-DB connector execution is unsupported until `runtime_device_id` exists: if the same workspace DB were synced to two hosts today, both would treat every ready integration as locally runnable. That is out of scope, not handled.
+
+Do not implement multi-device target routing now. The backing registry is not connector-specific: it is a workspace `devices` table that will exist as the foundation for multi-device sync (device identity, presence, platform, status). Connector integrations merely reference a device as their runtime target. Reserved future schema, used only when the "Multi-device runtime target routing" TODO is picked up:
+
+```text
+devices (
+  id TEXT PRIMARY KEY,      -- "local:<host-id>", "cloud:adiabatic"
+  platform TEXT NOT NULL,   -- darwin / ios / android / cloud
+  label TEXT NOT NULL,
+  status TEXT NOT NULL,
+  metadata JSON,
+  updated_at INTEGER NOT NULL
+)
+
+connector_integrations.runtime_device_id TEXT
+```
+
+Future semantics: `runtime_device_id -> devices.id`; requirements come from `manifest.platforms[device.platform]`; only the host that owns the device may run that integration. The official cloud runtime is represented as a special device row, not a separate concept.
 
 ## Connector Manifest
 
@@ -384,7 +437,7 @@ The manifest should not contain secrets, auth tokens, enabled/disabled status, m
 
 `runtime.defaultSchedule` is only valid for `poll` connectors. It is a creation default for new integrations, not the scheduler's long-term source of truth. When an integration is created, the system copies the default into the integration schedule. After that, the scheduler reads the integration's own schedule.
 
-`integrations.mode` defaults to `singleton` when omitted. Use `multiple` only when the same connector package naturally supports multiple runtime instances, such as separate accounts or source scopes.
+`integrations.mode` is required and must be declared explicitly. There is no default: under the source-scope semantics, defaulting to `singleton` would silently make the source-scope decision for the author, and a device-scoped connector accidentally shipped as singleton corrupts source provenance across devices. It declares source identity cardinality only. Use `multiple` when the same connector package naturally supports multiple source identities, such as separate accounts, separate devices, or source scopes. Device-specific local collectors must be `multiple` because each device is a distinct source identity. (The current parser still applies a `singleton` default; removing it is a pending implementation fix.)
 
 ## Runtime Modes
 
@@ -723,6 +776,8 @@ platforms:
 
 Each key under `platforms` declares support for that platform. An empty object means the connector supports the platform without extra setup requirements.
 
+Multiple platform keys are alternative placements for target selection, not simultaneous runs. The active platform entry is the one matching the integration's runtime target platform (v1: the current host platform). Requirements are never unioned across platforms; only the active platform entry's requirements are checked.
+
 Requirements are connector-specific setup gates, not system auth backends. They cover local permissions, platform APIs, source-specific setup, or other prerequisites that are too platform-coupled or source-specific for the substrate to implement directly.
 
 Example local connector:
@@ -734,7 +789,7 @@ entry: ./index.mjs
 runtime:
   mode: watch
 integrations:
-  mode: singleton
+  mode: multiple # device-scoped: each Mac is a distinct source identity
 platforms:
   darwin:
     requirements:
@@ -958,6 +1013,9 @@ The second built-in should be `terminal`, after capture policy is explicit:
 - no automatic approval for custom or modified connector code
 - no mutable DB flag that can make a connector official
 - no app, connector, LLM, or bridge API path for human-only connector approval
+- no `platformMode` (additive multi-platform lanes); one integration runs on one runtime target
+- no `longRunning` host capability flag; locals do not self-declare as cloud
+- no multi-device runtime target routing in v1; the runtime target is the implicit current host
 
 ## Current Implementation
 
@@ -966,12 +1024,15 @@ The connector system lives in `core/src/connectors/`:
 ```text
 core/src/connectors/
   manifest.ts       parse and validate connector.yaml / connector.json
+  registry.ts       package hashing, official/custom/modified trust classification, custom approval records
   supervisor.ts     register, enable, launch, abort, and list connector runs
   runtime.ts        single run(context) entrypoint wrapper
   auth.ts           connector auth capability handles
   state.ts          connector integration state handles
   guard.ts          bound connector guard facade
   types.ts          public connector contract
+  schedule.ts       cron parsing and schedule validation
+  scheduler.ts      starts watch integrations and runs due poll integrations
   install.ts        install/remove/materialize connector folders in workspace connectors/
 ```
 
@@ -993,16 +1054,15 @@ connector code calls guard.writeEvent(event)
 
 Connector code does not see `ConnectorHost.emit`, `withSource`, or separate `start` / `sync` APIs.
 
+Known gap inside the core connector system: platform requirements are parsed but not enforced. The requirement handler contract, trusted setup-inspection import, requirement setup API (separate from auth connect), requirement status persistence/API exposure, and the unified setup evaluator gating `ready`/run/scheduler are not implemented yet. This is the largest doc/implementation mismatch.
+
+Already implemented in core (not pending): workspace trust gate, package content hashing, official/custom/modified classification, custom approval records, and the host-auth approve endpoint.
+
 Still pending outside the core connector system:
 
 - shell integration management UI
-- workspace connector trust gate, package hashing, and official/custom/modified status
-- cached official catalog download/verification from the official registry / R2
-- human-only custom connector approval flow
-- integration-key-aware runtime schema, setup status, and source builder
-- `runtime.defaultSchedule` manifest validation and integration schedule copy
-- structured `platforms` manifest validation and connector requirement handlers
+- cached official catalog download/verification from the official registry / R2 (until then nothing classifies as official)
+- shell human-only custom connector approval UX on top of the existing approve endpoint
 - unified auth/secrets module adapter beyond the current injectable secret-store interface
-- trigger runtime wiring for poll schedules
 - separate connector runner process and host capability broker
 - high-throughput queue and transactional batch writer

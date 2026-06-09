@@ -12,9 +12,19 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Connector interface + convention + framework
   - Install/remove as `connectors/<id>/` workspace folders
   - Materialize built-ins into `connectors/<id>/`, no runtime special case
+  - Platform requirement lifecycle: handler contract, setup API (separate from auth connect), status persistence + API exposure, unified setup evaluator gating ready/run/scheduler
+    - Trust before handler: requirement handlers are connector code; official/custom trust must pass before any setup-inspection import or check/request call — never import untrusted code to check permissions
+  - Make `integrations.mode` required in manifest parsing (remove the `singleton` default; update built-in manifests + tests)
   - built-in: Terminal connector
   - built-in: App commits connector
-  - ConnectorScheduler: on core boot, start trusted watch integrations and evaluate due poll schedules.
+
+- [ ] Multi-device runtime target routing (late; built on the multi-device sync `devices` registry)
+  - `devices` table is multi-device sync infrastructure (identity, presence, platform, status); connector integrations only reference it
+  - Add `connector_integrations.runtime_device_id -> devices.id` (reserved schema in connector runtime doc)
+  - One integration = one source identity assigned to one device; official cloud is a special device row
+  - Requirements selected from `manifest.platforms[device.platform]`
+  - Scheduler runs only integrations assigned to the current device
+  - Until then: runtime target is the implicit current host; do not add the table/column early
 
 - [ ] Guard CLI
 
