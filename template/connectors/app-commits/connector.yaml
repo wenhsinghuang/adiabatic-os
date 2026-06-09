@@ -2,8 +2,7 @@ id: app-commits
 name: App Commits
 entry: ./index.mjs
 runtime:
-  mode: poll
-  defaultSchedule: "*/15 * * * *"
+  mode: watch
 integrations:
   mode: singleton
 platforms:

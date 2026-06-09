@@ -332,8 +332,7 @@ id: app-commits
 name: App Commits
 entry: ./index.mjs
 runtime:
-  mode: poll
-  defaultSchedule: "*/15 * * * *"
+  mode: watch
 integrations:
   mode: singleton
 platforms:
@@ -695,7 +694,7 @@ type ConnectorStateHandle<TState> = {
 
 Examples:
 
-- `app-commits`: last seen commit SHA.
+- `app-commits`: last seen commit SHA per app repo.
 - `google-calendar`: sync token.
 - `oura`: last synced day.
 - `terminal`: current session checkpoint or last flushed chunk pointer.

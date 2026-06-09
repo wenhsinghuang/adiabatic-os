@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -475,6 +476,71 @@ auth:
     expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ stopped: true });
   });
 
+  test("app-commits syncs app git repos with per-app cursors", async () => {
+    const { syncOnce } = await import("../../template/connectors/app-commits/index.mjs");
+    const appDir = join(workspace, "apps", "hello-world");
+    mkdirSync(appDir, { recursive: true });
+    execFileSync("git", ["-C", appDir, "init"], { stdio: "ignore" });
+    execFileSync("git", ["-C", appDir, "config", "user.name", "Test User"], { stdio: "ignore" });
+    execFileSync("git", ["-C", appDir, "config", "user.email", "test@example.com"], { stdio: "ignore" });
+
+    writeFileSync(join(appDir, "index.tsx"), "export default function App() { return null; }\n");
+    execFileSync("git", ["-C", appDir, "add", "."], { stdio: "ignore" });
+    execFileSync("git", ["-C", appDir, "commit", "-m", "Initial app"], { stdio: "ignore" });
+    const firstSha = execFileSync("git", ["-C", appDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+    let syncState: unknown;
+    const events: any[] = [];
+    const context = {
+      guard: {
+        async writeEvent(event: any) {
+          events.push(event);
+          return { id: `event-${events.length}` };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      host: { workspacePath: workspace },
+      signal: new AbortController().signal,
+    };
+
+    await syncOnce(context);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "app.commit",
+      externalId: `hello-world:${firstSha}`,
+      payload: {
+        appId: "hello-world",
+        repoPath: appDir,
+        sha: firstSha,
+        authorName: "Test User",
+        authorEmail: "test@example.com",
+        subject: "Initial app",
+      },
+    });
+
+    writeFileSync(join(appDir, "index.tsx"), "export default function App() { return 'updated'; }\n");
+    execFileSync("git", ["-C", appDir, "add", "."], { stdio: "ignore" });
+    execFileSync("git", ["-C", appDir, "commit", "-m", "Update app"], { stdio: "ignore" });
+    const secondSha = execFileSync("git", ["-C", appDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+    await syncOnce(context);
+    expect(events).toHaveLength(2);
+    expect(events[1].externalId).toBe(`hello-world:${secondSha}`);
+    expect(events[1].payload.subject).toBe("Update app");
+    expect(syncState).toEqual({
+      apps: {
+        "hello-world": { lastSha: secondSha },
+      },
+    });
+  });
+
   test("installs connectors as workspace folders, registers them, and removes the folder", async () => {
     const sourceDir = join(workspace, "source-connectors", "calendar");
     mkdirSync(sourceDir, { recursive: true });
@@ -546,7 +612,7 @@ auth:
         id: "app-commits",
         name: "App Commits",
         entry: "./index.mjs",
-        runtime: { mode: "poll", defaultSchedule: "*/15 * * * *" },
+        runtime: { mode: "watch" },
         integrations: { mode: "singleton" },
         platforms: { darwin: {} },
         auth: { type: "none" },
