@@ -1,5 +1,7 @@
 # 202605080000 Verb-First Personal Substrate
 
+Status: canon — this is the project's current self-definition.
+
 Adiabatic OS 的定位不是「更好的 notes app」，而是 **user-owned verb-first substrate**：先保住 raw event log，再把 docs、apps、dashboards、traits、summaries 都視為可替換 projection。
 
 ---

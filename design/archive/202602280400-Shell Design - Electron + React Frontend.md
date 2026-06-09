@@ -1,5 +1,7 @@
 # 202602280400 Shell Design — Electron + React Frontend
 
+> **Status: superseded (archived 2026-06-10).** Describes the pre-simplification shell. The editor stack changed completely on 2026-05-12 (`e2c34b8`): no WYSIWYG MDX rendering, apps run in their own `AppRuntimeView` tab, pages are plain markdown. The Electron + React + Bun-core-on-localhost:3000 skeleton is still accurate; the content/editor sections are not. Shell redesign is on TODO.md.
+
 用戶打開 app 看到什麼、怎麼互動、怎麼接上 backend runtime。
 
 ---

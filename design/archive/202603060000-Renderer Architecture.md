@@ -1,5 +1,7 @@
 # Renderer Architecture — MDX ↔ Plate.js Pipeline
 
+> **Status: superseded (archived 2026-06-10).** The Plate.js pipeline was replaced by the Obsidian-style MDX renderer (commit `67cb134`), which was itself deleted in the 2026-05-12 editor simplification (`e2c34b8`). No MDX compile/render path exists in the shell today; pages are plain markdown in `MarkdownPageEditor`. See DD12 in the Design Decisions Log.
+
 This document defines how MDX content flows through the Plate.js editor. It exists to prevent the recurring "fix A breaks B" cycle.
 
 話說 我對 renderer 要求其實蠻簡單的\                                                                                                    

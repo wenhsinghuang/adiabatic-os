@@ -1,5 +1,7 @@
 # 202602140500 Design Decisions Log
 
+Status: canon, append-only log. Old entries are never rewritten; corrections arrive as newer dated entries. See the 20260610 Status Review at the bottom for which DDs are alive, dead, or deferred.
+
 設計過程中做出的重要決定，附理由。方便未來回溯「為什麼這樣設計」。
 
 ---
@@ -156,3 +158,43 @@
 - 任何 visual property 的改動 → 對應到 .mdx 中某個 JSX/Markdown 結構的變化
 
 **邊界：** 這個原則只適用於 **content**（page 內容）。Application layout（sidebar width、terminal height）屬於 shell UI state，不存在 MDX 裡。
+
+---
+
+## 20260512 Session
+
+### DD12: Editor 全面簡化 — 砍掉 WYSIWYG，換 off-the-shelf markdown editor
+
+**決定：** 刪除 Obsidian-style MDX WYSIWYG editor 全部實作（commit `e2c34b8`：`MdxRenderer.tsx` 935 行、`editor-ops.ts` + 491 行測試、`SlashPalette`、`InlineBlockEditor`、`mdx-parser.ts`，共約 2,400 行）。換成 `MarkdownPageEditor`（185 行，wrap `@mdxeditor/editor`）+ `markdown-normalize.ts`（48 行）。
+
+**理由：**
+1. **ROI 太小。** 花在 editor 的時間不推進 P0（cold start）。Editor 是最 disposable 的一層（D1 projection 的 view），卻吃掉最多 effort。
+2. **主要 author 是 AI。** 系統哲學說 AI 操作 raw MDX text 最準確；複雜的人類 WYSIWYG ergonomics 跟這個前提矛盾。人要寫字，一個夠用的 markdown editor 就夠。
+3. **買比造好。** `@mdxeditor/editor` 是維護中的 library，markdown 編輯不是這個專案的差異化所在。
+
+**連帶效果：**
+- **In-page component rendering 移除。** Shell 沒有 MDX compile path。Page 裡的 `import` / JSX / raw HTML 由 `inertUnsupportedMdx()` 包成 ` ```mdx ` code fence，以 inert source code 顯示，不執行。App 在獨立的 `AppRuntimeView` tab 跑。
+- **「Pages compose Apps」（DD11 前提、5-Layer doc 的 key insight）→ deferred。** 不是放棄 claim，是 editor ROI 太小、不是當前 focus。Substrate 不依賴 composition，cold start 之後再評估。
+- **已知行為：normalize 是單向的。** `inertUnsupportedMdx` 在載入時包 fence，save 時不會解包 — 編輯過的 legacy MDX page 會把 fence 持久化進 doc content。這視為 intentional migration（JSX in pages = legacy，凍結成可見 code）。若 composition 回歸，需要 migration 處理這批 page。
+
+**推翻 / 修正了什麼：**
+- DD10（flow editor 是 built-in primitive）— 方向保留（還是有 built-in editor），但「WYSIWYG MDX editor 是 layer 0 必需品」的版本推翻。Markdown editor 就夠 bootstrap。
+- DD11（MDX 是所有 content 操作的 single source of truth）— 原則仍成立（content = plain text，無 hidden state），但適用面縮小：editor 不再做 component resize / DnD 序列化，因為 component 不再 render。
+
+## 20260610 Status Review
+
+對既有 DD 的狀態盤點（append-only，不改寫原 entry）：
+
+| DD | 狀態 | 說明 |
+|----|------|------|
+| DD1 (content 存 DB) | ✅ 成立 | DD8 working tree 補上 file 入口 |
+| DD2 (Yjs CRDT sync) | ⏸ deferred | 無限期。Local-first 單 instance；working tree 用 LWW |
+| DD3 (chunks/embeddings) | ⏸ deferred | 被 Retrieval Memory Module Requirements 重新定位：retrieval 是 replaceable derived layer，embedding 只是一種實作 |
+| DD4 (app 三層隔離) | ✅ 部分成立 | Data isolation 由 Guard enforce ✓。注意：connector 走相反路線 — hash trust + human approval，不 sandbox（見 Connector Runtime Module） |
+| DD5 (code 在 FS, data 在 DB) | ✅ 成立 | |
+| DD6 (Agent Skills 取代 CLAUDE.md) | ❌ dead | 沒實作也不打算。`core/src/claude-md.ts` 生成 CLAUDE.md 就是現行機制 |
+| DD7 (D0/D1/D2 三層) | ✅ 成立 | 核心 invariant，由 Verb-First doc 強化 |
+| DD8 (working tree pattern) | ✅ 成立 | 已實作（`working-tree.ts`） |
+| DD9 (Bun Worker sandbox) | ⚠️ 演化 | App 實際走 WebContainer bridge + capability token（見 Local Capability Auth）；per-app hard isolation 仍是 future work |
+| DD10 (flow editor built-in) | ⚠️ 修正 | 見 DD12 |
+| DD11 (MDX single source of truth) | ⚠️ 縮小 | 見 DD12 |

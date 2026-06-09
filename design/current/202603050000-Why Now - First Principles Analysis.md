@@ -1,5 +1,7 @@
 # 202603050000 Why Now — First Principles Analysis
 
+Status: canon philosophy (reviewed 2026-06-10). The No-Abstraction principle and Guard rationale here remain the project's operating theory — they survived the 2026-05 editor simplification better than the editor did.
+
 為什麼 Adiabatic OS 這個方向現在才可能成立。
 
 ---

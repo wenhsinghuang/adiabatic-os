@@ -1,5 +1,7 @@
 # 202602140700 Adiabatic OS — Scope Definition
 
+Status: canon with caveats (reviewed 2026-06-10) — the five scopes and uninstall test hold as long-term structure. Caveats: Scope 2 (Optimizer) is **parked** — long-term purpose, not current work; P0 is cold start via Scope 5 (Connectors), which is now fully specified in the Connector Runtime Module doc. Pages-as-composition-layer (Scope 4) is deferred along with the editor; pages are currently plain markdown.
+
 系統的五個 scope，各自職責與邊界。
 
 ---

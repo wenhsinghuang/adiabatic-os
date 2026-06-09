@@ -1,5 +1,7 @@
 # 202602140800 OS Infra — What to Design
 
+> **Status: superseded (archived 2026-06-10).** Early scoping note. The one-way doors it identified (D0/D1/D2, auto D0 log, Guard) were designed and built; the rest is covered by newer canon docs (Design Pattern KISS, D0 Source Boundary, Connector Runtime Module). Kept for provenance only.
+
 OS infra 的 one-way door。需要設計對的東西，就這些。
 
 用這個標準過濾一遍：                                                            

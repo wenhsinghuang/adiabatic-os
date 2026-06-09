@@ -1,5 +1,7 @@
 # 202602141000 Tech Stack & Architecture
 
+> **Status: superseded (archived 2026-06-10).** Multiple stale claims: BlockNote editor (never shipped; current editor is `@mdxeditor/editor` after the 2026-05-12 simplification), WebContainers as the universal sandbox (connectors deliberately use hash-trust instead — see Connector Runtime Module), twin-replica Fly.io/Turso/Yjs sync (deferred indefinitely; local-first single-instance today). Still-true picks: Bun core, Electron shell, SQLite, Vite, React. The doc's own framing held up — all of this was two-way door, and several doors were walked back through.
+
 Tech stack 全部是 two-way door — 不影響 D0/D1 schema。任何一項都能換。
 
 ---

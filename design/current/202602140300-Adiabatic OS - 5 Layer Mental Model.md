@@ -1,5 +1,7 @@
 # 202602140300 Adiabatic OS — 5-Layer Mental Model
 
+Status: canon with caveats (reviewed 2026-06-10) — the 5-layer frame and Guard/Data invariants hold. Caveats: deployment is Electron, not Tauri; twin-replica sync is deferred; "Pages compose Apps" is deferred (see Key Insight section); Optimizer is parked, not current focus (P0 = cold start, see TODO.md).
+
 整個系統的 mental model，由上到下五層。
 
 ---
@@ -90,6 +92,8 @@
 
 ## Twin-Replica 部署
 
+> 2026-06-10: deferred。目前是 local-first 單 instance（Electron + Bun core）。Twin-replica/sync 不在 TODO；connector manifest 的 `cloud` platform key 為未來保留。
+
 同一份 runtime 跑在兩個地方：
 
 ```
@@ -116,7 +120,9 @@ Terminal → Claude Code / Codex → 讀 CLAUDE.md → 寫 app code
 
 ---
 
-## Key Insight: Pages 的組合能力
+## Key Insight: Pages 的組合能力（deferred）
+
+> 2026-06-10: **deferred, not current focus** — editor ROI 太小。2026-05-12 editor 簡化後，shell 沒有 MDX compile path：page 裡的 JSX/component 被 `inertUnsupportedMdx` 包成 inert code fence，app 在獨立的 `AppRuntimeView` tab 跑。Composition 的 claim 仍然成立於架構層（substrate 不依賴它），等 cold start 之後再評估。
 
 Pages 是跨 app boundary 的唯一合法場所。App 之間不直接 import 彼此的 code — 這會造成耦合。但 page 可以自由引用任何 app 的 component：
 
