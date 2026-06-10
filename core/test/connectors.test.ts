@@ -122,7 +122,7 @@ auth:
 
     expect(() => validateConnectorManifest({ ...base, id: "../demo" })).toThrow("Invalid connector id");
     expect(() =>
-      validateConnectorManifest({ ...base, integrations: undefined })
+      validateConnectorManifest({ ...base, integrations: undefined as any })
     ).toThrow("requires an explicit integrations.mode");
     expect(() =>
       validateConnectorManifest({ ...base, runtime: { mode: "stream" as any } })
@@ -449,6 +449,40 @@ auth:
     expect(rows[0].source).toBe("connector:retry-feed");
     expect(rows[0].external_id).toBe("same-event");
     expect(JSON.parse(rows[0].payload)).toEqual({ attempt: 1 });
+  });
+
+  test("blocks runs up front when credentials disappear after ready", async () => {
+    let connectorSawAuth = false;
+    supervisor.register(
+      {
+        id: "revoked-feed",
+        name: "Revoked Feed",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        auth: { type: "apiKey" },
+      },
+      {
+        async run({ auth }) {
+          connectorSawAuth = true;
+          if (auth.type === "none") throw new Error("expected auth");
+          await auth.getToken();
+        },
+      },
+    );
+
+    const integration = supervisor.ensureIntegration({ connectorId: "revoked-feed" });
+    await supervisor.getAuthManager().setToken(integration.authRef!, "token");
+    const ready = await supervisor.connectIntegration(integration.id);
+    expect(ready.setupStatus).toBe("ready");
+
+    // Token revoked after ready: the run must fail before connector code
+    // executes, and the integration drops back to setup.
+    await supervisor.getAuthManager().deleteToken(integration.authRef!);
+    await expect(supervisor.run(integration.id)).rejects.toThrow("credentials are missing");
+    expect(connectorSawAuth).toBe(false);
+    expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("setup");
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
   });
 
   test("fails auth connectors without credentials and records integration error", async () => {

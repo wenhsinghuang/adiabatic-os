@@ -157,7 +157,7 @@ export class ConnectorSupervisor {
       throw new Error(`Connector ${input.connectorId} is not supported on ${this.platform}`);
     }
 
-    const mode = registration.manifest.integrations?.mode ?? "singleton";
+    const mode = registration.manifest.integrations.mode;
     const existingForIdentity = input.id
       ? this.store.get(input.id)
       : this.store.getByIdentity(input.connectorId, input.integrationKey || undefined);
@@ -204,7 +204,7 @@ export class ConnectorSupervisor {
       throw new Error(`Connector integration ${instanceId} authRef changes must use connectIntegration`);
     }
     validateScheduleInput(input.scheduleCron);
-    const mode = registration.manifest.integrations?.mode ?? "singleton";
+    const mode = registration.manifest.integrations.mode;
     const requiresAuth = (registration.manifest.auth ?? { type: "none" }).type !== "none";
     const setupStatus = validateIntegrationLifecycle({
       connectorId: existing.connectorId,
@@ -247,7 +247,7 @@ export class ConnectorSupervisor {
     // connected before platform requirements are granted (and vice versa).
     validateIntegrationLifecycle({
       connectorId: existing.connectorId,
-      mode: registration.manifest.integrations?.mode ?? "singleton",
+      mode: registration.manifest.integrations.mode,
       integrationKey: input.integrationKey ?? existing.integrationKey,
       setupStatus: "setup",
       requiresAuth: true,
@@ -285,7 +285,7 @@ export class ConnectorSupervisor {
     return this.store.list().map((integration) => {
       const registration = this.registrations.get(integration.connectorId);
       const hasSourceIdentity = Boolean(
-        integration.integrationKey || registration?.manifest.integrations?.mode !== "multiple",
+        integration.integrationKey || registration?.manifest.integrations.mode !== "multiple",
       );
       const activeRequirements = registration
         ? activePlatformRequirements(registration.manifest, this.platform)
@@ -482,7 +482,7 @@ export class ConnectorSupervisor {
     }
     const registration = this.requireRegistration(integration.connectorId);
     const manifest = registration.manifest;
-    const mode = manifest.integrations?.mode ?? "singleton";
+    const mode = manifest.integrations.mode;
     const requiresAuth = (manifest.auth ?? { type: "none" }).type !== "none";
 
     const sourceReady = mode === "singleton" || Boolean(integration.integrationKey);
@@ -498,6 +498,23 @@ export class ConnectorSupervisor {
       return this.store.update(instanceId, { setupStatus: "ready" });
     }
     return integration;
+  }
+
+  // Auth gets the same run-time recheck as requirements: a token deleted or
+  // invalidated after ready must block the run up front, not fail lazily
+  // inside connector code. Checked before the trust import since it needs no
+  // connector code.
+  private async assertRunAuth(
+    registration: Registration,
+    integration: ConnectorIntegration,
+  ): Promise<void> {
+    const auth = registration.manifest.auth ?? { type: "none" };
+    if (auth.type === "none") return;
+    if (integration.authRef && (await this.authManager.hasToken(integration.authRef))) return;
+    this.store.update(integration.id, { setupStatus: "setup" });
+    throw new Error(
+      `Connector ${integration.connectorId} credentials are missing; reconnect the integration`,
+    );
   }
 
   private async assertRunRequirements(
@@ -535,7 +552,7 @@ export class ConnectorSupervisor {
     }
 
     const registration = this.requireRegistration(integration.connectorId);
-    const mode = registration.manifest.integrations?.mode ?? "singleton";
+    const mode = registration.manifest.integrations.mode;
     if (mode === "multiple" && !integration.integrationKey) {
       throw new Error(`Connector integration requires an integration_key: ${instanceId}`);
     }
@@ -548,6 +565,7 @@ export class ConnectorSupervisor {
 
     const promise = (async () => {
       try {
+        await this.assertRunAuth(registration, integration);
         const definition = await this.loadTrustedDefinition(registration);
         await this.assertRunRequirements(registration, integration, definition);
         const context = {
@@ -696,7 +714,7 @@ function firstIntegrationSetupStatus(
   manifest: ConnectorManifest,
   hasActiveRequirements: boolean,
 ): "setup" | "ready" {
-  if (manifest.integrations?.mode === "multiple") return "setup";
+  if (manifest.integrations.mode === "multiple") return "setup";
   if (hasActiveRequirements) return "setup";
   return (manifest.auth ?? { type: "none" }).type === "none" ? "ready" : "setup";
 }

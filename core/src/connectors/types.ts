@@ -40,7 +40,9 @@ export interface ConnectorManifest<TConfig = JsonObject> {
   name: string;
   entry: string;
   runtime: ConnectorRuntimeSpec;
-  integrations?: ConnectorIntegrationsSpec;
+  // Required: source identity cardinality is an explicit author decision.
+  // The parser rejects manifests that omit it; there is no singleton default.
+  integrations: ConnectorIntegrationsSpec;
   platforms?: ConnectorPlatformsSpec;
   capabilities?: string[];
   auth?: ConnectorAuthSpec;

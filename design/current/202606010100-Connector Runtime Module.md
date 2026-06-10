@@ -463,7 +463,7 @@ Trigger semantics:
 
 ```text
 watch connector
-  core up -> run enabled singleton/matching integrations continuously
+  core up -> start enabled ready watch integrations on the current implicit runtime target
   core down -> stops
 
 poll connector
@@ -1055,7 +1055,7 @@ connector code calls guard.writeEvent(event)
 
 Connector code does not see `ConnectorHost.emit`, `withSource`, or separate `start` / `sync` APIs.
 
-The requirement lifecycle is implemented in core: connector packages export `requirements` handlers (`check`/`request`), the supervisor exposes `checkIntegrationRequirements` / `requestIntegrationRequirement` (separate from auth connect), requirement status persists in `connector_integrations.requirements_status`, `/api/connectors` exposes per-integration requirement status, and a unified setup evaluator gates `ready` (source identity + auth + active platform requirements). Handlers are only imported after the package passes the same trust gate as `run()`, and every run re-checks active requirements before connector code executes.
+The requirement lifecycle is implemented in core: connector packages export `requirements` handlers (`check`/`request`), the supervisor exposes `checkIntegrationRequirements` / `requestIntegrationRequirement` (separate from auth connect), requirement status persists in `connector_integrations.requirements_status`, `/api/connectors` exposes per-integration requirement status, and a unified setup evaluator gates `ready` (source identity + auth + active platform requirements). Handlers are only imported after the package passes the same trust gate as `run()`, and every run re-checks credentials and active requirements before `run(context)` is called. Note the precise timing: module top-level code executes at import, after the trust gate and before the requirement check — the requirement gate protects the run, the trust gate protects the import.
 
 Already implemented in core (not pending): workspace trust gate, package content hashing, official/custom/modified classification, custom approval records, and the host-auth approve endpoint.
 
