@@ -8,6 +8,7 @@ import type {
   ConnectorPlatformsSpec,
   ConnectorRuntimeMode,
 } from "./types";
+import { validateConnectorSchedule } from "./schedule";
 
 const CONNECTOR_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const INTEGRATION_KEY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -52,8 +53,17 @@ export function validateConnectorManifest(manifest: ConnectorManifest): Connecto
   if (manifest.runtime.mode !== "poll" && manifest.runtime.defaultSchedule) {
     throw new Error(`Connector ${manifest.id} defaultSchedule is only valid for poll runtime`);
   }
+  if (manifest.runtime.defaultSchedule) {
+    validateConnectorSchedule(manifest.runtime.defaultSchedule);
+  }
 
-  const integrations = manifest.integrations ?? { mode: "singleton" };
+  // No default: integrations.mode is a source-scope decision the author must make.
+  // A device-scoped connector silently defaulted to singleton corrupts source
+  // provenance across devices.
+  const integrations = manifest.integrations;
+  if (!integrations || integrations.mode === undefined) {
+    throw new Error(`Connector ${manifest.id} requires an explicit integrations.mode (singleton or multiple)`);
+  }
   if (!INTEGRATION_MODES.has(integrations.mode)) {
     throw new Error(`Connector ${manifest.id} has invalid integrations mode`);
   }
@@ -89,6 +99,13 @@ export function isPlatformSupported(
   const platforms = manifest.platforms ?? {};
   const declared = Object.keys(platforms);
   return declared.length === 0 || platform in platforms;
+}
+
+export function activePlatformRequirements(
+  manifest: ConnectorManifest,
+  platform: ConnectorPlatform,
+): string[] {
+  return manifest.platforms?.[platform]?.requirements ?? [];
 }
 
 export async function loadConnectorManifest(connectorDir: string): Promise<ConnectorManifest> {

@@ -4,6 +4,7 @@ import type { Guard } from "../guard";
 import { ConnectorAuthManager } from "./auth";
 import { createBoundConnectorGuard, sourceForConnector } from "./guard";
 import {
+  activePlatformRequirements,
   currentConnectorPlatform,
   isPlatformSupported,
   validateConnectorId,
@@ -17,6 +18,7 @@ import {
   type EnsureIntegrationInput,
   type UpdateIntegrationInput,
 } from "./state";
+import { validateConnectorSchedule } from "./schedule";
 import type {
   ConnectorDefinition,
   ConnectorHostContext,
@@ -26,8 +28,19 @@ import type {
   ConnectorPackageRecord,
   ConnectorPackageTrust,
   ConnectorPlatform,
+  ConnectorRequirementContext,
+  ConnectorRequirementRecord,
+  ConnectorRequirementState,
+  ConnectorRequirementStatus,
   ConnectorRunHandle,
 } from "./types";
+
+export interface ConnectorRequirementView {
+  id: string;
+  status: ConnectorRequirementState | "unknown";
+  message?: string;
+  lastCheckedAt?: number;
+}
 
 interface Registration {
   manifest: ConnectorManifest;
@@ -145,6 +158,9 @@ export class ConnectorSupervisor {
     }
 
     const mode = registration.manifest.integrations?.mode ?? "singleton";
+    const existingForIdentity = input.id
+      ? this.store.get(input.id)
+      : this.store.getByIdentity(input.connectorId, input.integrationKey || undefined);
     const setupStatus = validateIntegrationLifecycle({
       connectorId: input.connectorId,
       mode,
@@ -152,10 +168,14 @@ export class ConnectorSupervisor {
       setupStatus: input.setupStatus,
       requiresAuth: (registration.manifest.auth ?? { type: "none" }).type !== "none",
       authReady: false,
+      requirementsSatisfied: this.requirementsSatisfiedFor(registration.manifest, existingForIdentity),
     });
     const scheduleCron = input.scheduleCron === undefined
       ? registration.manifest.runtime.defaultSchedule
       : input.scheduleCron ?? undefined;
+    if (scheduleCron !== undefined) {
+      validateConnectorSchedule(scheduleCron);
+    }
     const packageHash = input.packageHash ?? registration.package?.contentHash;
     const trustStatus = input.trustStatus ?? trustStatusForIntegration(registration.trust);
 
@@ -183,6 +203,7 @@ export class ConnectorSupervisor {
     if (input.authRef !== undefined && input.authRef !== existing.authRef) {
       throw new Error(`Connector integration ${instanceId} authRef changes must use connectIntegration`);
     }
+    validateScheduleInput(input.scheduleCron);
     const mode = registration.manifest.integrations?.mode ?? "singleton";
     const requiresAuth = (registration.manifest.auth ?? { type: "none" }).type !== "none";
     const setupStatus = validateIntegrationLifecycle({
@@ -192,6 +213,7 @@ export class ConnectorSupervisor {
       setupStatus: input.setupStatus ?? existing.setupStatus,
       requiresAuth,
       authReady: !requiresAuth || existing.setupStatus === "ready",
+      requirementsSatisfied: this.requirementsSatisfiedFor(registration.manifest, existing),
     });
     return this.store.update<TConfig, TState>(instanceId, {
       ...input,
@@ -219,26 +241,35 @@ export class ConnectorSupervisor {
     if (!authRef || !(await this.authManager.hasToken(authRef))) {
       throw new Error(`Connector integration ${instanceId} requires credentials before it can be ready`);
     }
-    const setupStatus = validateIntegrationLifecycle({
+    validateScheduleInput(input.scheduleCron);
+    // Validate source identity constraints without forcing ready: connect only
+    // binds credentials. The unified evaluator decides ready, so auth can be
+    // connected before platform requirements are granted (and vice versa).
+    validateIntegrationLifecycle({
       connectorId: existing.connectorId,
       mode: registration.manifest.integrations?.mode ?? "singleton",
       integrationKey: input.integrationKey ?? existing.integrationKey,
-      setupStatus: "ready",
+      setupStatus: "setup",
       requiresAuth: true,
       authReady: true,
+      requirementsSatisfied: this.requirementsSatisfiedFor(registration.manifest, existing),
     });
-    return this.store.update<TConfig, TState>(instanceId, {
-      ...input,
+    const { setupStatus: _ignored, ...rest } = input;
+    this.store.update(instanceId, {
+      ...rest,
       authRef,
-      setupStatus,
     });
+    return (await this.refreshSetupStatus(instanceId)) as ConnectorIntegration<TConfig, TState>;
   }
 
   ensureFirstIntegration(connectorId: string): ConnectorIntegration {
     const registration = this.requireRegistration(connectorId);
     return this.ensureIntegration({
       connectorId,
-      setupStatus: firstIntegrationSetupStatus(registration.manifest),
+      setupStatus: firstIntegrationSetupStatus(
+        registration.manifest,
+        activePlatformRequirements(registration.manifest, this.platform).length > 0,
+      ),
     });
   }
 
@@ -249,12 +280,16 @@ export class ConnectorSupervisor {
     running: boolean;
     supported: boolean;
     packageTrust: ConnectorPackageTrust["status"];
+    requirements: ConnectorRequirementView[];
   }> {
     return this.store.list().map((integration) => {
       const registration = this.registrations.get(integration.connectorId);
       const hasSourceIdentity = Boolean(
         integration.integrationKey || registration?.manifest.integrations?.mode !== "multiple",
       );
+      const activeRequirements = registration
+        ? activePlatformRequirements(registration.manifest, this.platform)
+        : [];
       return {
         ...integration,
         name: registration?.manifest.name ?? integration.connectorId,
@@ -265,6 +300,12 @@ export class ConnectorSupervisor {
         running: this.activeRuns.has(integration.id),
         supported: registration ? isPlatformSupported(registration.manifest, this.platform) : false,
         packageTrust: registration?.trust.status ?? "missing",
+        requirements: activeRequirements.map((id) => ({
+          id,
+          status: integration.requirementsStatus?.[id]?.status ?? "unknown",
+          message: integration.requirementsStatus?.[id]?.message,
+          lastCheckedAt: integration.requirementsStatus?.[id]?.lastCheckedAt,
+        })),
       };
     });
   }
@@ -290,6 +331,191 @@ export class ConnectorSupervisor {
 
   getAuthManager(): ConnectorAuthManager {
     return this.authManager;
+  }
+
+  async checkIntegrationRequirements(
+    instanceId: string,
+  ): Promise<Record<string, ConnectorRequirementRecord>> {
+    const integration = this.store.get(instanceId);
+    if (!integration) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(integration.connectorId);
+    if (!isPlatformSupported(registration.manifest, this.platform)) {
+      throw new Error(`Connector ${integration.connectorId} is not supported on ${this.platform}`);
+    }
+    const requirementIds = activePlatformRequirements(registration.manifest, this.platform);
+    if (requirementIds.length === 0) return {};
+
+    // Trust before handler: importing requirement handlers runs connector code,
+    // so the package must pass the same trust gate as run().
+    const definition = await this.loadTrustedDefinition(registration);
+    const records = await this.evaluateRequirements(registration, integration, definition, requirementIds);
+    await this.refreshSetupStatus(instanceId);
+    return records;
+  }
+
+  async requestIntegrationRequirement(
+    instanceId: string,
+    requirementId: string,
+  ): Promise<ConnectorRequirementRecord> {
+    const integration = this.store.get(instanceId);
+    if (!integration) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(integration.connectorId);
+    const requirementIds = activePlatformRequirements(registration.manifest, this.platform);
+    if (!requirementIds.includes(requirementId)) {
+      throw new Error(
+        `Connector ${integration.connectorId} has no active requirement ${requirementId} on ${this.platform}`,
+      );
+    }
+
+    const definition = await this.loadTrustedDefinition(registration);
+    const handler = definition.requirements?.[requirementId];
+    if (!handler) {
+      throw new Error(
+        `Connector ${integration.connectorId} does not implement requirement handler: ${requirementId}`,
+      );
+    }
+
+    const ctx = this.requirementContext(integration);
+    let requestStatus: ConnectorRequirementStatus | undefined;
+    if (handler.request) {
+      try {
+        requestStatus = normalizeRequirementStatus(await handler.request(ctx));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const record: ConnectorRequirementRecord = {
+          status: "error",
+          message,
+          lastCheckedAt: Date.now(),
+        };
+        this.persistRequirementRecords(instanceId, { [requirementId]: record });
+        await this.refreshSetupStatus(instanceId);
+        return record;
+      }
+    }
+
+    const records = await this.evaluateRequirements(registration, integration, definition, [requirementId]);
+    let record = records[requirementId];
+    // check() is the authority for grants, but an in-flight request must stay
+    // visible: when request() reports pending (e.g. "grant in System Settings")
+    // and the immediate re-check still says missing, keep the pending record so
+    // the UI shows the actionable request message instead of a bare missing.
+    if (requestStatus?.status === "pending" && record.status === "missing") {
+      record = { ...requestStatus, lastCheckedAt: record.lastCheckedAt };
+      this.persistRequirementRecords(instanceId, { [requirementId]: record });
+    }
+    await this.refreshSetupStatus(instanceId);
+    return record;
+  }
+
+  private requirementContext(integration: ConnectorIntegration): ConnectorRequirementContext {
+    return {
+      connectorId: integration.connectorId,
+      integrationId: integration.id,
+      integrationKey: integration.integrationKey,
+      platform: this.platform,
+      host: this.host,
+    };
+  }
+
+  private requirementsSatisfiedFor(
+    manifest: ConnectorManifest,
+    integration: ConnectorIntegration | undefined,
+  ): boolean {
+    const requirementIds = activePlatformRequirements(manifest, this.platform);
+    if (requirementIds.length === 0) return true;
+    const status = integration?.requirementsStatus;
+    return requirementIds.every((id) => status?.[id]?.status === "satisfied");
+  }
+
+  private async evaluateRequirements(
+    registration: Registration,
+    integration: ConnectorIntegration,
+    definition: ConnectorDefinition,
+    requirementIds: string[],
+  ): Promise<Record<string, ConnectorRequirementRecord>> {
+    const ctx = this.requirementContext(integration);
+    const updates: Record<string, ConnectorRequirementRecord> = {};
+    for (const id of requirementIds) {
+      const handler = definition.requirements?.[id];
+      let status: ConnectorRequirementStatus;
+      if (!handler) {
+        status = {
+          status: "error",
+          message: `Connector ${registration.manifest.id} does not implement requirement handler: ${id}`,
+        };
+      } else {
+        try {
+          status = normalizeRequirementStatus(await handler.check(ctx));
+        } catch (err) {
+          status = {
+            status: "error",
+            message: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      updates[id] = { ...status, lastCheckedAt: Date.now() };
+    }
+    return this.persistRequirementRecords(integration.id, updates);
+  }
+
+  private persistRequirementRecords(
+    instanceId: string,
+    updates: Record<string, ConnectorRequirementRecord>,
+  ): Record<string, ConnectorRequirementRecord> {
+    const current = this.store.get(instanceId)?.requirementsStatus ?? {};
+    const merged = { ...current, ...updates };
+    this.store.setRequirementsStatus(instanceId, merged);
+    return merged;
+  }
+
+  // Unified setup evaluator: ready requires source identity + auth + active
+  // platform requirements all satisfied. Demotes ready integrations whose
+  // requirements regressed; promotes setup integrations once everything passes.
+  private async refreshSetupStatus(instanceId: string): Promise<ConnectorIntegration> {
+    const integration = this.store.get(instanceId);
+    if (!integration) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(integration.connectorId);
+    const manifest = registration.manifest;
+    const mode = manifest.integrations?.mode ?? "singleton";
+    const requiresAuth = (manifest.auth ?? { type: "none" }).type !== "none";
+
+    const sourceReady = mode === "singleton" || Boolean(integration.integrationKey);
+    const requirementsReady = this.requirementsSatisfiedFor(manifest, integration);
+    const authReady = !requiresAuth
+      || Boolean(integration.authRef && (await this.authManager.hasToken(integration.authRef)));
+    const eligible = sourceReady && requirementsReady && authReady;
+
+    if (integration.setupStatus === "ready" && !eligible) {
+      return this.store.update(instanceId, { setupStatus: "setup" });
+    }
+    if (integration.setupStatus === "setup" && eligible) {
+      return this.store.update(instanceId, { setupStatus: "ready" });
+    }
+    return integration;
+  }
+
+  private async assertRunRequirements(
+    registration: Registration,
+    integration: ConnectorIntegration,
+    definition: ConnectorDefinition,
+  ): Promise<void> {
+    const requirementIds = activePlatformRequirements(registration.manifest, this.platform);
+    if (requirementIds.length === 0) return;
+
+    const records = await this.evaluateRequirements(registration, integration, definition, requirementIds);
+    const unsatisfied = requirementIds.filter((id) => records[id]?.status !== "satisfied");
+    if (unsatisfied.length > 0) {
+      this.store.update(integration.id, { setupStatus: "setup" });
+      throw new Error(
+        `Connector ${integration.connectorId} requirements not satisfied: ${unsatisfied.join(", ")}`,
+      );
+    }
   }
 
   private createRun(instanceId: string, opts?: { config?: unknown }): ActiveRun {
@@ -323,6 +549,7 @@ export class ConnectorSupervisor {
     const promise = (async () => {
       try {
         const definition = await this.loadTrustedDefinition(registration);
+        await this.assertRunRequirements(registration, integration, definition);
         const context = {
           guard: createBoundConnectorGuard(this.guard, integration.connectorId, integration.integrationKey),
           auth: this.authManager.createHandle(registration.manifest.auth ?? { type: "none" }, integration),
@@ -433,29 +660,63 @@ function validateIntegrationLifecycle(opts: {
   setupStatus?: "setup" | "ready";
   requiresAuth?: boolean;
   authReady?: boolean;
+  requirementsSatisfied?: boolean;
 }): "setup" | "ready" {
+  const requirementsSatisfied = opts.requirementsSatisfied ?? true;
   if (opts.mode === "singleton") {
     if (opts.integrationKey) {
       throw new Error(`Connector ${opts.connectorId} supports only one integration`);
     }
-    const setupStatus = opts.setupStatus ?? (opts.requiresAuth ? "setup" : "ready");
+    const setupStatus = opts.setupStatus
+      ?? (opts.requiresAuth || !requirementsSatisfied ? "setup" : "ready");
     if (setupStatus === "ready" && opts.requiresAuth && !opts.authReady) {
       throw new Error(`Connector ${opts.connectorId} integration requires credentials before it can be ready`);
+    }
+    if (setupStatus === "ready" && !requirementsSatisfied) {
+      throw new Error(`Connector ${opts.connectorId} integration requires platform requirements before it can be ready`);
     }
     return setupStatus;
   }
 
-  const setupStatus = opts.setupStatus ?? (opts.integrationKey && !opts.requiresAuth ? "ready" : "setup");
+  const setupStatus = opts.setupStatus
+    ?? (opts.integrationKey && !opts.requiresAuth && requirementsSatisfied ? "ready" : "setup");
   if (setupStatus === "ready" && !opts.integrationKey) {
     throw new Error(`Connector ${opts.connectorId} integration requires an integration_key before it can be ready`);
   }
   if (setupStatus === "ready" && opts.requiresAuth && !opts.authReady) {
     throw new Error(`Connector ${opts.connectorId} integration requires credentials before it can be ready`);
   }
+  if (setupStatus === "ready" && !requirementsSatisfied) {
+    throw new Error(`Connector ${opts.connectorId} integration requires platform requirements before it can be ready`);
+  }
   return setupStatus;
 }
 
-function firstIntegrationSetupStatus(manifest: ConnectorManifest): "setup" | "ready" {
+function firstIntegrationSetupStatus(
+  manifest: ConnectorManifest,
+  hasActiveRequirements: boolean,
+): "setup" | "ready" {
   if (manifest.integrations?.mode === "multiple") return "setup";
+  if (hasActiveRequirements) return "setup";
   return (manifest.auth ?? { type: "none" }).type === "none" ? "ready" : "setup";
+}
+
+function normalizeRequirementStatus(status: ConnectorRequirementStatus): ConnectorRequirementStatus {
+  const valid = new Set<ConnectorRequirementState>(["satisfied", "missing", "pending", "error"]);
+  if (!status || !valid.has(status.status)) {
+    return {
+      status: "error",
+      message: `Requirement handler returned an invalid status: ${JSON.stringify(status)}`,
+    };
+  }
+  return {
+    status: status.status,
+    message: typeof status.message === "string" ? status.message : undefined,
+  };
+}
+
+function validateScheduleInput(scheduleCron: string | null | undefined): void {
+  if (scheduleCron !== undefined && scheduleCron !== null) {
+    validateConnectorSchedule(scheduleCron);
+  }
 }

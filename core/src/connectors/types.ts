@@ -85,8 +85,35 @@ export interface ConnectorRunContext<TConfig = unknown, TState = unknown> {
   signal: AbortSignal;
 }
 
+export type ConnectorRequirementState = "satisfied" | "missing" | "pending" | "error";
+
+export interface ConnectorRequirementStatus {
+  status: ConnectorRequirementState;
+  message?: string;
+}
+
+export interface ConnectorRequirementRecord extends ConnectorRequirementStatus {
+  lastCheckedAt: number;
+}
+
+export interface ConnectorRequirementContext {
+  connectorId: string;
+  integrationId: string;
+  integrationKey: string | undefined;
+  platform: ConnectorPlatform;
+  host: ConnectorHostContext;
+}
+
+export interface ConnectorRequirementHandler {
+  label: string;
+  description?: string;
+  check(ctx: ConnectorRequirementContext): MaybePromise<ConnectorRequirementStatus>;
+  request?(ctx: ConnectorRequirementContext): MaybePromise<ConnectorRequirementStatus>;
+}
+
 export interface ConnectorDefinition<TConfig = unknown, TState = unknown> {
   run(context: ConnectorRunContext<TConfig, TState>): MaybePromise<void>;
+  requirements?: Record<string, ConnectorRequirementHandler>;
 }
 
 export interface ConnectorIntegration<TConfig = unknown, TState = unknown> {
@@ -102,6 +129,7 @@ export interface ConnectorIntegration<TConfig = unknown, TState = unknown> {
   packageHash: string | undefined;
   config: TConfig | undefined;
   syncState: TState | undefined;
+  requirementsStatus: Record<string, ConnectorRequirementRecord> | undefined;
   authRef: string | undefined;
   lastError: string | undefined;
   lastRunAt: number | undefined;

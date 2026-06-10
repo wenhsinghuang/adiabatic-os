@@ -6,7 +6,7 @@ import type { SchemaOp } from "./guard";
 import { WorkingTree } from "./working-tree";
 import { loadApps } from "./app-loader";
 import { ensureClaudeMd } from "./claude-md";
-import { ConnectorSupervisor, registerWorkspaceConnectors } from "./connectors";
+import { ConnectorScheduler, ConnectorSupervisor, registerWorkspaceConnectors } from "./connectors";
 import { ulid } from "./utils/ulid";
 import { SettingsStore } from "./settings";
 import {
@@ -76,6 +76,13 @@ const connectorManifests = await registerWorkspaceConnectors(connectorSupervisor
   onError(connectorDir, err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[adiabatic] Skipping connector ${connectorDir}: ${message}`);
+  },
+});
+const connectorScheduler = new ConnectorScheduler({
+  supervisor: connectorSupervisor,
+  onError(err, integration) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[adiabatic] Connector ${integration.connectorId} scheduler error: ${message}`);
   },
 });
 let registry = await loadApps(appsDir);
@@ -417,6 +424,27 @@ const server = Bun.serve({
         return json({ ok: true, manifest });
       }
 
+      const requirementsCheckMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/requirements\/check$/);
+      if (requirementsCheckMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const requirements = await connectorSupervisor.checkIntegrationRequirements(
+          decodeURIComponent(requirementsCheckMatch[1]),
+        );
+        return json({ requirements });
+      }
+
+      const requirementRequestMatch = path.match(
+        /^\/api\/connectors\/integrations\/([^/]+)\/requirements\/([^/]+)\/request$/,
+      );
+      if (requirementRequestMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const requirement = await connectorSupervisor.requestIntegrationRequirement(
+          decodeURIComponent(requirementRequestMatch[1]),
+          decodeURIComponent(requirementRequestMatch[2]),
+        );
+        return json({ requirement });
+      }
+
       // -- Apps --
       if (path === "/api/apps" && method === "GET") {
         const apps = [...registry.apps.values()].map((a) => ({
@@ -609,11 +637,20 @@ const server = Bun.serve({
   },
 });
 
+connectorScheduler.start().catch((err) => {
+  console.error("[adiabatic] Connector scheduler failed:", err);
+});
+
 console.log(`[adiabatic] Server running on http://localhost:${server.port}`);
 
+let shuttingDown = false;
+
 // Graceful shutdown
-process.on("SIGINT", () => {
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("\n[adiabatic] Shutting down...");
+  await connectorScheduler.stop();
   for (const proc of terminalProcs) {
     try { proc.kill(); } catch {}
   }
@@ -621,4 +658,17 @@ process.on("SIGINT", () => {
   workingTree.stop();
   closeDB();
   process.exit(0);
+}
+
+process.on("SIGINT", () => {
+  shutdown().catch((err) => {
+    console.error("[adiabatic] Shutdown failed:", err);
+    process.exit(1);
+  });
+});
+process.on("SIGTERM", () => {
+  shutdown().catch((err) => {
+    console.error("[adiabatic] Shutdown failed:", err);
+    process.exit(1);
+  });
 });

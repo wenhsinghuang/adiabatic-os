@@ -437,7 +437,7 @@ The manifest should not contain secrets, auth tokens, enabled/disabled status, m
 
 `runtime.defaultSchedule` is only valid for `poll` connectors. It is a creation default for new integrations, not the scheduler's long-term source of truth. When an integration is created, the system copies the default into the integration schedule. After that, the scheduler reads the integration's own schedule.
 
-`integrations.mode` is required and must be declared explicitly. There is no default: under the source-scope semantics, defaulting to `singleton` would silently make the source-scope decision for the author, and a device-scoped connector accidentally shipped as singleton corrupts source provenance across devices. It declares source identity cardinality only. Use `multiple` when the same connector package naturally supports multiple source identities, such as separate accounts, separate devices, or source scopes. Device-specific local collectors must be `multiple` because each device is a distinct source identity. (The current parser still applies a `singleton` default; removing it is a pending implementation fix.)
+`integrations.mode` is required and must be declared explicitly. There is no default: under the source-scope semantics, defaulting to `singleton` would silently make the source-scope decision for the author, and a device-scoped connector accidentally shipped as singleton corrupts source provenance across devices. It declares source identity cardinality only. Use `multiple` when the same connector package naturally supports multiple source identities, such as separate accounts, separate devices, or source scopes. Device-specific local collectors must be `multiple` because each device is a distinct source identity.
 
 ## Runtime Modes
 
@@ -662,7 +662,6 @@ Singleton integrations:
 
 ```text
 connector:app-commits
-connector:terminal
 ```
 
 Multiple integrations:
@@ -670,6 +669,7 @@ Multiple integrations:
 ```text
 connector:google-calendar:work
 connector:google-calendar:personal
+connector:terminal:macbook
 ```
 
 This matters because D0 dedup is keyed by `(source, external_id)`. The connector author never provides source or integration key, but they must provide the per-item external id. Core D0 may still allow nullable `external_id` for non-connector/system events; the connector contract should not.
@@ -1039,8 +1039,9 @@ core/src/connectors/
 The target system-owned runtime state is persisted in `connector_integrations`:
 
 ```text
-id / connector_id / integration_key / enabled / status / config
-sync_state / auth_ref / schedule_cron / last_error / last_run_at / next_run_at
+id / connector_id / integration_key / enabled / status / setup_status
+trust_status / package_hash / schedule_cron / next_run_at / config
+sync_state / requirements_status / auth_ref / last_error / last_run_at
 created_at / updated_at
 ```
 
@@ -1054,7 +1055,7 @@ connector code calls guard.writeEvent(event)
 
 Connector code does not see `ConnectorHost.emit`, `withSource`, or separate `start` / `sync` APIs.
 
-Known gap inside the core connector system: platform requirements are parsed but not enforced. The requirement handler contract, trusted setup-inspection import, requirement setup API (separate from auth connect), requirement status persistence/API exposure, and the unified setup evaluator gating `ready`/run/scheduler are not implemented yet. This is the largest doc/implementation mismatch.
+The requirement lifecycle is implemented in core: connector packages export `requirements` handlers (`check`/`request`), the supervisor exposes `checkIntegrationRequirements` / `requestIntegrationRequirement` (separate from auth connect), requirement status persists in `connector_integrations.requirements_status`, `/api/connectors` exposes per-integration requirement status, and a unified setup evaluator gates `ready` (source identity + auth + active platform requirements). Handlers are only imported after the package passes the same trust gate as `run()`, and every run re-checks active requirements before connector code executes.
 
 Already implemented in core (not pending): workspace trust gate, package content hashing, official/custom/modified classification, custom approval records, and the host-auth approve endpoint.
 

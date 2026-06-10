@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type {
   ConnectorIntegration,
   ConnectorIntegrationStatus,
+  ConnectorRequirementRecord,
   ConnectorSetupStatus,
   ConnectorTrustStatus,
 } from "./types";
@@ -21,6 +22,7 @@ interface IntegrationRow {
   package_hash: string | null;
   config: string | null;
   sync_state: string | null;
+  requirements_status: string | null;
   auth_ref: string | null;
   last_error: string | null;
   last_run_at: number | null;
@@ -199,6 +201,10 @@ export class ConnectorIntegrationStore {
     this.updateJsonColumn(id, "sync_state", state);
   }
 
+  setRequirementsStatus(id: string, value: Record<string, ConnectorRequirementRecord>): void {
+    this.updateJsonColumn(id, "requirements_status", value);
+  }
+
   setStatus(id: string, status: ConnectorIntegrationStatus, error?: string): void {
     const now = Date.now();
     this.db.prepare(
@@ -217,7 +223,7 @@ export class ConnectorIntegrationStore {
     ).run(trustStatus, packageHash ?? null, Date.now(), connectorId);
   }
 
-  private updateJsonColumn(id: string, column: "config" | "sync_state", value: unknown): void {
+  private updateJsonColumn(id: string, column: "config" | "sync_state" | "requirements_status", value: unknown): void {
     this.db.prepare(
       `UPDATE connector_integrations SET ${column} = ?, updated_at = ? WHERE id = ?`
     ).run(stringifyJson(value), Date.now(), id);
@@ -291,6 +297,9 @@ function rowToIntegration<TConfig, TState>(row: IntegrationRow): ConnectorIntegr
     packageHash: row.package_hash ?? undefined,
     config: parseJson(row.config) as TConfig | undefined,
     syncState: parseJson(row.sync_state) as TState | undefined,
+    requirementsStatus: parseJson(row.requirements_status) as
+      | Record<string, ConnectorRequirementRecord>
+      | undefined,
     authRef: row.auth_ref ?? undefined,
     lastError: row.last_error ?? undefined,
     lastRunAt: row.last_run_at ?? undefined,

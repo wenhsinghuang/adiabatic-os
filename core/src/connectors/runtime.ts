@@ -22,6 +22,25 @@ export function validateConnectorDefinition(definition: ConnectorDefinition): vo
   if (!definition || typeof definition.run !== "function") {
     throw new Error("Connector module must export a run(context) function");
   }
+  if (definition.requirements === undefined) return;
+  if (
+    definition.requirements === null
+    || typeof definition.requirements !== "object"
+    || Array.isArray(definition.requirements)
+  ) {
+    throw new Error("Connector requirements export must be an object keyed by requirement id");
+  }
+  for (const [id, handler] of Object.entries(definition.requirements)) {
+    if (!handler || typeof handler.check !== "function") {
+      throw new Error(`Connector requirement handler ${id} must provide a check(ctx) function`);
+    }
+    if (!handler.label || typeof handler.label !== "string") {
+      throw new Error(`Connector requirement handler ${id} requires a label`);
+    }
+    if (handler.request !== undefined && typeof handler.request !== "function") {
+      throw new Error(`Connector requirement handler ${id} request must be a function`);
+    }
+  }
 }
 
 export function validateConnectorEvent(event: ConnectorEventInput): void {

@@ -6,6 +6,7 @@ import { join } from "path";
 import { openDB } from "../src/db";
 import { Guard } from "../src/guard";
 import {
+  ConnectorScheduler,
   ConnectorSupervisor,
   MemoryConnectorSecretStore,
   ConnectorAuthManager,
@@ -18,9 +19,24 @@ import {
   resolveConnectorEntry,
   sourceForConnector,
   validateConnectorManifest,
+  nextCronRunAt,
   type ConnectorDefinition,
   type ConnectorManifest,
 } from "../src/connectors";
+
+async function waitWithTestTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 describe("Connector system", () => {
   let workspace: string;
@@ -101,15 +117,22 @@ auth:
       name: "Demo",
       entry: "./index.ts",
       runtime: { mode: "poll" },
+      integrations: { mode: "singleton" },
     };
 
     expect(() => validateConnectorManifest({ ...base, id: "../demo" })).toThrow("Invalid connector id");
+    expect(() =>
+      validateConnectorManifest({ ...base, integrations: undefined })
+    ).toThrow("requires an explicit integrations.mode");
     expect(() =>
       validateConnectorManifest({ ...base, runtime: { mode: "stream" as any } })
     ).toThrow("invalid runtime mode");
     expect(() =>
       validateConnectorManifest({ ...base, runtime: { mode: "watch", defaultSchedule: "every 1m" } })
     ).toThrow("defaultSchedule is only valid");
+    expect(() =>
+      validateConnectorManifest({ ...base, runtime: { mode: "poll", defaultSchedule: "every 1m" } })
+    ).toThrow("Unsupported connector schedule");
     expect(() =>
       validateConnectorManifest({ ...base, runtime: { mode: "poll", schedule: "every 1m" } as any })
     ).toThrow("runtime.schedule is no longer supported");
@@ -152,6 +175,7 @@ auth:
         name: "App Commits",
         entry: "./index.ts",
         runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
         auth: { type: "none" },
         config: { label: "manifest" },
       },
@@ -294,6 +318,7 @@ auth:
         name: "Oura",
         entry: "./index.ts",
         runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
         auth: { type: "apiKey", label: "Oura Token" },
       },
       definition,
@@ -332,6 +357,7 @@ auth:
         name: "JSON Feed",
         entry: "./index.ts",
         runtime: { mode: "import" },
+        integrations: { mode: "singleton" },
         auth: { type: "none" },
       },
       {
@@ -366,6 +392,7 @@ auth:
         name: "ID Feed",
         entry: "./index.ts",
         runtime: { mode: "import" },
+        integrations: { mode: "singleton" },
         auth: { type: "none" },
       },
       {
@@ -391,6 +418,7 @@ auth:
         name: "Retry Feed",
         entry: "./index.ts",
         runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
         auth: { type: "none" },
       },
       {
@@ -430,6 +458,7 @@ auth:
         name: "Oura",
         entry: "./index.ts",
         runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
         auth: { type: "apiKey" },
       },
       {
@@ -461,6 +490,7 @@ auth:
         name: "macOS Accessibility",
         entry: "./index.ts",
         runtime: { mode: "watch" },
+        integrations: { mode: "multiple" },
         platforms: {
           darwin: {
             requirements: ["macos-accessibility"],
@@ -476,6 +506,228 @@ auth:
     ).toThrow("not supported on linux");
   });
 
+  test("gates no-auth integrations behind platform requirement lifecycle", async () => {
+    let granted = false;
+    supervisor.register(
+      {
+        id: "ax-watch",
+        name: "AX Watch",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        platforms: {
+          darwin: { requirements: ["macos-accessibility"] },
+        },
+        auth: { type: "none" },
+      },
+      {
+        async run({ guard }) {
+          await guard.writeEvent({
+            type: "ax.sample",
+            externalId: "ax-1",
+            startedAt: 6000,
+            payload: { ok: true },
+          });
+        },
+        requirements: {
+          "macos-accessibility": {
+            label: "Accessibility",
+            async check() {
+              return granted
+                ? { status: "satisfied" }
+                : { status: "missing", message: "Accessibility access is not granted." };
+            },
+            async request() {
+              granted = true;
+              return { status: "pending", message: "Granting..." };
+            },
+          },
+        },
+      },
+    );
+
+    // First integration must not be ready while requirements are unchecked.
+    const integration = supervisor.ensureFirstIntegration("ax-watch");
+    expect(integration.setupStatus).toBe("setup");
+    await expect(supervisor.run(integration.id)).rejects.toThrow("not set up");
+
+    // setupStatus cannot bypass the requirement gate.
+    expect(() =>
+      supervisor.updateIntegration(integration.id, { setupStatus: "ready" })
+    ).toThrow("requires platform requirements");
+
+    // check() persists status and keeps the integration in setup.
+    const missing = await supervisor.checkIntegrationRequirements(integration.id);
+    expect(missing["macos-accessibility"].status).toBe("missing");
+    expect(missing["macos-accessibility"].message).toContain("not granted");
+    const listed = supervisor.list()[0];
+    expect(listed.requirements).toEqual([
+      expect.objectContaining({ id: "macos-accessibility", status: "missing" }),
+    ]);
+    expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("setup");
+
+    // request() resolves the requirement and the evaluator promotes to ready.
+    const requested = await supervisor.requestIntegrationRequirement(
+      integration.id,
+      "macos-accessibility",
+    );
+    expect(requested.status).toBe("satisfied");
+    expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("ready");
+
+    await supervisor.run(integration.id);
+    const event = db.prepare("SELECT source, type FROM events").get() as any;
+    expect(event).toEqual({ source: "connector:ax-watch", type: "ax.sample" });
+
+    // Requirement regression blocks the next run and demotes back to setup.
+    granted = false;
+    await expect(supervisor.run(integration.id)).rejects.toThrow("requirements not satisfied");
+    expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("setup");
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
+  });
+
+  test("allows connecting auth before requirements are granted", async () => {
+    let granted = false;
+    supervisor.register(
+      {
+        id: "auth-ax",
+        name: "Auth AX",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        platforms: {
+          darwin: { requirements: ["macos-accessibility"] },
+        },
+        auth: { type: "apiKey" },
+      },
+      {
+        async run() {},
+        requirements: {
+          "macos-accessibility": {
+            label: "Accessibility",
+            async check() {
+              return granted
+                ? { status: "satisfied" }
+                : { status: "missing", message: "Not granted." };
+            },
+            async request() {
+              return { status: "pending", message: "Grant access in System Settings." };
+            },
+          },
+        },
+      },
+    );
+
+    const integration = supervisor.ensureFirstIntegration("auth-ax");
+    expect(integration.setupStatus).toBe("setup");
+
+    // Auth connects first: credentials bind, but the integration stays in
+    // setup because the platform requirement is still missing.
+    await supervisor.getAuthManager().setToken(integration.authRef!, "token");
+    const connected = await supervisor.connectIntegration(integration.id);
+    expect(connected.setupStatus).toBe("setup");
+    expect(connected.authRef).toBe(integration.authRef);
+
+    // request() reports pending and the immediate re-check still says missing:
+    // the pending record must stay visible for the UI.
+    const pending = await supervisor.requestIntegrationRequirement(
+      integration.id,
+      "macos-accessibility",
+    );
+    expect(pending.status).toBe("pending");
+    expect(pending.message).toContain("System Settings");
+    expect(supervisor.list()[0].requirements).toEqual([
+      expect.objectContaining({ id: "macos-accessibility", status: "pending" }),
+    ]);
+
+    // Once the requirement is granted, a check promotes to ready without
+    // reconnecting auth.
+    granted = true;
+    const records = await supervisor.checkIntegrationRequirements(integration.id);
+    expect(records["macos-accessibility"].status).toBe("satisfied");
+    expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("ready");
+
+    await supervisor.run(integration.id);
+  });
+
+  test("records an error when a declared requirement has no handler", async () => {
+    supervisor.register(
+      {
+        id: "no-handler",
+        name: "No Handler",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        platforms: {
+          darwin: { requirements: ["macos-accessibility"] },
+        },
+        auth: { type: "none" },
+      },
+      { async run() {} },
+    );
+
+    const integration = supervisor.ensureFirstIntegration("no-handler");
+    expect(integration.setupStatus).toBe("setup");
+
+    const records = await supervisor.checkIntegrationRequirements(integration.id);
+    expect(records["macos-accessibility"].status).toBe("error");
+    expect(records["macos-accessibility"].message).toContain("does not implement requirement handler");
+    await expect(
+      supervisor.requestIntegrationRequirement(integration.id, "macos-accessibility")
+    ).rejects.toThrow("does not implement requirement handler");
+    await expect(supervisor.run(integration.id)).rejects.toThrow("not set up");
+  });
+
+  test("requirement checks pass the trust gate before importing connector code", async () => {
+    const sourceDir = join(workspace, "connectors", "untrusted-ax");
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(
+      join(sourceDir, "connector.yaml"),
+      `id: untrusted-ax
+name: Untrusted AX
+entry: ./index.mjs
+runtime:
+  mode: poll
+integrations:
+  mode: singleton
+platforms:
+  darwin:
+    requirements:
+      - macos-accessibility
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(sourceDir, "index.mjs"),
+      `export default {
+  async run() {},
+  requirements: {
+    "macos-accessibility": {
+      label: "Accessibility",
+      async check() {
+        return { status: "satisfied" };
+      },
+    },
+  },
+};
+`,
+    );
+
+    await registerWorkspaceConnectors(supervisor, workspace);
+    const integration = supervisor.list()[0];
+    expect(integration.packageTrust).toBe("untrusted");
+    expect(integration.requirements).toEqual([
+      expect.objectContaining({ id: "macos-accessibility", status: "unknown" }),
+    ]);
+
+    await expect(supervisor.checkIntegrationRequirements(integration.id)).rejects.toThrow("not trusted");
+
+    await supervisor.approveCurrentPackage("untrusted-ax");
+    const records = await supervisor.checkIntegrationRequirements(integration.id);
+    expect(records["macos-accessibility"].status).toBe("satisfied");
+    expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("ready");
+  });
+
   test("starts and aborts watch connector runs", async () => {
     supervisor.register(
       {
@@ -483,6 +735,7 @@ auth:
         name: "Terminal",
         entry: "./index.ts",
         runtime: { mode: "watch" },
+        integrations: { mode: "singleton" },
         auth: { type: "none" },
       },
       {
@@ -514,6 +767,238 @@ auth:
     expect(supervisor.list()[0].running).toBe(false);
     expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
     expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ stopped: true });
+  });
+
+  test("scheduler starts watch connectors and stops them on shutdown", async () => {
+    supervisor.register(
+      {
+        id: "watch-feed",
+        name: "Watch Feed",
+        entry: "./index.ts",
+        runtime: { mode: "watch" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ signal, state }) {
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve();
+            } else {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            }
+          });
+          await state.set({ stopped: true });
+        },
+      },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "watch-feed" });
+    const scheduler = new ConnectorScheduler({ supervisor, tickMs: 60_000 });
+
+    await scheduler.start();
+    expect(supervisor.list()[0].running).toBe(true);
+
+    await scheduler.stop();
+    expect(supervisor.list()[0].running).toBe(false);
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ stopped: true });
+  });
+
+  test("scheduler stop aborts in-flight poll runs", async () => {
+    supervisor.register(
+      {
+        id: "slow-poll",
+        name: "Slow Poll",
+        entry: "./index.ts",
+        runtime: { mode: "poll", defaultSchedule: "*/15 * * * *" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ signal, state }) {
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve();
+            } else {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            }
+          });
+          await state.set({ aborted: true });
+        },
+      },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "slow-poll" });
+    const scheduler = new ConnectorScheduler({ supervisor });
+
+    const tick = scheduler.tick();
+    while (!supervisor.list()[0].running) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    await scheduler.stop();
+    await tick;
+
+    expect(supervisor.list()[0].running).toBe(false);
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ aborted: true });
+    expect(supervisor.getIntegration(integration.id)?.nextRunAt).toBeGreaterThan(0);
+  });
+
+  test("scheduler stop does not hang when a run ignores the abort signal", async () => {
+    supervisor.register(
+      {
+        id: "stubborn-watch",
+        name: "Stubborn Watch",
+        entry: "./index.ts",
+        runtime: { mode: "watch" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+      },
+      {
+        async run() {
+          await new Promise(() => {});
+        },
+      },
+    );
+    supervisor.ensureIntegration({ connectorId: "stubborn-watch" });
+    const scheduler = new ConnectorScheduler({ supervisor, stopTimeoutMs: 50 });
+
+    await scheduler.start();
+    expect(supervisor.list()[0].running).toBe(true);
+
+    const stopped = await waitWithTestTimeout(scheduler.stop(), 2_000);
+    expect(stopped).toBe(true);
+  });
+
+  test("scheduler runs due poll connectors and stores the next run time", async () => {
+    let now = new Date("2026-01-01T00:00:00Z").getTime();
+    let runs = 0;
+    supervisor.register(
+      {
+        id: "poll-feed",
+        name: "Poll Feed",
+        entry: "./index.ts",
+        runtime: { mode: "poll", defaultSchedule: "*/15 * * * *" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ guard }) {
+          runs += 1;
+          await guard.writeEvent({
+            type: "poll.sample",
+            externalId: `run-${runs}`,
+            startedAt: now,
+            payload: { runs },
+          });
+        },
+      },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "poll-feed" });
+    expect(() =>
+      supervisor.updateIntegration(integration.id, { scheduleCron: "every 1m" })
+    ).toThrow("Unsupported connector schedule");
+    const scheduler = new ConnectorScheduler({ supervisor, now: () => now });
+
+    await scheduler.tick();
+    expect(runs).toBe(1);
+    const afterFirstRun = supervisor.getIntegration(integration.id);
+    expect(afterFirstRun?.nextRunAt).toBe(nextCronRunAt("*/15 * * * *", now));
+
+    await scheduler.tick();
+    expect(runs).toBe(1);
+
+    now = afterFirstRun!.nextRunAt!;
+    await scheduler.tick();
+    expect(runs).toBe(2);
+    expect(supervisor.getIntegration(integration.id)?.nextRunAt).toBe(nextCronRunAt("*/15 * * * *", now));
+  });
+
+  test("scheduler validates poll schedules before running", async () => {
+    let runs = 0;
+    supervisor.register(
+      {
+        id: "invalid-schedule-feed",
+        name: "Invalid Schedule Feed",
+        entry: "./index.ts",
+        runtime: { mode: "poll", defaultSchedule: "*/15 * * * *" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ guard }) {
+          runs += 1;
+          await guard.writeEvent({
+            type: "invalid-schedule.sample",
+            externalId: `run-${runs}`,
+            startedAt: 1,
+            payload: { runs },
+          });
+        },
+      },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "invalid-schedule-feed" });
+    db.prepare("UPDATE connector_integrations SET schedule_cron = ?, next_run_at = NULL WHERE id = ?")
+      .run("every 1m", integration.id);
+    const errors: unknown[] = [];
+    const scheduler = new ConnectorScheduler({
+      supervisor,
+      onError(err) {
+        errors.push(err);
+      },
+    });
+
+    await scheduler.tick();
+    await scheduler.tick();
+
+    expect(runs).toBe(0);
+    expect(errors).toHaveLength(2);
+    const event = db.prepare("SELECT * FROM events WHERE type = ?").get("invalid-schedule.sample");
+    expect(event).toBeFalsy();
+  });
+
+  test("scheduler does not run untrusted workspace connector packages", async () => {
+    const sourceDir = join(workspace, "connectors", "untrusted-feed");
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(
+      join(sourceDir, "connector.yaml"),
+      `id: untrusted-feed
+name: Untrusted Feed
+entry: ./index.mjs
+runtime:
+  mode: poll
+  defaultSchedule: "*/15 * * * *"
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(sourceDir, "index.mjs"),
+      `export default {
+  async run({ guard }) {
+    await guard.writeEvent({
+      type: "untrusted.sample",
+      externalId: "sample",
+      startedAt: 1,
+      payload: { ok: true },
+    });
+  },
+};
+`,
+    );
+
+    await registerWorkspaceConnectors(supervisor, workspace);
+    expect(supervisor.list()[0].packageTrust).toBe("untrusted");
+
+    const scheduler = new ConnectorScheduler({ supervisor });
+    await scheduler.tick();
+
+    const event = db.prepare("SELECT * FROM events WHERE type = ?").get("untrusted.sample");
+    expect(event).toBeFalsy();
   });
 
   test("app-commits syncs app git repos with per-app cursors", async () => {

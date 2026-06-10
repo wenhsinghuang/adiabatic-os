@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS connector_integrations (
   package_hash  TEXT,
   config        JSON,
   sync_state    JSON,
+  requirements_status JSON,
   auth_ref      TEXT,
   last_error    TEXT,
   last_run_at   INTEGER,
@@ -128,6 +129,9 @@ function migrateExistingSchema(db: Database): void {
   }
   if (!hasIntegrationColumn("package_hash")) {
     db.run("ALTER TABLE connector_integrations ADD COLUMN package_hash TEXT");
+  }
+  if (!hasIntegrationColumn("requirements_status")) {
+    db.run("ALTER TABLE connector_integrations ADD COLUMN requirements_status JSON");
   }
   db.run("DROP INDEX IF EXISTS idx_connector_integrations_identity");
   db.run(
