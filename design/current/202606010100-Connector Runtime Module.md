@@ -1071,11 +1071,11 @@ The requirement lifecycle is implemented in core: connector packages export `req
 
 Already implemented in core (not pending): workspace trust gate, package content hashing, official/custom/modified classification, custom approval records, and the host-auth approve endpoint.
 
+The shell ships a connector management surface (Source Console): per-integration status, the run gate chain, requirement check/grant actions, two-step custom package approval showing the exact package hash, and explicit restart for crashed watch runs.
+
 Still pending outside the core connector system:
 
-- shell integration management UI
 - cached official catalog download/verification from the official registry / R2 (until then nothing classifies as official)
-- shell human-only custom connector approval UX on top of the existing approve endpoint
 - unified auth/secrets module adapter beyond the current injectable secret-store interface
 - separate connector runner process and host capability broker
 - high-throughput queue and transactional batch writer

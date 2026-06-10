@@ -12,7 +12,6 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Connector interface + convention + framework
   - Install/remove as `connectors/<id>/` workspace folders
   - Materialize built-ins into `connectors/<id>/`, no runtime special case
-  - Shell UI for requirement setup (check/request endpoints exist; needs management surface)
   - built-in: Terminal connector
   - built-in: App commits connector
 
