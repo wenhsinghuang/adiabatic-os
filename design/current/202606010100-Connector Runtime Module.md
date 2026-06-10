@@ -465,11 +465,21 @@ Trigger semantics:
 watch connector
   core up -> start enabled ready watch integrations on the current implicit runtime target
   core down -> stops
+  run crash -> status error, needs attention; restart is an explicit human action
 
 poll connector
   core up -> scheduler evaluates due integration schedules
   core down -> no execution
   next core startup -> due integrations run once as catch-up
+  run crash -> retried at the next due schedule
+
+Crashed ready integrations are deliberately not auto-retried for watch runs: a
+connector bug should surface to the user as needs-attention, not burn quietly
+in a retry loop. `restartIntegration` / `POST
+/api/connectors/integrations/:id/restart` resets the error back to idle so the
+scheduler picks the integration up again. Setup-blocked errors (revoked
+credentials, regressed requirements) recover automatically through the setup
+promotion path instead.
 ```
 
 Missed cron ticks collapse into one catch-up run. Connectors should use state cursors to catch up source data.
@@ -494,7 +504,7 @@ ConnectorIntegrationStore
 
 ConnectorSupervisor
   public orchestration API
-  install/remove/register/list/ensureIntegration/run/start/abort
+  install/remove/register/list/ensureIntegration/run/start/abort/restart
   coordinates registry, integration store, runner, and scheduler
 
 ConnectorRunner
@@ -1014,6 +1024,7 @@ The second built-in should be `terminal`, after capture policy is explicit:
 - no automatic approval for custom or modified connector code
 - no mutable DB flag that can make a connector official
 - no app, connector, LLM, or bridge API path for human-only connector approval
+- no automatic retry/backoff for crashed watch runs; crash is needs-attention, restart is explicit
 - no `platformMode` (additive multi-platform lanes); one integration runs on one runtime target
 - no `longRunning` host capability flag; locals do not self-declare as cloud
 - no multi-device runtime target routing in v1; the runtime target is the implicit current host

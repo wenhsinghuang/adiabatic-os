@@ -433,6 +433,20 @@ const server = Bun.serve({
         return json({ requirements });
       }
 
+      const restartIntegrationMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/restart$/);
+      if (restartIntegrationMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const integration = connectorSupervisor.restartIntegration(
+          decodeURIComponent(restartIntegrationMatch[1]),
+        );
+        // Kick the scheduler so the restart takes effect immediately instead of
+        // waiting for the next tick; don't block the response on it.
+        connectorScheduler.tick().catch((err) => {
+          console.warn(`[adiabatic] Connector scheduler tick after restart failed: ${err}`);
+        });
+        return json({ integration });
+      }
+
       const requirementRequestMatch = path.match(
         /^\/api\/connectors\/integrations\/([^/]+)\/requirements\/([^/]+)\/request$/,
       );

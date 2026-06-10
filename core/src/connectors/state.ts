@@ -218,6 +218,16 @@ export class ConnectorIntegrationStore {
     this.updateJsonColumn(id, "requirements_status", value);
   }
 
+  // Explicit recovery from a run error: back to idle, stale failure message and
+  // pending schedule cleared so the scheduler picks the integration up fresh.
+  resetErrorToIdle(id: string): void {
+    this.db.prepare(
+      `UPDATE connector_integrations
+       SET status = 'idle', last_error = NULL, next_run_at = NULL, updated_at = ?
+       WHERE id = ?`
+    ).run(Date.now(), id);
+  }
+
   setStatus(id: string, status: ConnectorIntegrationStatus, error?: string): void {
     const now = Date.now();
     this.db.prepare(

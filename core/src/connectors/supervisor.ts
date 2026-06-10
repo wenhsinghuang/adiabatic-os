@@ -333,6 +333,34 @@ export class ConnectorSupervisor {
     return this.authManager;
   }
 
+  // Explicit human recovery for a crashed run. Crashed ready integrations stay
+  // in error ("needs attention") by design — a connector bug should be seen,
+  // not silently retried. Restart resets to idle so the scheduler picks the
+  // integration up again.
+  restartIntegration<TConfig = unknown, TState = unknown>(
+    instanceId: string,
+  ): ConnectorIntegration<TConfig, TState> {
+    const integration = this.store.get<TConfig, TState>(instanceId);
+    if (!integration) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    this.requireRegistration(integration.connectorId);
+    if (this.activeRuns.has(instanceId) || integration.status === "running") {
+      throw new Error(`Connector integration is already running: ${instanceId}`);
+    }
+    if (!integration.enabled || integration.status === "disabled") {
+      throw new Error(`Connector integration is disabled: ${instanceId}`);
+    }
+    if (integration.setupStatus !== "ready" || integration.status === "setup") {
+      throw new Error(`Connector integration is not set up: ${instanceId}`);
+    }
+    if (integration.status !== "error") {
+      return integration;
+    }
+    this.store.resetErrorToIdle(instanceId);
+    return this.store.get<TConfig, TState>(instanceId)!;
+  }
+
   async checkIntegrationRequirements(
     instanceId: string,
   ): Promise<Record<string, ConnectorRequirementRecord>> {

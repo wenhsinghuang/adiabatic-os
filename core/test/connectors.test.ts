@@ -533,6 +533,76 @@ auth:
     expect(supervisor.list()[0].running).toBe(false);
   });
 
+  test("crashed watch runs need explicit restart before the scheduler picks them up", async () => {
+    let crash = true;
+    supervisor.register(
+      {
+        id: "crashy-watch",
+        name: "Crashy Watch",
+        entry: "./index.ts",
+        runtime: { mode: "watch" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ signal }) {
+          if (crash) throw new Error("connector bug");
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve();
+            } else {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            }
+          });
+        },
+      },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "crashy-watch" });
+    const scheduler = new ConnectorScheduler({ supervisor, onError() {} });
+
+    // Crash leaves a needs-attention error that further ticks do not retry.
+    await scheduler.tick();
+    await Promise.resolve();
+    while (supervisor.list()[0].running) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
+    expect(supervisor.getIntegration(integration.id)?.lastError).toContain("connector bug");
+
+    crash = false;
+    await scheduler.tick();
+    expect(supervisor.list()[0].running).toBe(false);
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
+
+    // Explicit restart resets to idle and the scheduler picks it up again.
+    const restarted = supervisor.restartIntegration(integration.id);
+    expect(restarted.status).toBe("idle");
+    expect(restarted.lastError).toBeUndefined();
+
+    await scheduler.tick();
+    expect(supervisor.list()[0].running).toBe(true);
+    expect(() => supervisor.restartIntegration(integration.id)).toThrow("already running");
+    await scheduler.stop();
+  });
+
+  test("restart guards disabled and setup integrations", async () => {
+    supervisor.register(
+      {
+        id: "guarded-feed",
+        name: "Guarded Feed",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        auth: { type: "apiKey" },
+      },
+      { async run() {} },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "guarded-feed" });
+    expect(integration.setupStatus).toBe("setup");
+    expect(() => supervisor.restartIntegration(integration.id)).toThrow("not set up");
+    expect(() => supervisor.restartIntegration("missing-id")).toThrow("not found");
+  });
+
   test("fails auth connectors without credentials and records integration error", async () => {
     supervisor.register(
       {
