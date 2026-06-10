@@ -485,6 +485,53 @@ auth:
     expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
   });
 
+  test("watch scheduler restarts integrations after setup recovery", async () => {
+    supervisor.register(
+      {
+        id: "auth-watch",
+        name: "Auth Watch",
+        entry: "./index.ts",
+        runtime: { mode: "watch" },
+        integrations: { mode: "singleton" },
+        auth: { type: "apiKey" },
+      },
+      {
+        async run({ signal }) {
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve();
+            } else {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            }
+          });
+        },
+      },
+    );
+
+    const integration = supervisor.ensureIntegration({ connectorId: "auth-watch" });
+    await supervisor.getAuthManager().setToken(integration.authRef!, "token");
+    await supervisor.connectIntegration(integration.id);
+
+    // Credentials revoked: the run-gate failure leaves a setup-blocked error.
+    await supervisor.getAuthManager().deleteToken(integration.authRef!);
+    await expect(supervisor.run(integration.id)).rejects.toThrow("credentials are missing");
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
+    expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("setup");
+
+    // Reconnect promotes back to ready and resets the setup-blocked error to
+    // idle, so the watch scheduler picks the integration up again.
+    await supervisor.getAuthManager().setToken(integration.authRef!, "token-2");
+    const recovered = await supervisor.connectIntegration(integration.id);
+    expect(recovered.setupStatus).toBe("ready");
+    expect(recovered.status).toBe("idle");
+
+    const scheduler = new ConnectorScheduler({ supervisor });
+    await scheduler.tick();
+    expect(supervisor.list()[0].running).toBe(true);
+    await scheduler.stop();
+    expect(supervisor.list()[0].running).toBe(false);
+  });
+
   test("fails auth connectors without credentials and records integration error", async () => {
     supervisor.register(
       {

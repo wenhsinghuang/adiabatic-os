@@ -502,7 +502,8 @@ ConnectorRunner
   builds scoped connector context
   checks trust, platform requirements, auth, setup state, and source identity
   injects bound guard source
-  imports connector entry only after all run gates pass
+  imports connector entry after trust and auth gates pass
+  evaluates requirement handlers after import, before run(context)
   calls run(context)
 
 ConnectorScheduler

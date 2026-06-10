@@ -74,8 +74,14 @@ export class ConnectorIntegrationStore {
         : integrationKey;
       validateIntegrationKeyTransition(existing, nextIntegrationKey);
       this.assertIdentityAvailable(existing.connectorId, nextIntegrationKey, existing.id);
+      // A setup-blocked error (run gate failed while setup_status was "setup")
+      // resets to idle when the integration is promoted back to ready, so the
+      // watch scheduler can pick it up again. A run error on an already-ready
+      // integration is preserved.
+      const recoveredFromSetup = existing.status === "setup"
+        || (existing.status === "error" && existing.setupStatus === "setup");
       const nextStatus: ConnectorIntegrationStatus = nextEnabled
-        ? nextSetup === "setup" ? "setup" : existing.status === "disabled" || existing.status === "setup" ? "idle" : existing.status
+        ? nextSetup === "setup" ? "setup" : existing.status === "disabled" || recoveredFromSetup ? "idle" : existing.status
         : "disabled";
       const nextScheduleCron = input.scheduleCron === undefined
         ? existing.scheduleCron
