@@ -2,7 +2,7 @@
 
 import styles from "./ActivityBar.module.css";
 
-export type Panel = "pages" | "apps" | "data" | "workspace";
+export type Panel = "pages" | "apps" | "data" | "connectors" | "workspace";
 
 interface ActivityBarProps {
   activePanel: Panel;
@@ -46,6 +46,16 @@ export function ActivityBar({ activePanel, onSelectPanel, showTerminal, onToggle
             <path d="M4 5.5v4c0 1.93 3.58 3.5 8 3.5s8-1.57 8-3.5v-4c0 1.93-3.58 3.5-8 3.5S4 7.43 4 5.5z" />
             <path d="M4 9.5v4c0 1.93 3.58 3.5 8 3.5s8-1.57 8-3.5v-4c0 1.93-3.58 3.5-8 3.5S4 11.43 4 9.5z" />
             <path d="M4 13.5v4c0 1.93 3.58 3.5 8 3.5s8-1.57 8-3.5v-4c0 1.93-3.58 3.5-8 3.5S4 15.43 4 13.5z" />
+          </svg>
+        </button>
+        {/* Connectors icon (plug) */}
+        <button
+          className={`${styles.icon} ${activePanel === "connectors" ? styles.active : ""}`}
+          title="Connectors"
+          onClick={() => onSelectPanel("connectors")}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M16.01 7.5V3h-2v4.5h-4V3h-2v4.5H6.5v5l3.5 3.5v3.5a1.5 1.5 0 0 0 3 0V16l3.5-3.5h1.01v-5h-1.5zM8.5 11.67V9.5h7v2.17l-3.06 3.06h-.88L8.5 11.67z" />
           </svg>
         </button>
       </div>

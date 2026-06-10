@@ -280,6 +280,7 @@ export class ConnectorSupervisor {
     running: boolean;
     supported: boolean;
     packageTrust: ConnectorPackageTrust["status"];
+    authType: string;
     requirements: ConnectorRequirementView[];
   }> {
     return this.store.list().map((integration) => {
@@ -300,6 +301,7 @@ export class ConnectorSupervisor {
         running: this.activeRuns.has(integration.id),
         supported: registration ? isPlatformSupported(registration.manifest, this.platform) : false,
         packageTrust: registration?.trust.status ?? "missing",
+        authType: (registration?.manifest.auth ?? { type: "none" }).type,
         requirements: activeRequirements.map((id) => ({
           id,
           status: integration.requirementsStatus?.[id]?.status ?? "unknown",

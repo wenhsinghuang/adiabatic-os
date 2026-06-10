@@ -185,6 +185,91 @@ export function write(sql: string, params?: unknown[]): Promise<{ ok: true }> {
   });
 }
 
+// -- Connectors --
+
+export type ConnectorTrust =
+  | "official"
+  | "custom"
+  | "modified"
+  | "untrusted"
+  | "missing"
+  | "invalid";
+
+export type ConnectorRequirementState =
+  | "satisfied"
+  | "missing"
+  | "pending"
+  | "error"
+  | "unknown";
+
+export interface ConnectorRequirementView {
+  id: string;
+  status: ConnectorRequirementState;
+  message?: string;
+  lastCheckedAt?: number;
+}
+
+export interface ConnectorIntegrationView {
+  id: string;
+  connectorId: string;
+  integrationKey?: string;
+  name: string;
+  mode: "watch" | "poll" | "import" | "unknown";
+  enabled: boolean;
+  status: "setup" | "idle" | "running" | "error" | "disabled";
+  setupStatus: "setup" | "ready";
+  packageTrust: ConnectorTrust;
+  authType: "none" | "apiKey" | "oauth2";
+  source?: string;
+  running: boolean;
+  supported: boolean;
+  scheduleCron?: string;
+  nextRunAt?: number;
+  packageHash?: string;
+  requirements: ConnectorRequirementView[];
+  lastError?: string;
+  lastRunAt?: number;
+}
+
+export function listConnectors(): Promise<{ connectors: ConnectorIntegrationView[] }> {
+  return request("/api/connectors");
+}
+
+export function approveConnector(connectorId: string): Promise<{ ok: true }> {
+  return request(`/api/connectors/${encodeURIComponent(connectorId)}/approve`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function checkConnectorRequirements(
+  integrationId: string,
+): Promise<{ requirements: Record<string, ConnectorRequirementView> }> {
+  return request(
+    `/api/connectors/integrations/${encodeURIComponent(integrationId)}/requirements/check`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function requestConnectorRequirement(
+  integrationId: string,
+  requirementId: string,
+): Promise<{ requirement: ConnectorRequirementView }> {
+  return request(
+    `/api/connectors/integrations/${encodeURIComponent(integrationId)}/requirements/${encodeURIComponent(requirementId)}/request`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function restartConnectorIntegration(
+  integrationId: string,
+): Promise<{ integration: ConnectorIntegrationView }> {
+  return request(
+    `/api/connectors/integrations/${encodeURIComponent(integrationId)}/restart`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
 // -- Schema lifecycle approval --
 
 export interface SchemaRequest {

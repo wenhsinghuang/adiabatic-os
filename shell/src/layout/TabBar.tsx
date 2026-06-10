@@ -15,6 +15,7 @@ function getTabLabel(tab: Tab): string {
   if (tab.type === "appRuntime" && tab.appId) return tab.appId;
   if (tab.type === "table" && tab.tableName) return tab.tableName;
   if (tab.type === "activity") return "Activity";
+  if (tab.type === "connectors") return "Source Console";
   return tab.docId.split("/").pop() || tab.docId;
 }
 

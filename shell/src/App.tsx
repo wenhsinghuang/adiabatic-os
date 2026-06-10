@@ -8,6 +8,7 @@ import { ActivityBar, type Panel } from "./layout/ActivityBar";
 import { PagesPanel } from "./components/PagesPanel";
 import { AppsPanel } from "./components/AppsPanel";
 import { DataPanel } from "./components/DataPanel";
+import { ConnectorsPanel } from "./components/ConnectorsPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { SchemaApprovalModal } from "./components/SchemaApprovalModal";
 import { ContentArea } from "./content/ContentArea";
@@ -42,6 +43,7 @@ export function App() {
     openAppRuntimeTab,
     openTableTab,
     openActivityTab,
+    openConnectorsTab,
     closeTab,
     setActiveTab,
   } = useTabs(null);
@@ -166,6 +168,8 @@ export function App() {
             />
           ) : activePanel === "data" ? (
             <DataPanel onOpenTable={openTableTab} onOpenActivity={openActivityTab} />
+          ) : activePanel === "connectors" ? (
+            <ConnectorsPanel onOpenConsole={openConnectorsTab} />
           ) : (
             <WorkspacePanel coreStatus={coreStatus} onCoreChanged={checkCore} />
           )

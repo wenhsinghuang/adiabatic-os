@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 
 export interface Tab {
   id: string; // unique tab identifier
-  type: "doc" | "appFile" | "appRuntime" | "table" | "activity";
+  type: "doc" | "appFile" | "appRuntime" | "table" | "activity" | "connectors";
   docId: string; // for doc tabs: the doc id; for appFile tabs: `__app:{appId}/{filename}`
   appId?: string;
   filename?: string;
@@ -147,6 +147,21 @@ export function useTabs(initialDocId: string | null = "welcome") {
     });
   }, []);
 
+  const openConnectorsTab = useCallback(() => {
+    const tabId = "__connectors";
+    setState((prev) => {
+      const exists = prev.tabs.find((t) => t.id === tabId);
+      if (exists) return { ...prev, activeTabId: tabId };
+      return {
+        tabs: [
+          ...prev.tabs,
+          { id: tabId, type: "connectors", docId: tabId },
+        ],
+        activeTabId: tabId,
+      };
+    });
+  }, []);
+
   const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
 
   return {
@@ -158,6 +173,7 @@ export function useTabs(initialDocId: string | null = "welcome") {
     openAppRuntimeTab,
     openTableTab,
     openActivityTab,
+    openConnectorsTab,
     closeTab,
     setActiveTab,
   };

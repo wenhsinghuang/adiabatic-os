@@ -9,6 +9,7 @@ import { AppRuntimeView } from "./AppRuntimeView";
 import { Dashboard } from "./Dashboard";
 import { TableView } from "./TableView";
 import { ActivityView } from "./ActivityView";
+import { ConnectorsView } from "./ConnectorsView";
 import styles from "./ContentArea.module.css";
 
 const MarkdownPageEditor = lazy(() =>
@@ -73,6 +74,10 @@ export function ContentArea({
 
   if (activeTab.type === "activity") {
     return <ActivityView key={activeTab.id} onOpenDoc={onOpenDoc} />;
+  }
+
+  if (activeTab.type === "connectors") {
+    return <ConnectorsView key={activeTab.id} />;
   }
 
   return <TabContent key={activeTab.id} tab={activeTab} />;

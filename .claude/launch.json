@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "shell",
+      "runtimeExecutable": "bunx",
+      "runtimeArgs": ["vite", "--port", "5173", "--strictPort"],
+      "cwd": "shell",
+      "port": 5173
+    }
+  ]
+}
