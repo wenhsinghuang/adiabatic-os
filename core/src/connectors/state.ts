@@ -83,6 +83,11 @@ export class ConnectorIntegrationStore {
       const nextStatus: ConnectorIntegrationStatus = nextEnabled
         ? nextSetup === "setup" ? "setup" : existing.status === "disabled" || recoveredFromSetup ? "idle" : existing.status
         : "disabled";
+      // Recovery into idle clears the stale failure message; a preserved run
+      // error keeps its message.
+      const nextLastError = nextStatus === "idle" && existing.status !== "idle"
+        ? null
+        : existing.lastError ?? null;
       const nextScheduleCron = input.scheduleCron === undefined
         ? existing.scheduleCron
         : input.scheduleCron ?? undefined;
@@ -104,6 +109,7 @@ export class ConnectorIntegrationStore {
              package_hash = ?,
              config = ?,
              auth_ref = ?,
+             last_error = ?,
              updated_at = ?
          WHERE id = ?`
       ).run(
@@ -117,6 +123,7 @@ export class ConnectorIntegrationStore {
         nextPackageHash ?? null,
         stringifyJson(nextConfig),
         nextAuthRef ?? null,
+        nextLastError,
         now,
         existing.id,
       );

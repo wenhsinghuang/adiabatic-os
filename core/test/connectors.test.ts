@@ -524,6 +524,7 @@ auth:
     const recovered = await supervisor.connectIntegration(integration.id);
     expect(recovered.setupStatus).toBe("ready");
     expect(recovered.status).toBe("idle");
+    expect(recovered.lastError).toBeUndefined();
 
     const scheduler = new ConnectorScheduler({ supervisor });
     await scheduler.tick();
