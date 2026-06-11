@@ -35,7 +35,7 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 - [ ] Auth / secrets module
   - Unified management for API keys, OAuth, and scoped runtime credentials.
 
-- [ ] AI gateway module
+- [ ] AI gateway module (CLI)
   - Central model-call wrapper for app, connector, and retrieval use.
 
 - [ ] WebContainer Guard module
