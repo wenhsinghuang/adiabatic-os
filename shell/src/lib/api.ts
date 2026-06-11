@@ -209,17 +209,22 @@ export interface ConnectorRequirementView {
   lastCheckedAt?: number;
 }
 
+export type ConnectorSetupPendingReason = "integration_key" | "auth" | "requirements";
+
 export interface ConnectorIntegrationView {
   id: string;
   connectorId: string;
   integrationKey?: string;
   name: string;
   mode: "watch" | "poll" | "import" | "unknown";
+  integrationsMode: "singleton" | "multiple";
   enabled: boolean;
   status: "setup" | "idle" | "running" | "error" | "disabled";
   setupStatus: "setup" | "ready";
   packageTrust: ConnectorTrust;
   authType: "none" | "apiKey" | "oauth2";
+  authReady: boolean;
+  setupPending: ConnectorSetupPendingReason[];
   source?: string;
   running: boolean;
   supported: boolean;
@@ -268,6 +273,48 @@ export function restartConnectorIntegration(
     `/api/connectors/integrations/${encodeURIComponent(integrationId)}/restart`,
     { method: "POST", body: JSON.stringify({}) },
   );
+}
+
+export function updateConnectorIntegration(
+  integrationId: string,
+  input: { enabled?: boolean; scheduleCron?: string | null; integrationKey?: string },
+): Promise<{ integration: ConnectorIntegrationView }> {
+  return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createConnectorIntegration(
+  connectorId: string,
+  integrationKey: string,
+): Promise<{ integration: ConnectorIntegrationView }> {
+  return request(`/api/connectors/${encodeURIComponent(connectorId)}/integrations`, {
+    method: "POST",
+    body: JSON.stringify({ integrationKey }),
+  });
+}
+
+export function deleteConnectorIntegration(integrationId: string): Promise<{ ok: true }> {
+  return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function connectConnectorIntegration(
+  integrationId: string,
+  token: string,
+): Promise<{ integration: ConnectorIntegrationView }> {
+  return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}/connect`, {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+export function removeConnector(connectorId: string): Promise<{ ok: true; removed: boolean }> {
+  return request(`/api/connectors/${encodeURIComponent(connectorId)}`, {
+    method: "DELETE",
+  });
 }
 
 // -- Schema lifecycle approval --

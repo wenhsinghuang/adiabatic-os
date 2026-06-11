@@ -220,9 +220,14 @@
   );
 }
 
-.card_disabled,
-.card_unsupported {
+.card_disabled {
   opacity: 0.55;
+}
+
+/* Unsupported on this platform: fully grayscale, visually inert. */
+.card_unsupported {
+  opacity: 0.5;
+  filter: grayscale(1);
 }
 
 .cardBody {
@@ -304,6 +309,67 @@
   text-transform: uppercase;
 }
 
+.customSeal {
+  border: 1px solid var(--c-green-quiet);
+  color: var(--c-green-quiet);
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.brokenSeal {
+  border: 1px solid var(--c-ghost);
+  color: var(--c-ghost);
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* ── Enable toggle ──────────────────────────────────────────────────── */
+
+.toggle {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  flex-shrink: 0;
+  border: 1px solid var(--c-line-bright);
+  border-radius: 9px;
+  background: var(--c-panel-raised);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  align-self: center;
+}
+
+.toggleKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--c-ink-faint);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.toggleOn {
+  border-color: var(--c-green-quiet);
+  background: var(--c-green-dim);
+}
+
+.toggleOn .toggleKnob {
+  transform: translateX(14px);
+  background: var(--c-green);
+}
+
+.toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Provenance string — the protagonist. */
 .sourceLine {
   font-size: 12px;
@@ -319,47 +385,50 @@
   max-width: 100%;
 }
 
-/* ── Gate chain ─────────────────────────────────────────────────────── */
+/* ── Setup needs + inline forms ─────────────────────────────────────── */
 
-.gateChain {
+.needsLine {
+  font-size: 11px;
+  color: var(--c-ink-faint);
+  letter-spacing: 0.06em;
+}
+
+.needsItems {
+  color: var(--c-amber);
+}
+
+.inlineForm {
   display: flex;
   align-items: center;
-  gap: 0;
-  padding-top: 2px;
+  gap: 8px;
 }
 
-.gate {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+.inlineInput {
+  flex: 0 1 320px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--c-ink);
+  background: var(--c-panel-raised);
+  border: 1px solid var(--c-line-bright);
+  border-radius: 3px;
+  padding: 5px 10px;
+  outline: none;
 }
 
-/* Connecting line between gates. */
-.gate + .gate::before {
-  content: "";
-  width: 34px;
-  height: 1px;
-  margin: 0 10px;
-  background: var(--c-line-bright);
+.inlineInput:focus {
+  border-color: var(--c-amber);
 }
 
-.gateNode {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  background: transparent;
+.inlineInput::placeholder {
+  color: var(--c-ink-faint);
 }
 
-.gate_pass { color: var(--c-green-quiet); }
-.gate_pass .gateNode { background: currentColor; }
-.gate_pending { color: var(--c-amber); }
-.gate_fail { color: var(--c-red); }
-.gate_fail .gateNode { border-style: dashed; }
-.gate_na { color: var(--c-ink-faint); }
+.oauthNote {
+  font-size: 11px;
+  color: var(--c-ink-faint);
+  border-left: 2px solid var(--c-line-bright);
+  padding: 3px 10px;
+}
 
 /* ── Requirements ───────────────────────────────────────────────────── */
 
@@ -431,6 +500,14 @@
   padding: 6px 10px;
 }
 
+.retryNote {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--c-ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
 .cardFooter {
   display: flex;
   align-items: center;
@@ -500,10 +577,10 @@
   cursor: default;
 }
 
-/* ── Approve panel ──────────────────────────────────────────────────── */
+/* ── Confirm panels (approve / add / remove) ────────────────────────── */
 
-.approvePanel {
-  border-top: 1px dashed rgba(200, 146, 58, 0.4);
+.confirmPanel {
+  border-top: 1px dashed var(--c-line-bright);
   margin-top: 4px;
   padding-top: 12px;
   display: flex;
@@ -512,40 +589,19 @@
   animation: cardIn 0.25s ease-out;
 }
 
-.approveText {
+.confirmText {
   font-size: 12px;
   line-height: 1.55;
   color: var(--c-ink-dim);
   max-width: 560px;
 }
 
-.approveText strong {
-  color: var(--c-hazard);
+.confirmText strong {
+  color: var(--c-ink);
   font-weight: 600;
 }
 
-.hashLine {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 11px;
-  color: var(--c-ink);
-  background: var(--c-panel-raised);
-  border: 1px solid var(--c-line);
-  border-radius: 3px;
-  padding: 6px 10px;
-  overflow-wrap: anywhere;
-}
-
-.hashLabel {
-  color: var(--c-ink-faint);
-  font-size: 9px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.approveActions {
+.confirmActions {
   display: flex;
   gap: 10px;
 }

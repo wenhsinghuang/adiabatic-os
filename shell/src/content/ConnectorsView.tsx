@@ -1,38 +1,45 @@
 // ConnectorsView — the Source Console: connector integration management.
 //
-// Connectors are the OS's sensory organs feeding the append-only D0 ledger.
-// Each integration renders as an instrument channel: provenance string up
-// front, the actual runtime gate chain (TRUST → AUTH → REQS → SOURCE) made
-// visible, trust approval as a deliberate two-step, crash recovery as an
-// explicit human action.
+// Deliberately simple for the user: a connector is official / custom /
+// needs-approval; an integration needs setup, is ready, is live, or needs
+// attention. Implementation details (hashes, gate internals) stay behind the
+// API. Each integration card manages its own auth, permissions, schedule
+// visibility, and lifecycle actions.
 
 import { useCallback, useMemo, useState } from "react";
 import { useConnectors } from "../hooks/useConnectors";
 import {
   approveConnector,
   checkConnectorRequirements,
+  connectConnectorIntegration,
+  createConnectorIntegration,
+  deleteConnectorIntegration,
+  removeConnector,
   requestConnectorRequirement,
   restartConnectorIntegration,
+  updateConnectorIntegration,
   type ConnectorIntegrationView,
   type ConnectorRequirementView,
 } from "../lib/api";
 import {
   CHANNEL_LABEL,
   channelState,
-  gateChain,
   relativeTime,
+  setupNeeds,
+  trustView,
   type ChannelState,
 } from "../lib/connector-state";
 import styles from "./ConnectorsView.module.css";
 
+type Act = (key: string, label: string, fn: () => Promise<unknown>) => Promise<void>;
+
 export function ConnectorsView() {
   const { connectors, loading, error, refresh } = useConnectors();
   const [busy, setBusy] = useState<Record<string, string>>({});
-  const [confirmApprove, setConfirmApprove] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const act = useCallback(
-    async (key: string, label: string, fn: () => Promise<unknown>) => {
+  const act = useCallback<Act>(
+    async (key, label, fn) => {
       setBusy((prev) => ({ ...prev, [key]: label }));
       setActionError(null);
       try {
@@ -101,15 +108,7 @@ export function ConnectorsView() {
           </div>
         ) : (
           connectors.map((c, index) => (
-            <ChannelCard
-              key={c.id}
-              connector={c}
-              index={index}
-              busy={busy}
-              confirmApprove={confirmApprove}
-              onConfirmApprove={setConfirmApprove}
-              onAct={act}
-            />
+            <ChannelCard key={c.id} connector={c} index={index} busy={busy} onAct={act} />
           ))
         )}
       </div>
@@ -130,25 +129,22 @@ interface ChannelCardProps {
   connector: ConnectorIntegrationView;
   index: number;
   busy: Record<string, string>;
-  confirmApprove: string | null;
-  onConfirmApprove: (id: string | null) => void;
-  onAct: (key: string, label: string, fn: () => Promise<unknown>) => Promise<void>;
+  onAct: Act;
 }
 
-function ChannelCard({
-  connector: c,
-  index,
-  busy,
-  confirmApprove,
-  onConfirmApprove,
-  onAct,
-}: ChannelCardProps) {
+function ChannelCard({ connector: c, index, busy, onAct }: ChannelCardProps) {
   const state = channelState(c);
-  const gates = gateChain(c);
-  const needsApproval = state === "quarantined" && c.packageTrust !== "missing";
-  const canRestart = state === "attention";
-  const hasRequirements = c.requirements.length > 0;
-  const trusted = c.packageTrust === "official" || c.packageTrust === "custom";
+  const trust = trustView(c);
+  const needs = setupNeeds(c);
+  const trusted = trust === "official" || trust === "custom";
+  const interactive = state !== "unsupported" && trust !== "broken";
+
+  const [panel, setPanel] = useState<"approve" | "remove" | "add" | null>(null);
+  const [tokenInput, setTokenInput] = useState("");
+  const [keyInput, setKeyInput] = useState("");
+  const [addKeyInput, setAddKeyInput] = useState("");
+
+  const cardBusy = Boolean(busy[c.id]);
 
   return (
     <article
@@ -166,44 +162,100 @@ function ChannelCard({
           <span className={styles.cardMeta}>
             {c.mode}
             {c.scheduleCron ? <span className={styles.cron}> · {c.scheduleCron}</span> : null}
-            {c.packageTrust === "official" && <span className={styles.officialSeal}>official</span>}
+            {trust === "official" && <span className={styles.officialSeal}>official</span>}
+            {trust === "custom" && <span className={styles.customSeal}>custom</span>}
+            {trust === "broken" && <span className={styles.brokenSeal}>missing</span>}
           </span>
+          {interactive && trusted && (
+            <button
+              className={`${styles.toggle} ${c.enabled ? styles.toggleOn : ""}`}
+              title={c.enabled ? "Disable" : "Enable"}
+              disabled={cardBusy}
+              onClick={() =>
+                onAct(c.id, "toggle", () =>
+                  updateConnectorIntegration(c.id, { enabled: !c.enabled }),
+                )
+              }
+            >
+              <span className={styles.toggleKnob} />
+            </button>
+          )}
         </div>
 
         <div className={styles.sourceLine}>
-          {c.source ?? `connector:${c.connectorId} — source identity incomplete`}
+          {c.source ?? `connector:${c.connectorId} — needs an integration name`}
         </div>
 
-        <div className={styles.gateChain}>
-          {gates.map((gate) => (
-            <span
-              key={gate.id}
-              className={`${styles.gate} ${styles[`gate_${gate.state}`]}`}
-              title={gate.detail}
+        {state === "setup" && needs.length > 0 && (
+          <div className={styles.needsLine}>
+            needs <span className={styles.needsItems}>{needs.join(" · ")}</span>
+          </div>
+        )}
+
+        {trusted && c.enabled && c.setupPending.includes("integration_key") && (
+          <form
+            className={styles.inlineForm}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!keyInput.trim()) return;
+              onAct(c.id, "name", async () => {
+                await updateConnectorIntegration(c.id, { integrationKey: keyInput.trim() });
+                setKeyInput("");
+              });
+            }}
+          >
+            <input
+              className={styles.inlineInput}
+              placeholder="integration name, e.g. work or macbook"
+              value={keyInput}
+              onChange={(event) => setKeyInput(event.target.value)}
+            />
+            <button className={styles.ghostBtn} disabled={cardBusy || !keyInput.trim()}>
+              {busy[c.id] === "name" ? "saving…" : "Save"}
+            </button>
+          </form>
+        )}
+
+        {trusted && c.enabled && c.setupPending.includes("auth") && (
+          c.authType === "apiKey" ? (
+            <form
+              className={styles.inlineForm}
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!tokenInput.trim()) return;
+                onAct(c.id, "connect", async () => {
+                  await connectConnectorIntegration(c.id, tokenInput.trim());
+                  setTokenInput("");
+                });
+              }}
             >
-              <span className={styles.gateNode} />
-              {gate.label}
-            </span>
-          ))}
-        </div>
+              <input
+                className={styles.inlineInput}
+                type="password"
+                placeholder="paste API key"
+                value={tokenInput}
+                onChange={(event) => setTokenInput(event.target.value)}
+              />
+              <button className={styles.primaryBtn} disabled={cardBusy || !tokenInput.trim()}>
+                {busy[c.id] === "connect" ? "connecting…" : "Connect"}
+              </button>
+            </form>
+          ) : (
+            <div className={styles.oauthNote}>
+              OAuth account connection is coming with the auth module.
+            </div>
+          )
+        )}
 
-        {hasRequirements && trusted && (
+        {c.requirements.length > 0 && trusted && c.enabled && (
           <div className={styles.requirements}>
             {c.requirements.map((req) => (
-              <RequirementChip
-                key={req.id}
-                integrationId={c.id}
-                req={req}
-                busy={busy}
-                onAct={onAct}
-              />
+              <RequirementChip key={req.id} integrationId={c.id} req={req} busy={busy} onAct={onAct} />
             ))}
             <button
               className={styles.ghostBtn}
-              disabled={Boolean(busy[c.id])}
-              onClick={() =>
-                onAct(c.id, "check", () => checkConnectorRequirements(c.id))
-              }
+              disabled={cardBusy}
+              onClick={() => onAct(c.id, "check", () => checkConnectorRequirements(c.id))}
             >
               {busy[c.id] === "check" ? "checking…" : "re-check all"}
             </button>
@@ -214,6 +266,9 @@ function ChannelCard({
           <div className={styles.lastError}>
             <span className={styles.errorGlyph}>▲</span>
             {c.lastError}
+            {state === "attention" && c.mode === "poll" && (
+              <span className={styles.retryNote}>auto-retries at next schedule</span>
+            )}
           </div>
         )}
 
@@ -223,52 +278,140 @@ function ChannelCard({
             {c.mode === "poll" && c.nextRunAt ? ` · next ${relativeTime(c.nextRunAt)}` : ""}
           </span>
           <div className={styles.actions}>
-            {canRestart && (
+            {state === "attention" && (
               <button
                 className={styles.primaryBtn}
-                disabled={Boolean(busy[c.id])}
-                onClick={() =>
-                  onAct(c.id, "restart", () => restartConnectorIntegration(c.id))
-                }
+                disabled={cardBusy}
+                onClick={() => onAct(c.id, "restart", () => restartConnectorIntegration(c.id))}
               >
-                {busy[c.id] === "restart" ? "restarting…" : "Restart"}
+                {busy[c.id] === "restart"
+                  ? "working…"
+                  : c.mode === "watch"
+                    ? "Restart"
+                    : c.mode === "poll"
+                      ? "Retry now"
+                      : "Clear error"}
               </button>
             )}
-            {needsApproval && confirmApprove !== c.id && (
-              <button
-                className={styles.hazardBtn}
-                onClick={() => onConfirmApprove(c.id)}
-              >
+            {state === "quarantined" && trust === "needs-approval" && panel !== "approve" && (
+              <button className={styles.hazardBtn} onClick={() => setPanel("approve")}>
                 Review &amp; Approve
+              </button>
+            )}
+            {trusted && c.integrationsMode === "multiple" && panel !== "add" && (
+              <button className={styles.ghostBtn} onClick={() => setPanel("add")}>
+                + Add
+              </button>
+            )}
+            {c.integrationsMode === "multiple" && interactive && (
+              <button
+                className={styles.ghostBtn}
+                disabled={cardBusy}
+                title="Delete this integration"
+                onClick={() =>
+                  onAct(c.id, "delete", () => deleteConnectorIntegration(c.id))
+                }
+              >
+                {busy[c.id] === "delete" ? "…" : "Delete"}
+              </button>
+            )}
+            {panel !== "remove" && (
+              <button
+                className={styles.ghostBtn}
+                title="Remove connector package"
+                onClick={() => setPanel("remove")}
+              >
+                Remove…
               </button>
             )}
           </div>
         </div>
 
-        {needsApproval && confirmApprove === c.id && (
-          <div className={styles.approvePanel}>
-            <div className={styles.approveText}>
-              Approving trusts <strong>this exact package content</strong> to run inside your
-              workspace. Any later change to the package re-quarantines it.
+        {panel === "approve" && (
+          <div className={styles.confirmPanel}>
+            <div className={styles.confirmText}>
+              Approving trusts <strong>this version of the connector</strong> to run inside your
+              workspace. If the connector&apos;s code changes later, it is blocked again until you
+              re-approve.
             </div>
-            <div className={styles.hashLine}>
-              <span className={styles.hashLabel}>sha</span>
-              {c.packageHash ?? "(hash unavailable)"}
-            </div>
-            <div className={styles.approveActions}>
+            <div className={styles.confirmActions}>
               <button
                 className={styles.hazardBtn}
                 disabled={Boolean(busy[c.connectorId])}
                 onClick={() =>
                   onAct(c.connectorId, "approve", async () => {
                     await approveConnector(c.connectorId);
-                    onConfirmApprove(null);
+                    setPanel(null);
                   })
                 }
               >
-                {busy[c.connectorId] === "approve" ? "approving…" : "Approve exact package"}
+                {busy[c.connectorId] === "approve" ? "approving…" : "Approve this version"}
               </button>
-              <button className={styles.ghostBtn} onClick={() => onConfirmApprove(null)}>
+              <button className={styles.ghostBtn} onClick={() => setPanel(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {panel === "add" && (
+          <form
+            className={styles.confirmPanel}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!addKeyInput.trim()) return;
+              onAct(c.connectorId, "add", async () => {
+                await createConnectorIntegration(c.connectorId, addKeyInput.trim());
+                setAddKeyInput("");
+                setPanel(null);
+              });
+            }}
+          >
+            <div className={styles.confirmText}>
+              Add another <strong>{c.name}</strong> integration. Each integration is its own
+              source with its own account, permissions, and history.
+            </div>
+            <div className={styles.inlineForm}>
+              <input
+                className={styles.inlineInput}
+                placeholder="integration name, e.g. personal or mac-mini"
+                value={addKeyInput}
+                onChange={(event) => setAddKeyInput(event.target.value)}
+              />
+              <button
+                className={styles.primaryBtn}
+                disabled={Boolean(busy[c.connectorId]) || !addKeyInput.trim()}
+              >
+                {busy[c.connectorId] === "add" ? "adding…" : "Add"}
+              </button>
+              <button type="button" className={styles.ghostBtn} onClick={() => setPanel(null)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        {panel === "remove" && (
+          <div className={styles.confirmPanel}>
+            <div className={styles.confirmText}>
+              Remove the <strong>{c.name}</strong> connector from this workspace? Collected events
+              stay in your ledger. Its integrations stop running and stay off until the connector
+              is installed again.
+            </div>
+            <div className={styles.confirmActions}>
+              <button
+                className={styles.hazardBtn}
+                disabled={Boolean(busy[c.connectorId])}
+                onClick={() =>
+                  onAct(c.connectorId, "remove", async () => {
+                    await removeConnector(c.connectorId);
+                    setPanel(null);
+                  })
+                }
+              >
+                {busy[c.connectorId] === "remove" ? "removing…" : "Remove connector"}
+              </button>
+              <button className={styles.ghostBtn} onClick={() => setPanel(null)}>
                 Cancel
               </button>
             </div>
@@ -283,7 +426,7 @@ interface RequirementChipProps {
   integrationId: string;
   req: ConnectorRequirementView;
   busy: Record<string, string>;
-  onAct: (key: string, label: string, fn: () => Promise<unknown>) => Promise<void>;
+  onAct: Act;
 }
 
 function RequirementChip({ integrationId, req, busy, onAct }: RequirementChipProps) {

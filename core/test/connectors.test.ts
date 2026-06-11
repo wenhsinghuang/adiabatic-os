@@ -269,7 +269,7 @@ auth:
     const setup = supervisor.ensureFirstIntegration("calendar");
     expect(setup.integrationKey).toBeUndefined();
     expect(setup.setupStatus).toBe("setup");
-    expect(supervisor.list()[0].source).toBeUndefined();
+    expect((await supervisor.list())[0].source).toBeUndefined();
     expect(() =>
       supervisor.ensureIntegration({ connectorId: "calendar", setupStatus: "ready" })
     ).toThrow("requires an integration_key");
@@ -285,7 +285,7 @@ auth:
     expect(ready.id).toBe(setup.id);
     expect(ready.integrationKey).toBe("work");
     expect(ready.setupStatus).toBe("ready");
-    expect(supervisor.list()[0].source).toBe("connector:calendar:work");
+    expect((await supervisor.list())[0].source).toBe("connector:calendar:work");
 
     await supervisor.run(ready.id);
 
@@ -528,9 +528,9 @@ auth:
 
     const scheduler = new ConnectorScheduler({ supervisor });
     await scheduler.tick();
-    expect(supervisor.list()[0].running).toBe(true);
+    expect((await supervisor.list())[0].running).toBe(true);
     await scheduler.stop();
-    expect(supervisor.list()[0].running).toBe(false);
+    expect((await supervisor.list())[0].running).toBe(false);
   });
 
   test("crashed watch runs need explicit restart before the scheduler picks them up", async () => {
@@ -563,7 +563,7 @@ auth:
     // Crash leaves a needs-attention error that further ticks do not retry.
     await scheduler.tick();
     await Promise.resolve();
-    while (supervisor.list()[0].running) {
+    while ((await supervisor.list())[0].running) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
     expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
@@ -571,7 +571,7 @@ auth:
 
     crash = false;
     await scheduler.tick();
-    expect(supervisor.list()[0].running).toBe(false);
+    expect((await supervisor.list())[0].running).toBe(false);
     expect(supervisor.getIntegration(integration.id)?.status).toBe("error");
 
     // Explicit restart resets to idle and the scheduler picks it up again.
@@ -580,7 +580,7 @@ auth:
     expect(restarted.lastError).toBeUndefined();
 
     await scheduler.tick();
-    expect(supervisor.list()[0].running).toBe(true);
+    expect((await supervisor.list())[0].running).toBe(true);
     expect(() => supervisor.restartIntegration(integration.id)).toThrow("already running");
     await scheduler.stop();
   });
@@ -656,6 +656,10 @@ auth:
     expect(() =>
       linuxSupervisor.ensureIntegration({ connectorId: "macos-ax" })
     ).toThrow("not supported on linux");
+
+    // First-integration bookkeeping still creates a visible non-runnable row.
+    const row = linuxSupervisor.ensureFirstIntegration("macos-ax");
+    expect(row.setupStatus).toBe("setup");
   });
 
   test("gates no-auth integrations behind platform requirement lifecycle", async () => {
@@ -712,7 +716,7 @@ auth:
     const missing = await supervisor.checkIntegrationRequirements(integration.id);
     expect(missing["macos-accessibility"].status).toBe("missing");
     expect(missing["macos-accessibility"].message).toContain("not granted");
-    const listed = supervisor.list()[0];
+    const listed = (await supervisor.list())[0];
     expect(listed.requirements).toEqual([
       expect.objectContaining({ id: "macos-accessibility", status: "missing" }),
     ]);
@@ -787,7 +791,7 @@ auth:
     );
     expect(pending.status).toBe("pending");
     expect(pending.message).toContain("System Settings");
-    expect(supervisor.list()[0].requirements).toEqual([
+    expect((await supervisor.list())[0].requirements).toEqual([
       expect.objectContaining({ id: "macos-accessibility", status: "pending" }),
     ]);
 
@@ -866,7 +870,7 @@ auth:
     );
 
     await registerWorkspaceConnectors(supervisor, workspace);
-    const integration = supervisor.list()[0];
+    const integration = (await supervisor.list())[0];
     expect(integration.packageTrust).toBe("untrusted");
     expect(integration.requirements).toEqual([
       expect.objectContaining({ id: "macos-accessibility", status: "unknown" }),
@@ -912,11 +916,11 @@ auth:
     const integration = supervisor.ensureIntegration({ connectorId: "terminal" });
 
     const handle = supervisor.start(integration.id);
-    expect(supervisor.list()[0].running).toBe(true);
+    expect((await supervisor.list())[0].running).toBe(true);
     handle.abort();
     await handle.promise;
 
-    expect(supervisor.list()[0].running).toBe(false);
+    expect((await supervisor.list())[0].running).toBe(false);
     expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
     expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ stopped: true });
   });
@@ -948,10 +952,10 @@ auth:
     const scheduler = new ConnectorScheduler({ supervisor, tickMs: 60_000 });
 
     await scheduler.start();
-    expect(supervisor.list()[0].running).toBe(true);
+    expect((await supervisor.list())[0].running).toBe(true);
 
     await scheduler.stop();
-    expect(supervisor.list()[0].running).toBe(false);
+    expect((await supervisor.list())[0].running).toBe(false);
     expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
     expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ stopped: true });
   });
@@ -983,14 +987,14 @@ auth:
     const scheduler = new ConnectorScheduler({ supervisor });
 
     const tick = scheduler.tick();
-    while (!supervisor.list()[0].running) {
+    while (!(await supervisor.list())[0].running) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
     await scheduler.stop();
     await tick;
 
-    expect(supervisor.list()[0].running).toBe(false);
+    expect((await supervisor.list())[0].running).toBe(false);
     expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
     expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ aborted: true });
     expect(supervisor.getIntegration(integration.id)?.nextRunAt).toBeGreaterThan(0);
@@ -1016,7 +1020,7 @@ auth:
     const scheduler = new ConnectorScheduler({ supervisor, stopTimeoutMs: 50 });
 
     await scheduler.start();
-    expect(supervisor.list()[0].running).toBe(true);
+    expect((await supervisor.list())[0].running).toBe(true);
 
     const stopped = await waitWithTestTimeout(scheduler.stop(), 2_000);
     expect(stopped).toBe(true);
@@ -1144,7 +1148,7 @@ auth:
     );
 
     await registerWorkspaceConnectors(supervisor, workspace);
-    expect(supervisor.list()[0].packageTrust).toBe("untrusted");
+    expect((await supervisor.list())[0].packageTrust).toBe("untrusted");
 
     const scheduler = new ConnectorScheduler({ supervisor });
     await scheduler.tick();
@@ -1278,14 +1282,15 @@ auth:
 
     const manifests = await registerWorkspaceConnectors(supervisor, workspace);
     expect(manifests.map((manifest) => manifest.id)).toEqual(["calendar"]);
-    const integration = supervisor.list()[0];
+    const integration = (await supervisor.list())[0];
     expect(integration.id).not.toBe("calendar");
 
     await expect(supervisor.run(integration.id)).rejects.toThrow("not trusted");
     await supervisor.approveCurrentPackage("calendar");
     await supervisor.run(integration.id);
 
-    const event = db.prepare("SELECT source, type, external_id FROM events").get() as any;
+    const event = db.prepare("SELECT source, type, external_id FROM events WHERE type = ?")
+      .get("calendar.install-test") as any;
     expect(event).toEqual({
       source: "connector:calendar",
       type: "calendar.install-test",
@@ -1366,13 +1371,116 @@ auth:
     await supervisor.approveCurrentPackage("demo");
     await supervisor.run(integration.id);
 
-    const event = db.prepare("SELECT source, type, external_id FROM events").get() as any;
+    const event = db.prepare("SELECT source, type, external_id FROM events WHERE type = ?")
+      .get("demo.event") as any;
     expect(event).toEqual({
       source: "connector:demo",
       type: "demo.event",
       external_id: "loaded",
     });
     expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ loaded: true });
+  });
+
+  test("manages integration lifecycle: connect with token, toggle, remove", async () => {
+    supervisor.register(
+      {
+        id: "managed-feed",
+        name: "Managed Feed",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "multiple" },
+        auth: { type: "apiKey" },
+      },
+      { async run() {} },
+    );
+
+    const integration = supervisor.ensureIntegration({
+      connectorId: "managed-feed",
+      integrationKey: "work",
+    });
+    expect(integration.setupStatus).toBe("setup");
+
+    // apiKey connect stores the token and promotes through the evaluator.
+    await expect(
+      supervisor.connectIntegrationWithToken(integration.id, "  ")
+    ).rejects.toThrow("non-empty token");
+    const connected = await supervisor.connectIntegrationWithToken(integration.id, "tok-1");
+    expect(connected.setupStatus).toBe("ready");
+    expect(await supervisor.getAuthManager().hasToken(connected.authRef!)).toBe(true);
+
+    // Enable toggle through updateIntegration.
+    const disabled = supervisor.updateIntegration(integration.id, { enabled: false });
+    expect(disabled.status).toBe("disabled");
+    const enabled = supervisor.updateIntegration(integration.id, { enabled: true });
+    expect(enabled.status).toBe("idle");
+
+    // Remove purges credentials and deletes the row.
+    await supervisor.removeIntegration(integration.id);
+    expect(supervisor.getIntegration(integration.id)).toBeUndefined();
+    expect(await supervisor.getAuthManager().hasToken(connected.authRef!)).toBe(false);
+  });
+
+  test("rejects oauth2 token connect until the auth module exists", async () => {
+    supervisor.register(
+      {
+        id: "oauth-feed",
+        name: "OAuth Feed",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        auth: { type: "oauth2", provider: "google" },
+      },
+      { async run() {} },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "oauth-feed" });
+    await expect(
+      supervisor.connectIntegrationWithToken(integration.id, "tok")
+    ).rejects.toThrow("oauth2");
+  });
+
+  test("emits D0 audit events for connector approve and remove", async () => {
+    const dir = join(workspace, "connectors", "audited");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: audited
+name: Audited
+entry: ./index.mjs
+runtime:
+  mode: import
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(join(dir, "index.mjs"), "export default { async run() {} };\n");
+
+    await supervisor.registerDirectory(dir);
+    supervisor.ensureFirstIntegration("audited");
+    await supervisor.approveCurrentPackage("audited");
+
+    const approved = db
+      .prepare("SELECT source, payload FROM events WHERE type = ?")
+      .get("connector.approved") as any;
+    expect(approved.source).toBe("system:test");
+    const approvedPayload = JSON.parse(approved.payload);
+    expect(approvedPayload.connector_id).toBe("audited");
+    expect(approvedPayload.approved_hash).toMatch(/^sha256:/);
+
+    expect(await supervisor.unregister("audited")).toBe(true);
+    const removed = db
+      .prepare("SELECT source, payload FROM events WHERE type = ?")
+      .get("connector.removed") as any;
+    expect(removed.source).toBe("system:test");
+    expect(JSON.parse(removed.payload)).toEqual({ connector_id: "audited" });
+
+    // Integration row survives as non-runnable with missing trust.
+    const after = (await supervisor.list()).find((c) => c.connectorId === "audited");
+    expect(after?.trustStatus).toBe("missing");
+    expect(after?.supported).toBe(false);
   });
 
   test("rejects connector entries outside connector directory", () => {

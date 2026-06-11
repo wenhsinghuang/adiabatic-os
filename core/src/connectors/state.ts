@@ -205,6 +205,11 @@ export class ConnectorIntegrationStore {
     return row ? rowToIntegration<TConfig, TState>(row) : undefined;
   }
 
+  delete(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM connector_integrations WHERE id = ?").run(id);
+    return result.changes > 0;
+  }
+
   list(): ConnectorIntegration[] {
     return (this.db.prepare("SELECT * FROM connector_integrations ORDER BY connector_id, integration_key").all() as IntegrationRow[])
       .map((row) => rowToIntegration(row));

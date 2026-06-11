@@ -1,13 +1,14 @@
-// connector-state — derives a single UI channel state from an integration row,
-// mirroring the runtime's actual gate semantics.
+// connector-state — derives UI channel state from an integration row,
+// mirroring the runtime's actual gate semantics. Deliberately simplified:
+// users see plain states and human-readable setup needs, not runtime internals.
 
-import type { ConnectorIntegrationView } from "./api";
+import type { ConnectorIntegrationView, ConnectorSetupPendingReason } from "./api";
 
 export type ChannelState =
   | "live" // watch run active
   | "ready" // idle, all gates passed
-  | "setup" // gates incomplete (auth / requirements / source identity)
-  | "attention" // crashed while ready; needs explicit restart
+  | "setup" // setup incomplete (auth / requirements / integration key)
+  | "attention" // run errored; user should look (watch needs restart, poll auto-retries)
   | "quarantined" // package trust gate failed; needs human approval
   | "disabled"
   | "unsupported";
@@ -25,57 +26,39 @@ export function channelState(c: ConnectorIntegrationView): ChannelState {
 export const CHANNEL_LABEL: Record<ChannelState, string> = {
   live: "LIVE",
   ready: "READY",
-  setup: "SETUP",
+  setup: "NEEDS SETUP",
   attention: "ATTENTION",
-  quarantined: "QUARANTINED",
-  disabled: "DISABLED",
+  quarantined: "NEEDS APPROVAL",
+  disabled: "OFF",
   unsupported: "UNSUPPORTED",
 };
 
-export type GateState = "pass" | "pending" | "fail" | "na";
+// Trust collapses to what a user must understand: official, approved custom,
+// needs approval, or broken (package gone/invalid).
+export type TrustView = "official" | "custom" | "needs-approval" | "broken";
 
-export interface Gate {
-  id: "trust" | "auth" | "reqs" | "source";
-  label: string;
-  state: GateState;
-  detail?: string;
+export function trustView(c: ConnectorIntegrationView): TrustView {
+  switch (c.packageTrust) {
+    case "official":
+      return "official";
+    case "custom":
+      return "custom";
+    case "untrusted":
+    case "modified":
+      return "needs-approval";
+    default:
+      return "broken";
+  }
 }
 
-// The run gate chain in the order the runtime actually evaluates it.
-export function gateChain(c: ConnectorIntegrationView): Gate[] {
-  const trustPass = c.packageTrust === "official" || c.packageTrust === "custom";
-  const trust: Gate = {
-    id: "trust",
-    label: "TRUST",
-    state: trustPass ? "pass" : "fail",
-    detail: c.packageTrust,
-  };
+const SETUP_NEED_LABEL: Record<ConnectorSetupPendingReason, string> = {
+  integration_key: "integration name",
+  auth: "account connection",
+  requirements: "permission grants",
+};
 
-  const auth: Gate = c.authType === "none"
-    ? { id: "auth", label: "AUTH", state: "na", detail: "none required" }
-    : {
-      id: "auth",
-      label: "AUTH",
-      state: c.setupStatus === "ready" ? "pass" : "pending",
-      detail: c.authType,
-    };
-
-  let reqs: Gate;
-  if (c.requirements.length === 0) {
-    reqs = { id: "reqs", label: "REQS", state: "na", detail: "none declared" };
-  } else if (c.requirements.every((r) => r.status === "satisfied")) {
-    reqs = { id: "reqs", label: "REQS", state: "pass" };
-  } else if (c.requirements.some((r) => r.status === "error")) {
-    reqs = { id: "reqs", label: "REQS", state: "fail" };
-  } else {
-    reqs = { id: "reqs", label: "REQS", state: "pending" };
-  }
-
-  const source: Gate = c.source
-    ? { id: "source", label: "SOURCE", state: "pass", detail: c.source }
-    : { id: "source", label: "SOURCE", state: "pending", detail: "integration key required" };
-
-  return [trust, auth, reqs, source];
+export function setupNeeds(c: ConnectorIntegrationView): string[] {
+  return c.setupPending.map((reason) => SETUP_NEED_LABEL[reason]);
 }
 
 export function relativeTime(ts: number | undefined, now = Date.now()): string {

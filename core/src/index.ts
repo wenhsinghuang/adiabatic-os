@@ -6,7 +6,12 @@ import type { SchemaOp } from "./guard";
 import { WorkingTree } from "./working-tree";
 import { loadApps } from "./app-loader";
 import { ensureClaudeMd } from "./claude-md";
-import { ConnectorScheduler, ConnectorSupervisor, registerWorkspaceConnectors } from "./connectors";
+import {
+  ConnectorScheduler,
+  ConnectorSupervisor,
+  registerWorkspaceConnectors,
+  removeInstalledConnector,
+} from "./connectors";
 import { ulid } from "./utils/ulid";
 import { SettingsStore } from "./settings";
 import {
@@ -414,7 +419,7 @@ const server = Bun.serve({
       // -- Connectors --
       if (path === "/api/connectors" && method === "GET") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
-        return json({ connectors: connectorSupervisor.list() });
+        return json({ connectors: await connectorSupervisor.list() });
       }
 
       const approveConnectorMatch = path.match(/^\/api\/connectors\/([^/]+)\/approve$/);
@@ -431,6 +436,64 @@ const server = Bun.serve({
           decodeURIComponent(requirementsCheckMatch[1]),
         );
         return json({ requirements });
+      }
+
+      const removeConnectorMatch = path.match(/^\/api\/connectors\/([^/]+)$/);
+      if (removeConnectorMatch && method === "DELETE") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const connectorId = decodeURIComponent(removeConnectorMatch[1]);
+        const removed = await removeInstalledConnector(workspacePath, connectorId);
+        await connectorSupervisor.unregister(connectorId);
+        return json({ ok: true, removed });
+      }
+
+      const createIntegrationMatch = path.match(/^\/api\/connectors\/([^/]+)\/integrations$/);
+      if (createIntegrationMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const body = await readBody<{ integrationKey?: string; scheduleCron?: string | null; config?: unknown }>(req);
+        const integration = connectorSupervisor.ensureIntegration({
+          connectorId: decodeURIComponent(createIntegrationMatch[1]),
+          integrationKey: body.integrationKey,
+          scheduleCron: body.scheduleCron,
+          config: body.config,
+        });
+        return json({ integration });
+      }
+
+      const integrationMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)$/);
+      if (integrationMatch && method === "PATCH") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const body = await readBody<{
+          enabled?: boolean;
+          scheduleCron?: string | null;
+          integrationKey?: string;
+          config?: unknown;
+        }>(req);
+        const instanceId = decodeURIComponent(integrationMatch[1]);
+        connectorSupervisor.updateIntegration(instanceId, {
+          enabled: body.enabled,
+          scheduleCron: body.scheduleCron,
+          integrationKey: body.integrationKey,
+          config: body.config,
+        });
+        const integration = await connectorSupervisor.refreshIntegrationSetup(instanceId);
+        return json({ integration });
+      }
+      if (integrationMatch && method === "DELETE") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        await connectorSupervisor.removeIntegration(decodeURIComponent(integrationMatch[1]));
+        return json({ ok: true });
+      }
+
+      const connectIntegrationMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/connect$/);
+      if (connectIntegrationMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const body = await readBody<{ token?: string }>(req);
+        const integration = await connectorSupervisor.connectIntegrationWithToken(
+          decodeURIComponent(connectIntegrationMatch[1]),
+          body.token ?? "",
+        );
+        return json({ integration });
       }
 
       const restartIntegrationMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/restart$/);

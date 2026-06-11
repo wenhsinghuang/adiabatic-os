@@ -91,7 +91,7 @@ export class ConnectorScheduler {
   }
 
   private async startWatchConnectors(): Promise<void> {
-    for (const integration of this.supervisor.list() as ScheduledConnector[]) {
+    for (const integration of (await this.supervisor.list()) as ScheduledConnector[]) {
       if (this.stopped) return;
       if (integration.mode !== "watch") continue;
       if (!canSchedule(integration)) continue;
@@ -112,7 +112,7 @@ export class ConnectorScheduler {
   private async runDuePollConnectors(): Promise<void> {
     if (this.stopped) return;
     const now = this.now();
-    const due = (this.supervisor.list() as ScheduledConnector[])
+    const due = ((await this.supervisor.list()) as ScheduledConnector[])
       .filter((integration) => this.isDuePollIntegration(integration, now));
 
     await Promise.all(due.map((integration) => this.runPollIntegration(integration)));

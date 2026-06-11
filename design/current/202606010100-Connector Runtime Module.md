@@ -471,15 +471,17 @@ poll connector
   core up -> scheduler evaluates due integration schedules
   core down -> no execution
   next core startup -> due integrations run once as catch-up
-  run crash -> retried at the next due schedule
+  run crash -> surfaced as needs-attention; still retried at the next due schedule
 
-Crashed ready integrations are deliberately not auto-retried for watch runs: a
-connector bug should surface to the user as needs-attention, not burn quietly
-in a retry loop. `restartIntegration` / `POST
-/api/connectors/integrations/:id/restart` resets the error back to idle so the
-scheduler picks the integration up again. Setup-blocked errors (revoked
-credentials, regressed requirements) recover automatically through the setup
-promotion path instead.
+Any run error is surfaced to the user as needs-attention — an error is by
+nature something the user should see. The runtime recovery behavior differs by
+mode: watch runs are deliberately not auto-retried (a connector bug should
+surface, not burn quietly in a retry loop), while poll runs keep retrying on
+their schedule. `restartIntegration` / `POST
+/api/connectors/integrations/:id/restart` resets the error back to idle — for
+watch this restarts the run, for poll it forces an immediate retry (next_run_at
+cleared). Setup-blocked errors (revoked credentials, regressed requirements)
+recover automatically through the setup promotion path instead.
 ```
 
 Missed cron ticks collapse into one catch-up run. Connectors should use state cursors to catch up source data.

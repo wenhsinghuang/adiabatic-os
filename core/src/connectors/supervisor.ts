@@ -15,6 +15,7 @@ import { ConnectorRuntime, validateConnectorDefinition } from "./runtime";
 import {
   ConnectorIntegrationStore,
   createConnectorStateHandle,
+  defaultAuthRef,
   type EnsureIntegrationInput,
   type UpdateIntegrationInput,
 } from "./state";
@@ -41,6 +42,8 @@ export interface ConnectorRequirementView {
   message?: string;
   lastCheckedAt?: number;
 }
+
+export type ConnectorSetupPendingReason = "integration_key" | "auth" | "requirements";
 
 interface Registration {
   manifest: ConnectorManifest;
@@ -146,7 +149,83 @@ export class ConnectorSupervisor {
       trustStatusForIntegration(approved.trust),
       approved.contentHash,
     );
+    // D0 audit: the trust decision — who approved which exact package content.
+    this.guard.writeEvent({
+      type: "connector.approved",
+      startedAt: Date.now(),
+      payload: { connector_id: connectorId, approved_hash: approved.contentHash },
+    });
     return approved.manifest;
+  }
+
+  // Drops the registration (package removed from the workspace) and aborts any
+  // active runs. Integration rows are kept as non-runnable per the doc; their
+  // trust flips to missing.
+  async unregister(connectorId: string): Promise<boolean> {
+    validateConnectorId(connectorId);
+    const registration = this.registrations.get(connectorId);
+    if (!registration) return false;
+    this.registrations.delete(connectorId);
+
+    for (const integration of this.store.list()) {
+      if (integration.connectorId !== connectorId) continue;
+      const active = this.activeRuns.get(integration.id);
+      if (active) {
+        active.abort();
+        await active.promise.catch(() => {});
+      }
+    }
+    this.store.setTrustForConnector(connectorId, "missing");
+    this.guard.writeEvent({
+      type: "connector.removed",
+      startedAt: Date.now(),
+      payload: { connector_id: connectorId },
+    });
+    return true;
+  }
+
+  // Removes one integration: aborts an active run, purges its credentials,
+  // and deletes the row.
+  async removeIntegration(instanceId: string): Promise<void> {
+    const integration = this.store.get(instanceId);
+    if (!integration) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const active = this.activeRuns.get(instanceId);
+    if (active) {
+      active.abort();
+      await active.promise.catch(() => {});
+    }
+    if (integration.authRef) {
+      await this.authManager.deleteToken(integration.authRef);
+    }
+    this.store.delete(instanceId);
+  }
+
+  // apiKey connect: store the pasted token and run the normal connect flow.
+  // oauth2 needs the auth module's browser flow and is rejected until then.
+  async connectIntegrationWithToken<TConfig = unknown, TState = unknown>(
+    instanceId: string,
+    token: string,
+  ): Promise<ConnectorIntegration<TConfig, TState>> {
+    const existing = this.store.get(instanceId);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(existing.connectorId);
+    const auth = registration.manifest.auth ?? { type: "none" };
+    if (auth.type === "none") {
+      throw new Error(`Connector ${existing.connectorId} does not require auth`);
+    }
+    if (auth.type === "oauth2") {
+      throw new Error(`Connector ${existing.connectorId} uses oauth2; browser connect flow is not supported yet`);
+    }
+    if (!token || !token.trim()) {
+      throw new Error("Connector apiKey connect requires a non-empty token");
+    }
+    const authRef = existing.authRef ?? defaultAuthRef(existing.id);
+    await this.authManager.setToken(authRef, token.trim());
+    return this.connectIntegration<TConfig, TState>(instanceId, { authRef });
   }
 
   ensureIntegration<TConfig = unknown, TState = unknown>(
@@ -264,6 +343,16 @@ export class ConnectorSupervisor {
 
   ensureFirstIntegration(connectorId: string): ConnectorIntegration {
     const registration = this.requireRegistration(connectorId);
+    if (!isPlatformSupported(registration.manifest, this.platform)) {
+      // Keep a visible, non-runnable row so the UI can show the connector as
+      // unsupported on this device. supported=false blocks scheduling and runs.
+      return this.store.ensure({
+        connectorId,
+        setupStatus: "setup",
+        packageHash: registration.package?.contentHash,
+        trustStatus: trustStatusForIntegration(registration.trust),
+      });
+    }
     return this.ensureIntegration({
       connectorId,
       setupStatus: firstIntegrationSetupStatus(
@@ -273,35 +362,55 @@ export class ConnectorSupervisor {
     });
   }
 
-  list(): Array<ConnectorIntegration & {
+  async list(): Promise<Array<ConnectorIntegration & {
     name: string;
     mode: string;
+    integrationsMode: "singleton" | "multiple";
     source: string | undefined;
     running: boolean;
     supported: boolean;
     packageTrust: ConnectorPackageTrust["status"];
     authType: string;
+    authReady: boolean;
+    setupPending: ConnectorSetupPendingReason[];
     requirements: ConnectorRequirementView[];
-  }> {
-    return this.store.list().map((integration) => {
+  }>> {
+    return Promise.all(this.store.list().map(async (integration) => {
       const registration = this.registrations.get(integration.connectorId);
+      const integrationsMode = registration?.manifest.integrations.mode ?? "singleton";
       const hasSourceIdentity = Boolean(
-        integration.integrationKey || registration?.manifest.integrations.mode !== "multiple",
+        integration.integrationKey || integrationsMode !== "multiple",
       );
       const activeRequirements = registration
         ? activePlatformRequirements(registration.manifest, this.platform)
         : [];
+      const authType = (registration?.manifest.auth ?? { type: "none" }).type;
+      const authReady = authType === "none"
+        || Boolean(integration.authRef && (await this.authManager.hasToken(integration.authRef)));
+
+      const setupPending: ConnectorSetupPendingReason[] = [];
+      if (registration) {
+        if (!hasSourceIdentity) setupPending.push("integration_key");
+        if (!authReady) setupPending.push("auth");
+        if (!this.requirementsSatisfiedFor(registration.manifest, integration)) {
+          setupPending.push("requirements");
+        }
+      }
+
       return {
         ...integration,
         name: registration?.manifest.name ?? integration.connectorId,
         mode: registration?.manifest.runtime.mode ?? "unknown",
+        integrationsMode,
         source: hasSourceIdentity
           ? sourceForConnector(integration.connectorId, integration.integrationKey)
           : undefined,
         running: this.activeRuns.has(integration.id),
         supported: registration ? isPlatformSupported(registration.manifest, this.platform) : false,
         packageTrust: registration?.trust.status ?? "missing",
-        authType: (registration?.manifest.auth ?? { type: "none" }).type,
+        authType,
+        authReady,
+        setupPending,
         requirements: activeRequirements.map((id) => ({
           id,
           status: integration.requirementsStatus?.[id]?.status ?? "unknown",
@@ -309,7 +418,7 @@ export class ConnectorSupervisor {
           lastCheckedAt: integration.requirementsStatus?.[id]?.lastCheckedAt,
         })),
       };
-    });
+    }));
   }
 
   async run(instanceId: string, opts?: { config?: unknown }): Promise<void> {
@@ -333,6 +442,15 @@ export class ConnectorSupervisor {
 
   getAuthManager(): ConnectorAuthManager {
     return this.authManager;
+  }
+
+  // Re-runs the unified setup evaluator for one integration. Use after edits
+  // that can complete setup without an auth/requirement action (for example
+  // setting the integration key on a no-auth connector).
+  async refreshIntegrationSetup<TConfig = unknown, TState = unknown>(
+    instanceId: string,
+  ): Promise<ConnectorIntegration<TConfig, TState>> {
+    return (await this.refreshSetupStatus(instanceId)) as ConnectorIntegration<TConfig, TState>;
   }
 
   // Explicit human recovery for a crashed run. Crashed ready integrations stay
