@@ -370,8 +370,56 @@
   cursor: default;
 }
 
+.cardTopActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Integration rows nested under the connector ────────────────────── */
+
+.integrationList {
+  display: flex;
+  flex-direction: column;
+}
+
+.integrationRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 10px 14px;
+  border-top: 1px solid var(--c-line);
+  border-left: 2px solid var(--c-line);
+}
+
+.integrationRow:first-child {
+  border-top: none;
+  margin-top: 2px;
+}
+
+.rowTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rowBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  flex-shrink: 0;
+  min-width: 86px;
+}
+
 /* Provenance string — the protagonist. */
 .sourceLine {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   color: var(--c-amber);
   background: var(--c-amber-dim);
@@ -381,8 +429,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  align-self: flex-start;
-  max-width: 100%;
 }
 
 /* ── Setup needs + inline forms ─────────────────────────────────────── */

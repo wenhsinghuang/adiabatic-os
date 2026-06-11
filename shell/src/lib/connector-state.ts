@@ -61,6 +61,22 @@ export function setupNeeds(c: ConnectorIntegrationView): string[] {
   return c.setupPending.map((reason) => SETUP_NEED_LABEL[reason]);
 }
 
+// Aggregate state for a connector card: trust/platform problems are
+// connector-level; otherwise surface the most urgent integration state.
+const AGGREGATE_PRIORITY: ChannelState[] = ["attention", "setup", "live", "ready", "disabled"];
+
+export function connectorAggregateState(integrations: ConnectorIntegrationView[]): ChannelState {
+  const first = integrations[0];
+  if (!first) return "disabled";
+  if (!first.supported) return "unsupported";
+  if (first.packageTrust !== "official" && first.packageTrust !== "custom") return "quarantined";
+  const states = new Set(integrations.map(channelState));
+  for (const state of AGGREGATE_PRIORITY) {
+    if (states.has(state)) return state;
+  }
+  return "ready";
+}
+
 export function relativeTime(ts: number | undefined, now = Date.now()): string {
   if (!ts) return "—";
   const delta = now - ts;

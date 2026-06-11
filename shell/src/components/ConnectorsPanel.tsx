@@ -1,8 +1,13 @@
 // ConnectorsPanel — sidebar list of connector integrations with status dots.
 // Management lives in the Source Console tab; this is the at-a-glance rail.
 
+import { useMemo } from "react";
 import { useConnectors } from "../hooks/useConnectors";
-import { CHANNEL_LABEL, channelState } from "../lib/connector-state";
+import {
+  CHANNEL_LABEL,
+  channelState,
+  connectorAggregateState,
+} from "../lib/connector-state";
 import styles from "./ConnectorsPanel.module.css";
 
 interface ConnectorsPanelProps {
@@ -15,6 +20,16 @@ export function ConnectorsPanel({ onOpenConsole }: ConnectorsPanelProps) {
     const state = channelState(c);
     return state === "attention" || state === "quarantined";
   }).length;
+
+  const groups = useMemo(() => {
+    const byConnector = new Map<string, typeof connectors>();
+    for (const c of connectors) {
+      const list = byConnector.get(c.connectorId) ?? [];
+      list.push(c);
+      byConnector.set(c.connectorId, list);
+    }
+    return [...byConnector.values()];
+  }, [connectors]);
 
   return (
     <div className={styles.panel}>
@@ -42,13 +57,27 @@ export function ConnectorsPanel({ onOpenConsole }: ConnectorsPanelProps) {
         ) : connectors.length === 0 ? (
           <div className={styles.empty}>No connectors installed</div>
         ) : (
-          connectors.map((c) => {
-            const state = channelState(c);
+          groups.map((integrations) => {
+            const head = integrations[0];
+            const aggregate = connectorAggregateState(integrations);
+            const showChildren = integrations.length > 1 || Boolean(head.integrationKey);
             return (
-              <div key={c.id} className={styles.item} onClick={onOpenConsole}>
-                <span className={`${styles.dot} ${styles[`dot_${state}`]}`} />
-                <span className={styles.itemName}>{c.name}</span>
-                <span className={styles.itemState}>{CHANNEL_LABEL[state].toLowerCase()}</span>
+              <div key={head.connectorId}>
+                <div className={styles.item} onClick={onOpenConsole}>
+                  <span className={`${styles.dot} ${styles[`dot_${aggregate}`]}`} />
+                  <span className={styles.itemName}>{head.name}</span>
+                  <span className={styles.itemState}>{CHANNEL_LABEL[aggregate].toLowerCase()}</span>
+                </div>
+                {showChildren &&
+                  integrations.map((c) => {
+                    const state = channelState(c);
+                    return (
+                      <div key={c.id} className={styles.childItem} onClick={onOpenConsole}>
+                        <span className={`${styles.dot} ${styles[`dot_${state}`]}`} />
+                        <span className={styles.itemName}>{c.integrationKey ?? "(unnamed)"}</span>
+                      </div>
+                    );
+                  })}
               </div>
             );
           })
