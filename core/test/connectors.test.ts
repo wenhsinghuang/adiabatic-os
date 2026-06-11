@@ -1589,6 +1589,63 @@ export default {
     expect(fastKillSupervisor.getIntegration(integration.id)?.status).toBe("idle");
   });
 
+  test("package runner abort is cooperative: the connector cleans up before any kill", async () => {
+    const dir = join(workspace, "connectors", "tidy");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: tidy
+name: Tidy
+entry: ./index.mjs
+runtime:
+  mode: watch
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(dir, "index.mjs"),
+      `export default {
+  async run({ guard, state, signal }) {
+    await guard.writeEvent({ type: "tidy.start", externalId: "start", startedAt: 1, payload: {} });
+    await new Promise((resolve) => {
+      if (signal.aborted) return resolve();
+      signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    await state.set({ cleanedUp: true });
+  },
+};
+`,
+    );
+
+    await supervisor.registerDirectory(dir);
+    const integration = supervisor.ensureFirstIntegration("tidy");
+    await supervisor.approveCurrentPackage("tidy");
+
+    const handle = supervisor.start(integration.id);
+    const started = await waitWithTestTimeout(
+      (async () => {
+        while (!db.prepare("SELECT id FROM events WHERE type = ?").get("tidy.start")) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+      })(),
+      5_000,
+    );
+    expect(started).toBe(true);
+
+    handle.abort();
+    const settled = await waitWithTestTimeout(handle.promise, 3_000);
+    expect(settled).toBe(true);
+    // The cleanup write only lands if abort stayed cooperative — an immediate
+    // SIGKILL would have killed the child before state.set.
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ cleanedUp: true });
+    expect(supervisor.getIntegration(integration.id)?.status).toBe("idle");
+  });
+
   test("kills runner processes that hang during top-level import", async () => {
     const hangSupervisor = new ConnectorSupervisor({
       db,

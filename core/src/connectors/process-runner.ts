@@ -8,9 +8,11 @@
 // definitions (tests, embedding) with the same semantics in-process.
 //
 // Liveness rules: every bounded command (load/check/request) has a timeout
-// that kills the child on expiry, the session abort signal kills the child in
-// any phase (including a hanging top-level import), and force-kill is SIGKILL
-// — SIGTERM is catchable and therefore not an enforcement mechanism.
+// that kills the child on expiry; outside run() the session abort signal
+// hard-kills the child in any phase (including a hanging top-level import);
+// during run() abort is cooperative first (abort message, then SIGKILL after
+// the grace period). Force-kill is always SIGKILL — SIGTERM is catchable and
+// therefore not an enforcement mechanism.
 
 import { fileURLToPath } from "url";
 import type {
@@ -217,6 +219,10 @@ export class ProcessRunnerSession implements RunnerSession {
 
   async run(opts: RunnerRunOptions): Promise<void> {
     this.capabilities = opts.capabilities;
+    // run() owns abort handling for its duration: the session-level listener
+    // would SIGKILL immediately and defeat the cooperative grace period, so it
+    // steps aside until the run settles.
+    this.abortSignal?.removeEventListener("abort", this.onSessionAbort);
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const onAbort = () => {
       this.send({ type: "abort" });
@@ -257,6 +263,9 @@ export class ProcessRunnerSession implements RunnerSession {
       opts.signal.removeEventListener("abort", onAbort);
       clearTimeout(killTimer);
       this.capabilities = undefined;
+      if (!this.exited && this.abortSignal && !this.abortSignal.aborted) {
+        this.abortSignal.addEventListener("abort", this.onSessionAbort, { once: true });
+      }
     }
   }
 
