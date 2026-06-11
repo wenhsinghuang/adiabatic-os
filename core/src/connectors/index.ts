@@ -5,6 +5,7 @@ export * from "./auth";
 export * from "./state";
 export * from "./runtime";
 export * from "./supervisor";
+export * from "./process-runner";
 export * from "./scheduler";
 export * from "./schedule";
 export * from "./install";

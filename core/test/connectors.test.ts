@@ -1483,6 +1483,140 @@ auth:
     expect(after?.supported).toBe(false);
   });
 
+  test("runs workspace package connectors in a separate runner process", async () => {
+    const dir = join(workspace, "connectors", "pid-probe");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: pid-probe
+name: PID Probe
+entry: ./index.mjs
+runtime:
+  mode: import
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(dir, "index.mjs"),
+      `export default {
+  async run({ guard, state }) {
+    await guard.writeEvent({
+      type: "pid.sample",
+      externalId: "pid",
+      startedAt: 1,
+      payload: { pid: process.pid },
+    });
+    await state.set({ pid: process.pid });
+  },
+};
+`,
+    );
+
+    await supervisor.registerDirectory(dir);
+    const integration = supervisor.ensureFirstIntegration("pid-probe");
+    await supervisor.approveCurrentPackage("pid-probe");
+    await supervisor.run(integration.id);
+
+    const event = db.prepare("SELECT payload FROM events WHERE type = ?").get("pid.sample") as any;
+    const childPid = JSON.parse(event.payload).pid;
+    expect(typeof childPid).toBe("number");
+    // The whole point: connector code did not execute in this process.
+    expect(childPid).not.toBe(process.pid);
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ pid: childPid });
+  });
+
+  test("force-kills runner processes that ignore abort", async () => {
+    const fastKillSupervisor = new ConnectorSupervisor({
+      db,
+      guard: new Guard({ db, source: "system:test" }),
+      host: { workspacePath: workspace },
+      platform: "darwin",
+      runnerKillGraceMs: 150,
+    });
+    const dir = join(workspace, "connectors", "stubborn");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: stubborn
+name: Stubborn
+entry: ./index.mjs
+runtime:
+  mode: watch
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(dir, "index.mjs"),
+      `export default {
+  async run() {
+    // Ignores the abort signal entirely.
+    await new Promise(() => {});
+  },
+};
+`,
+    );
+
+    await fastKillSupervisor.registerDirectory(dir);
+    const integration = fastKillSupervisor.ensureFirstIntegration("stubborn");
+    await fastKillSupervisor.approveCurrentPackage("stubborn");
+
+    const handle = fastKillSupervisor.start(integration.id);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    handle.abort();
+    const settled = await waitWithTestTimeout(handle.promise, 3_000);
+    expect(settled).toBe(true);
+    expect(fastKillSupervisor.getIntegration(integration.id)?.status).toBe("idle");
+  });
+
+  test("isolates runner process crashes from the core", async () => {
+    const dir = join(workspace, "connectors", "crasher");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: crasher
+name: Crasher
+entry: ./index.mjs
+runtime:
+  mode: poll
+  defaultSchedule: "*/15 * * * *"
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(dir, "index.mjs"),
+      `export default {
+  async run() {
+    process.exit(7);
+  },
+};
+`,
+    );
+
+    await supervisor.registerDirectory(dir);
+    const integration = supervisor.ensureFirstIntegration("crasher");
+    await supervisor.approveCurrentPackage("crasher");
+
+    await expect(supervisor.run(integration.id)).rejects.toThrow("exited unexpectedly");
+    const stored = supervisor.getIntegration(integration.id);
+    expect(stored?.status).toBe("error");
+    expect(stored?.lastError).toContain("exited unexpectedly");
+  });
+
   test("rejects connector entries outside connector directory", () => {
     expect(() => resolveConnectorEntry("/tmp/connector", "../outside.mjs")).toThrow("inside connector directory");
   });

@@ -525,7 +525,7 @@ ConnectorScheduler
   stops watch connectors on core down
 ```
 
-`ConnectorRunner` should be a separate process runner in the full runtime. This is not a sandbox claim. The process boundary exists for connector lifecycle, crash isolation, cancellation, and future runner backend flexibility. Trust still comes from official hash/signature verification or human-approved custom hashes.
+`ConnectorRunner` is a separate process runner: every workspace package connector executes in a spawned Bun child with an IPC capability broker. The child has no database handle, no Guard, and no secrets — `guard.writeEvent`, `state.get/set`, and `auth.getToken` are RPC calls served by the host, where source injection and validation happen. Requirement `check`/`request` handlers also execute in the child. Abort is cooperative first (AbortSignal in the child), then enforced: a runner that ignores abort is force-killed after a grace period. This is not a sandbox claim. The process boundary exists for connector lifecycle, crash isolation, cancellation, and future runner backend flexibility. Trust still comes from official hash/signature verification or human-approved custom hashes, verified by the host before any spawn. Manually registered in-memory definitions (tests, embedding) run in-process with identical semantics.
 
 ```text
 poll/import
@@ -1048,6 +1048,9 @@ core/src/connectors/
   schedule.ts       cron parsing and schedule validation
   scheduler.ts      starts watch integrations and runs due poll integrations
   install.ts        install/remove/materialize connector folders in workspace connectors/
+  process-runner.ts host-side runner sessions: spawn, IPC capability broker, abort/kill
+  runner-child.ts   runner process entrypoint: imports the package, proxies capabilities
+  runner-protocol.ts IPC message contract between host and runner
 ```
 
 The target system-owned runtime state is persisted in `connector_integrations`:
@@ -1069,7 +1072,7 @@ connector code calls guard.writeEvent(event)
 
 Connector code does not see `ConnectorHost.emit`, `withSource`, or separate `start` / `sync` APIs.
 
-The requirement lifecycle is implemented in core: connector packages export `requirements` handlers (`check`/`request`), the supervisor exposes `checkIntegrationRequirements` / `requestIntegrationRequirement` (separate from auth connect), requirement status persists in `connector_integrations.requirements_status`, `/api/connectors` exposes per-integration requirement status, and a unified setup evaluator gates `ready` (source identity + auth + active platform requirements). Handlers are only imported after the package passes the same trust gate as `run()`, and every run re-checks credentials and active requirements before `run(context)` is called. Note the precise timing: module top-level code executes at import, after the trust gate and before the requirement check — the requirement gate protects the run, the trust gate protects the import.
+The requirement lifecycle is implemented in core: connector packages export `requirements` handlers (`check`/`request`), the supervisor exposes `checkIntegrationRequirements` / `requestIntegrationRequirement` (separate from auth connect), requirement status persists in `connector_integrations.requirements_status`, `/api/connectors` exposes per-integration requirement status, and a unified setup evaluator gates `ready` (source identity + auth + active platform requirements). Handlers are only loaded after the package passes the same trust gate as `run()`, and every run re-checks credentials and active requirements before `run(context)` is called. Note the precise timing: module top-level code executes at import inside the runner process, after the trust gate and before the requirement check — the requirement gate protects the run, the trust gate protects the import, and the process boundary contains whatever the import does.
 
 Already implemented in core (not pending): workspace trust gate, package content hashing, official/custom/modified classification, custom approval records, and the host-auth approve endpoint.
 
@@ -1079,5 +1082,4 @@ Still pending outside the core connector system:
 
 - cached official catalog download/verification from the official registry / R2 (until then nothing classifies as official)
 - unified auth/secrets module adapter beyond the current injectable secret-store interface
-- separate connector runner process and host capability broker
 - high-throughput queue and transactional batch writer

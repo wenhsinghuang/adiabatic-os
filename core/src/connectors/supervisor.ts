@@ -1,8 +1,13 @@
 import type { Database } from "bun:sqlite";
-import { pathToFileURL } from "url";
 import type { Guard } from "../guard";
 import { ConnectorAuthManager } from "./auth";
 import { createBoundConnectorGuard, sourceForConnector } from "./guard";
+import {
+  InProcessRunnerSession,
+  ProcessRunnerSession,
+  type RunnerCapabilities,
+  type RunnerSession,
+} from "./process-runner";
 import {
   activePlatformRequirements,
   currentConnectorPlatform,
@@ -11,7 +16,7 @@ import {
   validateConnectorManifest,
 } from "./manifest";
 import { WorkspaceConnectorRegistry, trustStatusForIntegration } from "./registry";
-import { ConnectorRuntime, validateConnectorDefinition } from "./runtime";
+import { validateConnectorDefinition } from "./runtime";
 import {
   ConnectorIntegrationStore,
   createConnectorStateHandle,
@@ -67,6 +72,9 @@ export interface ConnectorSupervisorOptions {
   platform?: ConnectorPlatform;
   authManager?: ConnectorAuthManager;
   officialCatalog?: ConnectorOfficialCatalogEntry[];
+  // How long an aborted runner process gets to exit cooperatively before it
+  // is force-killed.
+  runnerKillGraceMs?: number;
 }
 
 const MANUAL_TRUST: ConnectorPackageTrust = {
@@ -81,6 +89,7 @@ export class ConnectorSupervisor {
   private store: ConnectorIntegrationStore;
   private authManager: ConnectorAuthManager;
   private platform: ConnectorPlatform;
+  private runnerKillGraceMs: number | undefined;
   private guard: Guard;
   private host: ConnectorHostContext;
   private registry: WorkspaceConnectorRegistry;
@@ -91,6 +100,7 @@ export class ConnectorSupervisor {
     this.store = new ConnectorIntegrationStore(opts.db);
     this.authManager = opts.authManager ?? new ConnectorAuthManager();
     this.platform = opts.platform ?? currentConnectorPlatform();
+    this.runnerKillGraceMs = opts.runnerKillGraceMs;
     this.registry = new WorkspaceConnectorRegistry({
       db: opts.db,
       officialCatalog: opts.officialCatalog ?? [],
@@ -495,12 +505,17 @@ export class ConnectorSupervisor {
     const requirementIds = activePlatformRequirements(registration.manifest, this.platform);
     if (requirementIds.length === 0) return {};
 
-    // Trust before handler: importing requirement handlers runs connector code,
-    // so the package must pass the same trust gate as run().
-    const definition = await this.loadTrustedDefinition(registration);
-    const records = await this.evaluateRequirements(registration, integration, definition, requirementIds);
-    await this.refreshSetupStatus(instanceId);
-    return records;
+    // Trust before handler: loading requirement handlers runs connector code,
+    // so the package must pass the same trust gate as run(). Package handlers
+    // execute in a separate runner process.
+    const session = await this.openTrustedSession(registration);
+    try {
+      const records = await this.evaluateRequirements(registration, integration, session, requirementIds);
+      await this.refreshSetupStatus(instanceId);
+      return records;
+    } finally {
+      await session.close();
+    }
   }
 
   async requestIntegrationRequirement(
@@ -519,44 +534,42 @@ export class ConnectorSupervisor {
       );
     }
 
-    const definition = await this.loadTrustedDefinition(registration);
-    const handler = definition.requirements?.[requirementId];
-    if (!handler) {
-      throw new Error(
-        `Connector ${integration.connectorId} does not implement requirement handler: ${requirementId}`,
-      );
-    }
+    const session = await this.openTrustedSession(registration);
+    try {
+      if (!session.requirementIds().includes(requirementId)) {
+        throw new Error(
+          `Connector ${integration.connectorId} does not implement requirement handler: ${requirementId}`,
+        );
+      }
 
-    const ctx = this.requirementContext(integration);
-    let requestStatus: ConnectorRequirementStatus | undefined;
-    if (handler.request) {
-      try {
-        requestStatus = normalizeRequirementStatus(await handler.request(ctx));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+      const ctx = this.requirementContext(integration);
+      const rawRequest = await session.request(requirementId, ctx);
+      const requestStatus = rawRequest === null ? undefined : normalizeRequirementStatus(rawRequest);
+      if (requestStatus?.status === "error") {
         const record: ConnectorRequirementRecord = {
-          status: "error",
-          message,
+          ...requestStatus,
           lastCheckedAt: Date.now(),
         };
         this.persistRequirementRecords(instanceId, { [requirementId]: record });
         await this.refreshSetupStatus(instanceId);
         return record;
       }
-    }
 
-    const records = await this.evaluateRequirements(registration, integration, definition, [requirementId]);
-    let record = records[requirementId];
-    // check() is the authority for grants, but an in-flight request must stay
-    // visible: when request() reports pending (e.g. "grant in System Settings")
-    // and the immediate re-check still says missing, keep the pending record so
-    // the UI shows the actionable request message instead of a bare missing.
-    if (requestStatus?.status === "pending" && record.status === "missing") {
-      record = { ...requestStatus, lastCheckedAt: record.lastCheckedAt };
-      this.persistRequirementRecords(instanceId, { [requirementId]: record });
+      const records = await this.evaluateRequirements(registration, integration, session, [requirementId]);
+      let record = records[requirementId];
+      // check() is the authority for grants, but an in-flight request must stay
+      // visible: when request() reports pending (e.g. "grant in System Settings")
+      // and the immediate re-check still says missing, keep the pending record so
+      // the UI shows the actionable request message instead of a bare missing.
+      if (requestStatus?.status === "pending" && record.status === "missing") {
+        record = { ...requestStatus, lastCheckedAt: record.lastCheckedAt };
+        this.persistRequirementRecords(instanceId, { [requirementId]: record });
+      }
+      await this.refreshSetupStatus(instanceId);
+      return record;
+    } finally {
+      await session.close();
     }
-    await this.refreshSetupStatus(instanceId);
-    return record;
   }
 
   private requirementContext(integration: ConnectorIntegration): ConnectorRequirementContext {
@@ -582,29 +595,20 @@ export class ConnectorSupervisor {
   private async evaluateRequirements(
     registration: Registration,
     integration: ConnectorIntegration,
-    definition: ConnectorDefinition,
+    session: RunnerSession,
     requirementIds: string[],
   ): Promise<Record<string, ConnectorRequirementRecord>> {
     const ctx = this.requirementContext(integration);
+    const results = await session.check(requirementIds, ctx);
     const updates: Record<string, ConnectorRequirementRecord> = {};
     for (const id of requirementIds) {
-      const handler = definition.requirements?.[id];
-      let status: ConnectorRequirementStatus;
-      if (!handler) {
-        status = {
+      const result = results[id] ?? null;
+      const status: ConnectorRequirementStatus = result === null
+        ? {
           status: "error",
           message: `Connector ${registration.manifest.id} does not implement requirement handler: ${id}`,
-        };
-      } else {
-        try {
-          status = normalizeRequirementStatus(await handler.check(ctx));
-        } catch (err) {
-          status = {
-            status: "error",
-            message: err instanceof Error ? err.message : String(err),
-          };
         }
-      }
+        : normalizeRequirementStatus(result);
       updates[id] = { ...status, lastCheckedAt: Date.now() };
     }
     return this.persistRequirementRecords(integration.id, updates);
@@ -668,12 +672,12 @@ export class ConnectorSupervisor {
   private async assertRunRequirements(
     registration: Registration,
     integration: ConnectorIntegration,
-    definition: ConnectorDefinition,
+    session: RunnerSession,
   ): Promise<void> {
     const requirementIds = activePlatformRequirements(registration.manifest, this.platform);
     if (requirementIds.length === 0) return;
 
-    const records = await this.evaluateRequirements(registration, integration, definition, requirementIds);
+    const records = await this.evaluateRequirements(registration, integration, session, requirementIds);
     const unsatisfied = requirementIds.filter((id) => records[id]?.status !== "satisfied");
     if (unsatisfied.length > 0) {
       this.store.update(integration.id, { setupStatus: "setup" });
@@ -712,23 +716,17 @@ export class ConnectorSupervisor {
     this.store.setStatus(instanceId, "running");
 
     const promise = (async () => {
+      let session: RunnerSession | undefined;
       try {
         await this.assertRunAuth(registration, integration);
-        const definition = await this.loadTrustedDefinition(registration);
-        await this.assertRunRequirements(registration, integration, definition);
-        const context = {
-          guard: createBoundConnectorGuard(this.guard, integration.connectorId, integration.integrationKey),
-          auth: this.authManager.createHandle(registration.manifest.auth ?? { type: "none" }, integration),
-          state: createConnectorStateHandle(this.store, instanceId),
+        session = await this.openTrustedSession(registration);
+        await this.assertRunRequirements(registration, integration, session);
+        await session.run({
           config: mergeConfig(registration.manifest.config, integration.config, opts?.config),
           host: this.host,
           signal: controller.signal,
-        };
-        const runtime = new ConnectorRuntime({
-          definition,
-          context,
+          capabilities: this.buildRunCapabilities(registration, integration),
         });
-        await runtime.run();
         this.store.setStatus(instanceId, "idle");
       } catch (err) {
         if (controller.signal.aborted) {
@@ -739,6 +737,7 @@ export class ConnectorSupervisor {
         this.store.setStatus(instanceId, "error", message);
         throw err;
       } finally {
+        await session?.close().catch(() => {});
         this.activeRuns.delete(instanceId);
       }
     })();
@@ -755,13 +754,16 @@ export class ConnectorSupervisor {
     return active;
   }
 
-  private async loadTrustedDefinition(registration: Registration): Promise<ConnectorDefinition> {
+  // Opens a runner session for trusted connector code. Workspace packages are
+  // re-verified (hash/trust) and then executed in a separate runner process;
+  // manually registered definitions run in-process. Trust always passes before
+  // any connector code is loaded anywhere.
+  private async openTrustedSession(registration: Registration): Promise<RunnerSession> {
     if (!registration.package) {
-      if (registration.definition) return registration.definition;
+      if (registration.definition) return new InProcessRunnerSession(registration.definition);
       throw new Error(`Connector ${registration.manifest.id} has no package entry`);
     }
 
-    const previousHash = registration.package.contentHash;
     const current = await this.registry.loadPackage(registration.package.dir);
     registration.manifest = current.manifest;
     registration.package = current;
@@ -776,13 +778,38 @@ export class ConnectorSupervisor {
       throw new Error(`Connector ${current.connectorId} is not trusted: ${current.trust.status}`);
     }
 
-    if (registration.definition && previousHash === current.contentHash) {
-      return registration.definition;
-    }
+    const session = new ProcessRunnerSession({
+      entryPath: current.entryPath,
+      contentHash: current.contentHash,
+      cwd: current.dir,
+      killGraceMs: this.runnerKillGraceMs,
+    });
+    await session.open();
+    return session;
+  }
 
-    const definition = await loadConnectorDefinition(current.entryPath, current.contentHash);
-    registration.definition = definition;
-    return definition;
+  private buildRunCapabilities(
+    registration: Registration,
+    integration: ConnectorIntegration,
+  ): RunnerCapabilities {
+    const boundGuard = createBoundConnectorGuard(
+      this.guard,
+      integration.connectorId,
+      integration.integrationKey,
+    );
+    const stateHandle = createConnectorStateHandle(this.store, integration.id);
+    const authSpec = registration.manifest.auth ?? { type: "none" };
+    const authHandle = this.authManager.createHandle(authSpec, integration);
+    return {
+      authType: authSpec.type,
+      writeEvent: (event) => boundGuard.writeEvent(event as Parameters<typeof boundGuard.writeEvent>[0]),
+      writeEvents: (events) => boundGuard.writeEvents(events as Parameters<typeof boundGuard.writeEvents>[0]),
+      stateGet: () => stateHandle.get(),
+      stateSet: (value) => stateHandle.set(value),
+      authGetToken: () => authHandle.type === "none"
+        ? Promise.reject(new Error("Connector does not use auth"))
+        : authHandle.getToken(),
+    };
   }
 
   private requireRegistration(connectorId: string): Registration {
@@ -793,17 +820,6 @@ export class ConnectorSupervisor {
     }
     return registration;
   }
-}
-
-async function loadConnectorDefinition(entryPath: string, contentHash?: string): Promise<ConnectorDefinition> {
-  const url = pathToFileURL(entryPath);
-  if (contentHash) {
-    url.searchParams.set("hash", contentHash);
-  }
-  const mod = await import(url.href);
-  const definition = mod.default ?? mod.connector;
-  validateConnectorDefinition(definition);
-  return definition;
 }
 
 function mergeConfig(...configs: unknown[]): unknown {
