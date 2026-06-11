@@ -268,17 +268,33 @@ export function requestConnectorRequirement(
 
 export function restartConnectorIntegration(
   integrationId: string,
-): Promise<{ integration: ConnectorIntegrationView }> {
+): Promise<{ integration: ConnectorIntegrationRow }> {
   return request(
     `/api/connectors/integrations/${encodeURIComponent(integrationId)}/restart`,
     { method: "POST", body: JSON.stringify({}) },
   );
 }
 
+// Mutation endpoints return the raw integration row (no name/setupPending/
+// requirements enrichment — those only come from listConnectors). Callers
+// should refresh the list after a mutation instead of consuming this shape.
+export interface ConnectorIntegrationRow {
+  id: string;
+  connectorId: string;
+  integrationKey?: string;
+  enabled: boolean;
+  status: "setup" | "idle" | "running" | "error" | "disabled";
+  setupStatus: "setup" | "ready";
+  scheduleCron?: string;
+  nextRunAt?: number;
+  lastError?: string;
+  lastRunAt?: number;
+}
+
 export function updateConnectorIntegration(
   integrationId: string,
   input: { enabled?: boolean; scheduleCron?: string | null; integrationKey?: string },
-): Promise<{ integration: ConnectorIntegrationView }> {
+): Promise<{ integration: ConnectorIntegrationRow }> {
   return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}`, {
     method: "PATCH",
     body: JSON.stringify(input),
@@ -288,7 +304,7 @@ export function updateConnectorIntegration(
 export function createConnectorIntegration(
   connectorId: string,
   integrationKey: string,
-): Promise<{ integration: ConnectorIntegrationView }> {
+): Promise<{ integration: ConnectorIntegrationRow }> {
   return request(`/api/connectors/${encodeURIComponent(connectorId)}/integrations`, {
     method: "POST",
     body: JSON.stringify({ integrationKey }),
@@ -304,7 +320,7 @@ export function deleteConnectorIntegration(integrationId: string): Promise<{ ok:
 export function connectConnectorIntegration(
   integrationId: string,
   token: string,
-): Promise<{ integration: ConnectorIntegrationView }> {
+): Promise<{ integration: ConnectorIntegrationRow }> {
   return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}/connect`, {
     method: "POST",
     body: JSON.stringify({ token }),

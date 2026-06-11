@@ -14,6 +14,9 @@ export type HostToRunnerMessage =
   | {
     type: "run";
     config: unknown;
+    // JSON cannot carry undefined; configSet=false means "config was absent"
+    // so the child can preserve undefined semantics identical to in-process.
+    configSet: boolean;
     host: { workspacePath: string };
     authType: string;
   }

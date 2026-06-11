@@ -75,6 +75,9 @@ export interface ConnectorSupervisorOptions {
   // How long an aborted runner process gets to exit cooperatively before it
   // is force-killed.
   runnerKillGraceMs?: number;
+  // How long bounded runner commands (load/check/request) may take before the
+  // child is killed and the operation fails.
+  runnerCommandTimeoutMs?: number;
 }
 
 const MANUAL_TRUST: ConnectorPackageTrust = {
@@ -90,6 +93,7 @@ export class ConnectorSupervisor {
   private authManager: ConnectorAuthManager;
   private platform: ConnectorPlatform;
   private runnerKillGraceMs: number | undefined;
+  private runnerCommandTimeoutMs: number | undefined;
   private guard: Guard;
   private host: ConnectorHostContext;
   private registry: WorkspaceConnectorRegistry;
@@ -101,6 +105,7 @@ export class ConnectorSupervisor {
     this.authManager = opts.authManager ?? new ConnectorAuthManager();
     this.platform = opts.platform ?? currentConnectorPlatform();
     this.runnerKillGraceMs = opts.runnerKillGraceMs;
+    this.runnerCommandTimeoutMs = opts.runnerCommandTimeoutMs;
     this.registry = new WorkspaceConnectorRegistry({
       db: opts.db,
       officialCatalog: opts.officialCatalog ?? [],
@@ -195,7 +200,9 @@ export class ConnectorSupervisor {
   }
 
   // Removes one integration: aborts an active run, purges its credentials,
-  // and deletes the row.
+  // and deletes the row. Deleting the last integration of an installed
+  // connector re-ensures a fresh first integration so the package keeps a
+  // visible management entry.
   async removeIntegration(instanceId: string): Promise<void> {
     const integration = this.store.get(instanceId);
     if (!integration) {
@@ -210,6 +217,16 @@ export class ConnectorSupervisor {
       await this.authManager.deleteToken(integration.authRef);
     }
     this.store.delete(instanceId);
+
+    const registration = this.registrations.get(integration.connectorId);
+    if (registration) {
+      const remaining = this.store
+        .list()
+        .some((row) => row.connectorId === integration.connectorId);
+      if (!remaining) {
+        this.ensureFirstIntegration(integration.connectorId);
+      }
+    }
   }
 
   // apiKey connect: store the pasted token and run the normal connect flow.
@@ -719,7 +736,9 @@ export class ConnectorSupervisor {
       let session: RunnerSession | undefined;
       try {
         await this.assertRunAuth(registration, integration);
-        session = await this.openTrustedSession(registration);
+        // The abort signal is bound from the very first phase: an abort during
+        // a hanging top-level import or requirement check kills the child.
+        session = await this.openTrustedSession(registration, controller.signal);
         await this.assertRunRequirements(registration, integration, session);
         await session.run({
           config: mergeConfig(registration.manifest.config, integration.config, opts?.config),
@@ -758,7 +777,10 @@ export class ConnectorSupervisor {
   // re-verified (hash/trust) and then executed in a separate runner process;
   // manually registered definitions run in-process. Trust always passes before
   // any connector code is loaded anywhere.
-  private async openTrustedSession(registration: Registration): Promise<RunnerSession> {
+  private async openTrustedSession(
+    registration: Registration,
+    abortSignal?: AbortSignal,
+  ): Promise<RunnerSession> {
     if (!registration.package) {
       if (registration.definition) return new InProcessRunnerSession(registration.definition);
       throw new Error(`Connector ${registration.manifest.id} has no package entry`);
@@ -783,8 +805,9 @@ export class ConnectorSupervisor {
       contentHash: current.contentHash,
       cwd: current.dir,
       killGraceMs: this.runnerKillGraceMs,
+      commandTimeoutMs: this.runnerCommandTimeoutMs,
     });
-    await session.open();
+    await session.open(abortSignal);
     return session;
   }
 

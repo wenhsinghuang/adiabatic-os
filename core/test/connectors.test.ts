@@ -1418,6 +1418,13 @@ auth:
     await supervisor.removeIntegration(integration.id);
     expect(supervisor.getIntegration(integration.id)).toBeUndefined();
     expect(await supervisor.getAuthManager().hasToken(connected.authRef!)).toBe(false);
+
+    // Deleting the last integration keeps a fresh management entry so the
+    // installed connector does not vanish from the console.
+    const placeholder = (await supervisor.list()).find((c) => c.connectorId === "managed-feed");
+    expect(placeholder).toBeDefined();
+    expect(placeholder?.integrationKey).toBeUndefined();
+    expect(placeholder?.setupStatus).toBe("setup");
   });
 
   test("rejects oauth2 token connect until the auth module exists", async () => {
@@ -1504,12 +1511,12 @@ auth:
     writeFileSync(
       join(dir, "index.mjs"),
       `export default {
-  async run({ guard, state }) {
+  async run({ guard, state, config }) {
     await guard.writeEvent({
       type: "pid.sample",
       externalId: "pid",
       startedAt: 1,
-      payload: { pid: process.pid },
+      payload: { pid: process.pid, configType: typeof config },
     });
     await state.set({ pid: process.pid });
   },
@@ -1523,11 +1530,14 @@ auth:
     await supervisor.run(integration.id);
 
     const event = db.prepare("SELECT payload FROM events WHERE type = ?").get("pid.sample") as any;
-    const childPid = JSON.parse(event.payload).pid;
-    expect(typeof childPid).toBe("number");
+    const payload = JSON.parse(event.payload);
+    expect(typeof payload.pid).toBe("number");
     // The whole point: connector code did not execute in this process.
-    expect(childPid).not.toBe(process.pid);
-    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ pid: childPid });
+    expect(payload.pid).not.toBe(process.pid);
+    // mergeConfig normalizes absent config to {} on both runner paths; the
+    // process boundary must not degrade it to null.
+    expect(payload.configType).toBe("object");
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ pid: payload.pid });
   });
 
   test("force-kills runner processes that ignore abort", async () => {
@@ -1557,9 +1567,10 @@ auth:
     );
     writeFileSync(
       join(dir, "index.mjs"),
-      `export default {
+      `// Survives polite kills: ignores both the abort signal and SIGTERM.
+process.on("SIGTERM", () => {});
+export default {
   async run() {
-    // Ignores the abort signal entirely.
     await new Promise(() => {});
   },
 };
@@ -1576,6 +1587,49 @@ auth:
     const settled = await waitWithTestTimeout(handle.promise, 3_000);
     expect(settled).toBe(true);
     expect(fastKillSupervisor.getIntegration(integration.id)?.status).toBe("idle");
+  });
+
+  test("kills runner processes that hang during top-level import", async () => {
+    const hangSupervisor = new ConnectorSupervisor({
+      db,
+      guard: new Guard({ db, source: "system:test" }),
+      host: { workspacePath: workspace },
+      platform: "darwin",
+      runnerCommandTimeoutMs: 300,
+    });
+    const dir = join(workspace, "connectors", "import-hang");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: import-hang
+name: Import Hang
+entry: ./index.mjs
+runtime:
+  mode: poll
+  defaultSchedule: "*/15 * * * *"
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(dir, "index.mjs"),
+      `await new Promise(() => {}); // top-level hang
+export default { async run() {} };
+`,
+    );
+
+    await hangSupervisor.registerDirectory(dir);
+    const integration = hangSupervisor.ensureFirstIntegration("import-hang");
+    await hangSupervisor.approveCurrentPackage("import-hang");
+
+    // Bounded by runnerCommandTimeoutMs: the hanging import is killed and the
+    // run fails instead of waiting forever.
+    await expect(hangSupervisor.run(integration.id)).rejects.toThrow("timed out");
+    expect(hangSupervisor.getIntegration(integration.id)?.status).toBe("error");
   });
 
   test("isolates runner process crashes from the core", async () => {

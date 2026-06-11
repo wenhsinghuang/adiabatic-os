@@ -107,7 +107,7 @@ async function handleMessage(msg: HostToRunnerMessage): Promise<void> {
               type: msg.authType as "apiKey" | "oauth2",
               getToken: () => rpc<string>("authGetToken"),
             },
-          config: msg.config,
+          config: msg.configSet ? msg.config : undefined,
           host: msg.host,
           signal: abortController.signal,
         });

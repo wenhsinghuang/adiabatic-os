@@ -1,6 +1,6 @@
-@import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
-
 /* ── Source Console: warm-dark instrument panel ─────────────────────── */
+/* Local-first: no external font fetches. The stacks below fall back through
+   locally installed fonts only. */
 
 .console {
   --c-bg: #14110e;
