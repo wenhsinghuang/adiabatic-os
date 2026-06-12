@@ -23,8 +23,6 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Scheduler runs only integrations assigned to the current device
   - Until then: runtime target is the implicit current host; do not add the table/column early
 
-- [ ] Guard CLI
-
 - [ ] Retrieval / memory module
   - Replaceable retrieval data source over D0/D1/D2.
   - See [Retrieval Memory Module Requirements](design/current/202606040000-Retrieval%20Memory%20Module%20Requirements.md).
@@ -37,6 +35,7 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 
 - [ ] AI gateway module (CLI)
   - Central model-call wrapper for app, connector, and retrieval use.
+  - Guard CLI
 
 - [ ] WebContainer Guard module
   - WebContainer should preload/install the Guard/system module.
