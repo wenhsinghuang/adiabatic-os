@@ -44,6 +44,7 @@ export function App() {
     openTableTab,
     openActivityTab,
     openConnectorsTab,
+    openConnectorCatalogTab,
     closeTab,
     setActiveTab,
   } = useTabs(null);
@@ -193,6 +194,7 @@ export function App() {
             onOpenApps={handleOpenApps}
             onOpenData={handleOpenData}
             onOpenActivity={handleOpenActivity}
+            onOpenConnectorCatalog={openConnectorCatalogTab}
           />
         }
         terminal={terminalStarted ? <TerminalPanel visible={showTerminal} /> : null}

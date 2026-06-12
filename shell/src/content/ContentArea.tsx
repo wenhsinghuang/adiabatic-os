@@ -10,6 +10,7 @@ import { Dashboard } from "./Dashboard";
 import { TableView } from "./TableView";
 import { ActivityView } from "./ActivityView";
 import { ConnectorsView } from "./ConnectorsView";
+import { ConnectorCatalogView } from "./ConnectorCatalogView";
 import styles from "./ContentArea.module.css";
 
 const MarkdownPageEditor = lazy(() =>
@@ -26,6 +27,7 @@ interface ContentAreaProps {
   onOpenApps: () => void;
   onOpenData: () => void;
   onOpenActivity: () => void;
+  onOpenConnectorCatalog?: () => void;
 }
 
 export function ContentArea({
@@ -38,6 +40,7 @@ export function ContentArea({
   onOpenApps,
   onOpenData,
   onOpenActivity,
+  onOpenConnectorCatalog,
 }: ContentAreaProps) {
   if (!activeTab) {
     return (
@@ -77,7 +80,11 @@ export function ContentArea({
   }
 
   if (activeTab.type === "connectors") {
-    return <ConnectorsView key={activeTab.id} />;
+    return <ConnectorsView key={activeTab.id} onOpenCatalog={onOpenConnectorCatalog} />;
+  }
+
+  if (activeTab.type === "connectorCatalog") {
+    return <ConnectorCatalogView key={activeTab.id} />;
   }
 
   return <TabContent key={activeTab.id} tab={activeTab} />;

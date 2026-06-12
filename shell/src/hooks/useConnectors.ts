@@ -1,19 +1,29 @@
-// useConnectors — polls the core connector list while mounted.
+// useConnectors — polls the core connector + available lists while mounted.
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { listConnectors, type ConnectorIntegrationView } from "../lib/api";
+import {
+  listAvailableConnectors,
+  listConnectors,
+  type AvailableConnectorView,
+  type ConnectorIntegrationView,
+} from "../lib/api";
 
 export function useConnectors(pollMs = 2000) {
   const [connectors, setConnectors] = useState<ConnectorIntegrationView[]>([]);
+  const [available, setAvailable] = useState<AvailableConnectorView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const aliveRef = useRef(true);
 
   const refresh = useCallback(async () => {
     try {
-      const { connectors } = await listConnectors();
+      const [{ connectors }, { available }] = await Promise.all([
+        listConnectors(),
+        listAvailableConnectors(),
+      ]);
       if (!aliveRef.current) return;
       setConnectors(connectors);
+      setAvailable(available);
       setError(null);
     } catch (err) {
       if (!aliveRef.current) return;
@@ -33,5 +43,5 @@ export function useConnectors(pollMs = 2000) {
     };
   }, [refresh, pollMs]);
 
-  return { connectors, loading, error, refresh };
+  return { connectors, available, loading, error, refresh };
 }

@@ -104,6 +104,7 @@
 .tone_quarantined { color: var(--c-hazard); }
 .tone_disabled { color: var(--c-ghost); }
 .tone_unsupported { color: var(--c-ghost); }
+.tone_available { color: var(--c-ghost); }
 
 /* ── Error strip ────────────────────────────────────────────────────── */
 
@@ -224,6 +225,29 @@
   opacity: 0.55;
 }
 
+/* Catalog shelf: bundled but not installed — inert until installed. */
+.card_available {
+  opacity: 0.75;
+  border-style: dashed;
+}
+
+.card_available .cardRail {
+  background: repeating-linear-gradient(
+    180deg,
+    var(--c-ghost) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+/* Catalog shelf: already installed — context, not an action. */
+.card_installed {
+  opacity: 0.6;
+}
+
+.card_installed .cardRail {
+  background: var(--c-green-quiet);
+}
+
 /* Unsupported on this platform: fully grayscale, visually inert. */
 .card_unsupported {
   opacity: 0.5;
@@ -244,6 +268,10 @@
   align-items: baseline;
   gap: 12px;
   min-width: 0;
+  /* Narrow panes: wrap meta/actions to the next line instead of crushing
+     the connector name to zero width. */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .stateBadge {
@@ -327,6 +355,27 @@
   font-size: 9px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
+}
+
+.bundledSeal {
+  border: 1px dashed var(--c-ghost);
+  color: var(--c-ghost);
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.unsupportedNote {
+  color: var(--c-ghost);
+  font-size: 11px;
+}
+
+.installedNote {
+  color: var(--c-ink-dim);
+  font-size: 11px;
+  letter-spacing: 0.05em;
 }
 
 /* ── Enable toggle ──────────────────────────────────────────────────── */

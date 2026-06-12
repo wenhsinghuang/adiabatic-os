@@ -13,6 +13,7 @@ import {
   connectConnectorIntegration,
   createConnectorIntegration,
   deleteConnectorIntegration,
+  installConnector,
   removeConnector,
   requestConnectorRequirement,
   restartConnectorIntegration,
@@ -33,8 +34,8 @@ import styles from "./ConnectorsView.module.css";
 
 type Act = (key: string, label: string, fn: () => Promise<unknown>) => Promise<void>;
 
-export function ConnectorsView() {
-  const { connectors, loading, error, refresh } = useConnectors();
+export function ConnectorsView({ onOpenCatalog }: { onOpenCatalog?: () => void }) {
+  const { connectors, available, loading, error, refresh } = useConnectors();
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -80,6 +81,14 @@ export function ConnectorsView() {
     return tally;
   }, [connectors]);
 
+  // Bundled packages that were removed but kept their integration rows can be
+  // reinstalled in place from this console; fresh installs live in the
+  // Connector Catalog.
+  const reinstallable = useMemo(
+    () => new Set(available.filter((entry) => !entry.installed).map((entry) => entry.connectorId)),
+    [available],
+  );
+
   return (
     <div className={styles.console}>
       <header className={styles.header}>
@@ -94,6 +103,11 @@ export function ConnectorsView() {
           <TallyItem state="attention" count={counts.attention} />
           <TallyItem state="quarantined" count={counts.quarantined} />
         </div>
+        {onOpenCatalog && (
+          <button className={styles.ghostBtn} onClick={onOpenCatalog}>
+            + Add source
+          </button>
+        )}
       </header>
 
       {(error || actionError) && (
@@ -115,9 +129,15 @@ export function ConnectorsView() {
           <div className={styles.empty}>
             <span className={styles.emptyGlyph}>⌀</span>
             <span>no sources wired</span>
-            <span className={styles.emptyHint}>
-              install a connector package into workspace/connectors/
-            </span>
+            {onOpenCatalog ? (
+              <button className={styles.ghostBtn} onClick={onOpenCatalog}>
+                browse the connector catalog
+              </button>
+            ) : (
+              <span className={styles.emptyHint}>
+                install a connector package into workspace/connectors/
+              </span>
+            )}
           </div>
         ) : (
           groups.map((group, index) => (
@@ -125,6 +145,7 @@ export function ConnectorsView() {
               key={group.connectorId}
               connectorId={group.connectorId}
               integrations={group.integrations}
+              installable={reinstallable.has(group.connectorId)}
               index={index}
               busy={busy}
               onAct={act}
@@ -148,12 +169,13 @@ function TallyItem({ state, count }: { state: ChannelState; count: number | unde
 interface ConnectorCardProps {
   connectorId: string;
   integrations: ConnectorIntegrationView[];
+  installable: boolean;
   index: number;
   busy: Record<string, string>;
   onAct: Act;
 }
 
-function ConnectorCard({ connectorId, integrations, index, busy, onAct }: ConnectorCardProps) {
+function ConnectorCard({ connectorId, integrations, installable, index, busy, onAct }: ConnectorCardProps) {
   const head = integrations[0];
   const aggregate = connectorAggregateState(integrations);
   const trust = trustView(head);
@@ -184,6 +206,16 @@ function ConnectorCard({ connectorId, integrations, index, busy, onAct }: Connec
             {trust === "broken" && <span className={styles.brokenSeal}>missing</span>}
           </span>
           <div className={styles.cardTopActions}>
+            {trust === "broken" && installable && (
+              <button
+                className={styles.primaryBtn}
+                disabled={Boolean(busy[connectorId])}
+                title="Reinstall the bundled package; existing settings reconnect"
+                onClick={() => onAct(connectorId, "install", () => installConnector(connectorId))}
+              >
+                {busy[connectorId] === "install" ? "installing…" : "Reinstall"}
+              </button>
+            )}
             {aggregate === "quarantined" && trust === "needs-approval" && panel !== "approve" && (
               <button className={styles.hazardBtn} onClick={() => setPanel("approve")}>
                 Review &amp; Approve
