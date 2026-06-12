@@ -90,6 +90,7 @@ export class Guard {
 
   writeEvent(event: EventInput): string {
     validateEventInput(event);
+    assertEventTypeAllowed(this.source, event.type);
     const id = ulid();
     const stmt = this.stmts.insertEvent ??= this.db.prepare(
       `INSERT INTO events (id, schema_version, source, type, external_id, started_at, ended_at, payload)
@@ -620,6 +621,18 @@ function containsStatementSeparator(sql: string): boolean {
     if (ch === ";") return true;
   }
   return false;
+}
+
+// The system event namespaces (see D0 System Event Catalog) are audit
+// records; only system code may write them explicitly. Internal auto-logs
+// (logD0) do not pass through writeEvent and are unaffected.
+const RESERVED_EVENT_TYPE_PREFIXES = ["connector.", "d1.", "d2.", "ddl."];
+
+function assertEventTypeAllowed(source: string, type: string): void {
+  if (source.startsWith("system:")) return;
+  if (RESERVED_EVENT_TYPE_PREFIXES.some((prefix) => type.startsWith(prefix))) {
+    throw new Error(`Guard: event type "${type}" is in a system-reserved namespace`);
+  }
 }
 
 function validateEventInput(event: EventInput): void {

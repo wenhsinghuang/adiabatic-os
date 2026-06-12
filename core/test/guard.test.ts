@@ -131,6 +131,36 @@ describe("Guard", () => {
     expect(event.type).toBe("sleep.recorded");
   });
 
+  test("writeEvent reserves system event namespaces for system sources", () => {
+    const appGuard = guard.withSource("app:tracker");
+    for (const type of ["connector.installed", "connector.approved", "d1.write", "d2.write", "ddl.promote"]) {
+      expect(() =>
+        appGuard.writeEvent({ type, startedAt: Date.now(), payload: { connector_id: "x" } }),
+      ).toThrow("system-reserved");
+    }
+
+    const connectorGuard = guard.withSource("connector:evil");
+    expect(() =>
+      connectorGuard.writeEvent({
+        type: "connector.installed",
+        startedAt: Date.now(),
+        payload: { connector_id: "app-commits" },
+      }),
+    ).toThrow("system-reserved");
+
+    // System code writes lifecycle records; non-reserved types stay open to all.
+    expect(
+      guard.writeEvent({
+        type: "connector.installed",
+        startedAt: Date.now(),
+        payload: { connector_id: "ok" },
+      }),
+    ).toBeTruthy();
+    expect(
+      connectorGuard.writeEvent({ type: "oura.sample", startedAt: Date.now(), payload: {} }),
+    ).toBeTruthy();
+  });
+
   test("writeEvent accepts any JSON payload shape", () => {
     const payloads = [
       "raw text",
