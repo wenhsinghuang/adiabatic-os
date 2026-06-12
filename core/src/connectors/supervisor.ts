@@ -368,6 +368,10 @@ export class ConnectorSupervisor {
     return (await this.refreshSetupStatus(instanceId)) as ConnectorIntegration<TConfig, TState>;
   }
 
+  isRegistered(connectorId: string): boolean {
+    return this.registrations.has(connectorId);
+  }
+
   ensureFirstIntegration(connectorId: string): ConnectorIntegration {
     const registration = this.requireRegistration(connectorId);
     if (!isPlatformSupported(registration.manifest, this.platform)) {

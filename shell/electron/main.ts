@@ -7,7 +7,7 @@ import { app, BrowserWindow, dialog, ipcMain, type WebContents } from "electron"
 import { spawn, type ChildProcess } from "child_process";
 import { randomBytes } from "crypto";
 import { existsSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { join, relative, sep } from "path";
 
 const TEMPLATE = join(__dirname, "..", "..", "template");
 const CORE_ENTRY = join(__dirname, "..", "..", "core", "src", "index.ts");
@@ -48,7 +48,16 @@ function saveWorkspacePath(nextWorkspace: string): void {
 function ensureWorkspace(targetWorkspace = workspace): void {
   if (existsSync(targetWorkspace)) return;
   console.log(`[electron] First launch — copying template to ${targetWorkspace}`);
-  cpSync(TEMPLATE, targetWorkspace, { recursive: true });
+  // Built-in connectors are bundled catalog entries installed explicitly
+  // through core (with a D0 connector.installed record), so they are excluded
+  // from the template copy.
+  cpSync(TEMPLATE, targetWorkspace, {
+    recursive: true,
+    filter: (src) => {
+      const rel = relative(TEMPLATE, src);
+      return rel !== "connectors" && !rel.startsWith(`connectors${sep}`);
+    },
+  });
 }
 
 function startCore(): void {

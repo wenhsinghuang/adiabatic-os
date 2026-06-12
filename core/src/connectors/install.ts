@@ -1,8 +1,11 @@
-import { cp, mkdir, readdir, rm, stat } from "fs/promises";
+import { randomUUID } from "crypto";
+import { cp, mkdir, readdir, rename, rm, stat } from "fs/promises";
 import { isAbsolute, join, relative, resolve } from "path";
 import { loadConnectorManifest, validateConnectorId } from "./manifest";
+import { hashConnectorPackage } from "./registry";
 import type { ConnectorManifest } from "./types";
 import type { ConnectorSupervisor } from "./supervisor";
+import type { Guard } from "../guard";
 
 export interface InstalledConnector {
   manifest: ConnectorManifest;
@@ -58,11 +61,16 @@ export async function installConnector(
     throw new Error(`Connector already installed: ${manifest.id}`);
   }
 
-  await cp(sourceDir, targetDir, {
-    recursive: true,
-    errorOnExist: true,
-    force: false,
-  });
+  // Stage then rename so a crash mid-copy never leaves a half-written
+  // package squatting on the connector's directory.
+  const stagingDir = join(connectorsDir, `.staging-${manifest.id}-${randomUUID()}`);
+  try {
+    await cp(sourceDir, stagingDir, { recursive: true });
+    await rename(stagingDir, targetDir);
+  } catch (err) {
+    await rm(stagingDir, { recursive: true, force: true });
+    throw err;
+  }
 
   return {
     manifest,
@@ -97,9 +105,64 @@ export async function listInstalledConnectorDirs(workspacePath: string): Promise
   }
 
   return entries
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
     .map((entry) => join(connectorsDir, entry.name))
     .sort();
+}
+
+// Built-ins are bundled catalog entries: packages shipped with the app that
+// can be installed without a download. Listing them never copies anything —
+// installation is always an explicit user action through the same install
+// flow as any other connector package.
+export async function listAvailableBuiltIns(
+  builtinsDir: string,
+  onError?: (connectorDir: string, error: unknown) => void,
+): Promise<InstalledConnector[]> {
+  let entries;
+  try {
+    entries = await readdir(builtinsDir, { withFileTypes: true });
+  } catch (err) {
+    if (isNotFoundError(err)) return [];
+    throw err;
+  }
+
+  const available: InstalledConnector[] = [];
+  for (const entry of entries.filter((e) => e.isDirectory() && !e.name.startsWith(".")).sort((a, b) => a.name.localeCompare(b.name))) {
+    const dir = join(builtinsDir, entry.name);
+    try {
+      const manifest = await loadConnectorManifest(dir);
+      if (manifest.id !== entry.name) {
+        throw new Error(`Connector manifest id "${manifest.id}" must match folder "${entry.name}"`);
+      }
+      available.push({ manifest, dir });
+    } catch (err) {
+      if (!onError) throw err;
+      onError(dir, err);
+    }
+  }
+  return available;
+}
+
+export interface InstallConnectorFromSourceOptions extends InstallConnectorOptions {
+  guard: Guard;
+}
+
+// The one install path: copies the package into the workspace and records the
+// action in D0 as connector.installed. Reinstalling after a removal emits a
+// fresh event — D0 keeps the full install/remove history.
+export async function installConnectorFromSource(
+  opts: InstallConnectorFromSourceOptions,
+): Promise<InstalledConnector> {
+  const installed = await installConnector(opts);
+  opts.guard.writeEvent({
+    type: "connector.installed",
+    startedAt: Date.now(),
+    payload: {
+      connector_id: installed.manifest.id,
+      package_hash: await hashConnectorPackage(installed.dir),
+    },
+  });
+  return installed;
 }
 
 export async function registerWorkspaceConnectors(

@@ -12,6 +12,9 @@ import {
   ConnectorAuthManager,
   installConnector,
   listInstalledConnectorDirs,
+  installConnectorFromSource,
+  isPlatformSupported,
+  listAvailableBuiltIns,
   loadConnectorManifest,
   materializeBuiltInConnector,
   registerWorkspaceConnectors,
@@ -1329,6 +1332,134 @@ auth:
     expect((await loadConnectorManifest(installed.dir)).id).toBe("app-commits");
     await expect(materializeBuiltInConnector({ sourceDir, workspacePath: workspace }))
       .rejects.toThrow("Connector already installed: app-commits");
+  });
+
+  function writeBuiltIn(builtinsDir: string, id: string): string {
+    const dir = join(builtinsDir, id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: ${id}
+name: ${id}
+entry: ./index.mjs
+runtime:
+  mode: import
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(join(dir, "index.mjs"), "export default { async run() {} };\n");
+    return dir;
+  }
+
+  test("an omitted platforms map means supported everywhere", () => {
+    const manifest = validateConnectorManifest({
+      id: "anywhere",
+      name: "Anywhere",
+      entry: "./index.mjs",
+      runtime: { mode: "import" },
+      integrations: { mode: "singleton" },
+      auth: { type: "none" },
+    } as ConnectorManifest);
+    expect(isPlatformSupported(manifest, "darwin")).toBe(true);
+    expect(isPlatformSupported(manifest, "linux")).toBe(true);
+
+    const darwinOnly = validateConnectorManifest({
+      ...manifest,
+      platforms: { darwin: {} },
+    });
+    expect(isPlatformSupported(darwinOnly, "darwin")).toBe(true);
+    expect(isPlatformSupported(darwinOnly, "linux")).toBe(false);
+  });
+
+  test("lists bundled built-ins as available and installs one explicitly", async () => {
+    const guard = new Guard({ db, source: "system:test" });
+    const builtins = join(workspace, "builtins");
+    writeBuiltIn(builtins, "seed");
+    const broken = join(builtins, "broken");
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(join(broken, "connector.yaml"), "id: broken\n");
+
+    // Listing is read-only: valid entries surface, invalid ones are reported.
+    const errors: string[] = [];
+    const available = await listAvailableBuiltIns(builtins, (dir) => errors.push(dir));
+    expect(available.map((entry) => entry.manifest.id)).toEqual(["seed"]);
+    expect(errors).toEqual([broken]);
+    expect(existsSync(join(workspace, "connectors", "seed"))).toBe(false);
+    // Missing builtins dir (packaged without templates) is a quiet no-op.
+    expect(await listAvailableBuiltIns(join(workspace, "no-such-dir"))).toEqual([]);
+
+    // Explicit install: copies the package and records connector.installed.
+    const installed = await installConnectorFromSource({
+      sourceDir: join(builtins, "seed"),
+      workspacePath: workspace,
+      connectorId: "seed",
+      guard,
+    });
+    expect(installed.dir).toBe(join(workspace, "connectors", "seed"));
+    expect(existsSync(join(installed.dir, "index.mjs"))).toBe(true);
+
+    const event = db
+      .prepare("SELECT payload FROM events WHERE type = ?")
+      .get("connector.installed") as any;
+    const payload = JSON.parse(event.payload);
+    expect(payload.connector_id).toBe("seed");
+    expect(typeof payload.package_hash).toBe("string");
+
+    // Double-install is rejected and leaves no extra D0 record.
+    await expect(
+      installConnectorFromSource({
+        sourceDir: join(builtins, "seed"),
+        workspacePath: workspace,
+        connectorId: "seed",
+        guard,
+      }),
+    ).rejects.toThrow("Connector already installed: seed");
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = ?").get("connector.installed"),
+    ).toMatchObject({ n: 1 });
+  });
+
+  test("reinstall after removal works and D0 keeps the full history", async () => {
+    const guard = new Guard({ db, source: "system:test" });
+    const builtins = join(workspace, "builtins");
+    writeBuiltIn(builtins, "seed");
+    const installOnce = () =>
+      installConnectorFromSource({
+        sourceDir: join(builtins, "seed"),
+        workspacePath: workspace,
+        connectorId: "seed",
+        guard,
+      });
+
+    await installOnce();
+    await supervisor.registerDirectory(join(workspace, "connectors", "seed"));
+    expect(supervisor.isRegistered("seed")).toBe(true);
+
+    // The remove-connector flow: delete the folder, then unregister (which
+    // records connector.removed in D0). The entry becomes available again.
+    expect(await removeInstalledConnector(workspace, "seed")).toBe(true);
+    expect(await supervisor.unregister("seed")).toBe(true);
+    expect(supervisor.isRegistered("seed")).toBe(false);
+
+    // Nothing restores it implicitly — reinstalling is an explicit action.
+    await installOnce();
+    await supervisor.registerDirectory(join(workspace, "connectors", "seed"));
+    expect(existsSync(join(workspace, "connectors", "seed", "index.mjs"))).toBe(true);
+
+    const history = db
+      .prepare(
+        "SELECT type, COUNT(*) AS n FROM events WHERE type LIKE 'connector.%' GROUP BY type ORDER BY type",
+      )
+      .all() as Array<{ type: string; n: number }>;
+    expect(history).toEqual([
+      { type: "connector.installed", n: 2 },
+      { type: "connector.removed", n: 1 },
+    ]);
   });
 
   test("loads connector runtime from directory entry", async () => {

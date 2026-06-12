@@ -1,4 +1,5 @@
 import { dirname, join, relative, resolve } from "path";
+import { fileURLToPath } from "url";
 import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
 import { openDB } from "./db";
 import { Guard } from "./guard";
@@ -9,6 +10,10 @@ import { ensureClaudeMd } from "./claude-md";
 import {
   ConnectorScheduler,
   ConnectorSupervisor,
+  currentConnectorPlatform,
+  installConnectorFromSource,
+  isPlatformSupported,
+  listAvailableBuiltIns,
   registerWorkspaceConnectors,
   removeInstalledConnector,
 } from "./connectors";
@@ -76,6 +81,9 @@ const connectorSupervisor = new ConnectorSupervisor({
   guard,
   host: { workspacePath },
 });
+// Built-ins are bundled catalog entries; installing one is an explicit user
+// action through the same install flow as any other connector package.
+const builtinConnectorsDir = fileURLToPath(new URL("../../template/connectors", import.meta.url));
 const connectorManifests = await registerWorkspaceConnectors(connectorSupervisor, workspacePath, {
   skipInvalid: true,
   onError(connectorDir, err) {
@@ -420,6 +428,42 @@ const server = Bun.serve({
       if (path === "/api/connectors" && method === "GET") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
         return json({ connectors: await connectorSupervisor.list() });
+      }
+
+      // Bundled catalog entries; installed reflects whether the package is
+      // currently registered in the workspace.
+      if (path === "/api/connectors/available" && method === "GET") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const platform = currentConnectorPlatform();
+        const entries = await listAvailableBuiltIns(builtinConnectorsDir, (dir, err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[adiabatic] Skipping bundled connector ${dir}: ${message}`);
+        });
+        const available = entries.map((entry) => ({
+          connectorId: entry.manifest.id,
+          name: entry.manifest.name,
+          mode: entry.manifest.runtime.mode,
+          integrationsMode: entry.manifest.integrations.mode,
+          authType: entry.manifest.auth.type,
+          supported: isPlatformSupported(entry.manifest, platform),
+          installed: connectorSupervisor.isRegistered(entry.manifest.id),
+        }));
+        return json({ available });
+      }
+
+      const installConnectorMatch = path.match(/^\/api\/connectors\/([^/]+)\/install$/);
+      if (installConnectorMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const connectorId = decodeURIComponent(installConnectorMatch[1]);
+        const installed = await installConnectorFromSource({
+          sourceDir: join(builtinConnectorsDir, connectorId),
+          workspacePath,
+          connectorId,
+          guard,
+        });
+        const manifest = await connectorSupervisor.registerDirectory(installed.dir);
+        connectorSupervisor.ensureFirstIntegration(manifest.id);
+        return json({ ok: true, manifest });
       }
 
       const approveConnectorMatch = path.match(/^\/api\/connectors\/([^/]+)\/approve$/);

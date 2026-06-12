@@ -179,11 +179,17 @@ Future file watching can mark a running watch connector modified and stop it, bu
 
 Installing a connector means adding `connectors/<connector_id>/`. Removing a connector means removing that folder.
 
-Built-in connectors are distribution material, not a separate runtime category. First launch or explicit install can materialize a built-in connector by copying it into the same workspace path:
+Built-in connectors are distribution material, not a separate runtime category: bundled catalog entries that can be installed without a download. The console lists them as available; installing one is an explicit user action through the same install flow as any other connector package:
 
 ```text
-system built-ins/app-commits -> workspace/connectors/app-commits
+template/connectors/app-commits -> workspace/connectors/app-commits   (on explicit install)
 ```
+
+Nothing installs implicitly — there is no boot-time auto-materialization, so removal is final by construction and a removed built-in simply returns to the available list for explicit reinstall. Every install is recorded as `connector.installed { connector_id, package_hash }`; D0 keeps the full install/remove history. The copy is staged and renamed into place so a crash cannot leave a half-written package occupying the connector's directory.
+
+Install is platform-agnostic: the endpoint accepts a package the current host cannot run, and the runtime marks its integration unsupported (visible, non-runnable). Platform support is a property of the runtime target, not of installation — under multi-device routing, installing here and assigning the integration to another device is a legitimate flow. The catalog UI simply hides the install action for unsupported entries in v1.
+
+Until the official catalog ships, a freshly installed built-in classifies as untrusted and goes through the same human approve flow as any custom package — no interim trust shortcut. Once the catalog lands, the existing hash classification upgrades it to official automatically. The future download flow is the same install path with a second package source.
 
 After materialization, the runtime treats it exactly like any other connector package location, but not all package locations are runnable. The registry scans workspace `connectors/`, validates manifests, computes content hashes, and classifies packages as official, custom trusted, modified, missing, or untrusted before any connector code is imported.
 

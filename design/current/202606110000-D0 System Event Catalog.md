@@ -79,6 +79,18 @@ payload:
   schema_version  D0 schema version
 ```
 
+### `connector.installed` — package installation
+
+Emitted by the explicit install flow (`installConnectorFromSource()`, today serving the bundled built-in catalog; the future download flow uses the same path).
+
+```text
+payload:
+  connector_id   string
+  package_hash   sha256:<hex> of the installed package content
+```
+
+Every event corresponds to one explicit install action — nothing installs implicitly. A reinstall after removal emits a fresh event, so D0 carries the full install/remove history of every package.
+
 ### `connector.approved` — trust decision
 
 Emitted by `ConnectorSupervisor.approveCurrentPackage()` (the human approve flow).
@@ -110,17 +122,9 @@ For completeness — these write D0 but are product data, not part of this catal
 - **App events**: apps call `system.writeEvent()` through the bridge; source is `app:<app-id>`; types are app-defined.
 - **Host API writeEvent**: host-authenticated `POST /api/events` writes with source `system:server`. Used sparingly; not an auto-log.
 
-## Not yet emitted (decided / pending)
-
-```text
-connector.installed   { connector_id, package_hash }
-```
-
-Pending because no install/download path exists yet — connectors are currently materialized or manually placed, and boot-time discovery must not re-emit installs on every startup. Wire this when the install/discovery flow lands.
-
 ## Invariants
 
 - D0 is append-only; system events are never updated or deleted.
 - Every event has `source` stamped by Guard from runtime identity — callers never supply it.
-- The `d1.*` / `d2.*` / `ddl.*` / `connector.*` (lifecycle) type namespaces are system-reserved.
+- The `d1.*` / `d2.*` / `ddl.*` / `connector.*` (lifecycle) type namespaces are system-reserved. Guard enforces this at write time: an explicit `writeEvent` with a reserved-namespace type requires a `system:*` source, so apps and connectors cannot forge lifecycle or CDC records.
 - Locked docs (`metadata.locked`) are the single sanctioned gap in the audit trail.
