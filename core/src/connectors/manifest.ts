@@ -23,6 +23,11 @@ const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
   "cloud",
 ]);
 const AUTH_TYPES = new Set(["none", "apiKey", "oauth2"]);
+const OAUTH_TOKEN_ENDPOINT_AUTH_METHODS = new Set([
+  "none",
+  "client_secret_basic",
+  "client_secret_post",
+]);
 
 export function validateConnectorId(id: string): void {
   if (!CONNECTOR_ID_PATTERN.test(id)) {
@@ -126,8 +131,40 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
   if (!AUTH_TYPES.has(auth.type)) {
     throw new Error(`Connector ${connectorId} has invalid auth type: ${(auth as { type?: string }).type}`);
   }
-  if (auth.type === "oauth2" && !auth.provider) {
-    throw new Error(`Connector ${connectorId} oauth2 auth requires provider`);
+  if (auth.type === "oauth2") {
+    // YAML/JSON is untyped at parse time, so validate shapes at runtime. The
+    // broker is a generic executor consuming standard OAuth client metadata;
+    // endpoints are required https URLs (an http token endpoint would send
+    // tokens in cleartext).
+    for (const field of ["authorizationEndpoint", "tokenEndpoint"] as const) {
+      const value = auth[field];
+      if (typeof value !== "string" || !value) {
+        throw new Error(`Connector ${connectorId} oauth2 auth requires ${field} (https URL)`);
+      }
+      let url: URL;
+      try {
+        url = new URL(value);
+      } catch {
+        throw new Error(`Connector ${connectorId} oauth2 ${field} is not a valid URL: ${value}`);
+      }
+      if (url.protocol !== "https:") {
+        throw new Error(`Connector ${connectorId} oauth2 ${field} must be https: ${value}`);
+      }
+    }
+    // clientId is the OAuth app's public client identifier and lives in the
+    // manifest like any other config; the catalog is trust-only, not a config
+    // source, so there is no fallback for it.
+    if (typeof auth.clientId !== "string" || !auth.clientId) {
+      throw new Error(`Connector ${connectorId} oauth2 auth requires clientId`);
+    }
+    if (auth.scope !== undefined &&
+      (!Array.isArray(auth.scope) || auth.scope.some((s) => typeof s !== "string"))) {
+      throw new Error(`Connector ${connectorId} oauth2 scope must be an array of strings`);
+    }
+    if (auth.tokenEndpointAuthMethod !== undefined &&
+      !OAUTH_TOKEN_ENDPOINT_AUTH_METHODS.has(auth.tokenEndpointAuthMethod)) {
+      throw new Error(`Connector ${connectorId} oauth2 tokenEndpointAuthMethod is invalid: ${auth.tokenEndpointAuthMethod}`);
+    }
   }
 }
 

@@ -422,8 +422,10 @@ platforms:
   cloud: {}
 auth:
   type: oauth2
-  provider: google
-  scopes:
+  authorizationEndpoint: https://accounts.google.com/o/oauth2/v2/auth
+  tokenEndpoint: https://oauth2.googleapis.com/token
+  clientId: calendar-client-id
+  scope:
     - https://www.googleapis.com/auth/calendar.readonly
 ```
 
@@ -721,10 +723,14 @@ auth:
 ```yaml
 auth:
   type: oauth2
-  provider: google
-  scopes:
+  authorizationEndpoint: https://accounts.google.com/o/oauth2/v2/auth
+  tokenEndpoint: https://oauth2.googleapis.com/token
+  clientId: calendar-client-id
+  scope:
     - https://www.googleapis.com/auth/calendar.readonly
 ```
+
+The OAuth2 manifest config is a subset of standard OAuth/OIDC client metadata (standard field names, camelCased to the manifest convention). `clientId` (the OAuth app's public, non-secret client identifier) is required and lives in the manifest like every other field. The auth broker is a generic Authorization Code executor that consumes this metadata; there is no provider registry, and v1 is PKCE-only (S256 always-on, not a manifest field). See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
 
 Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer.
 

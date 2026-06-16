@@ -16,7 +16,28 @@ export type ConnectorPlatform =
 export type ConnectorAuthSpec =
   | { type: "none" }
   | { type: "apiKey"; label?: string }
-  | { type: "oauth2"; provider: string; scopes?: string[] };
+  | {
+      // OAuth2 config is a subset of standard OAuth/OIDC client metadata, with
+      // the standard fields spelled in this manifest's camelCase convention.
+      // The broker is a generic Authorization Code executor; there is no
+      // provider registry. PKCE (S256) is always-on broker behavior, not a
+      // manifest field. `clientId` (the OAuth app's public, non-secret client
+      // identifier) is required even for a public client and lives in the
+      // manifest like every other field; the official catalog carries only
+      // id/hash/version for trust, never config, so there is no catalog
+      // fallback. `scope` is an array for YAML ergonomics, joined to the
+      // standard space-delimited string at the broker boundary.
+      // `tokenEndpointAuthMethod` defaults to "none" (public client + PKCE);
+      // the client_secret_* values describe confidential clients (a
+      // user-supplied client_secret), whose secret never appears in the
+      // manifest.
+      type: "oauth2";
+      authorizationEndpoint: string;
+      tokenEndpoint: string;
+      clientId: string;
+      scope?: string[];
+      tokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
+    };
 
 export interface ConnectorRuntimeSpec {
   mode: ConnectorRuntimeMode;

@@ -89,8 +89,10 @@ platforms:
   cloud: {}
 auth:
   type: oauth2
-  provider: google
-  scopes:
+  authorizationEndpoint: https://accounts.google.com/o/oauth2/v2/auth
+  tokenEndpoint: https://oauth2.googleapis.com/token
+  clientId: calendar-client-id
+  scope:
     - https://www.googleapis.com/auth/calendar.readonly
 `,
     );
@@ -108,8 +110,10 @@ auth:
       },
       auth: {
         type: "oauth2",
-        provider: "google",
-        scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
+        authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenEndpoint: "https://oauth2.googleapis.com/token",
+        clientId: "calendar-client-id",
+        scope: ["https://www.googleapis.com/auth/calendar.readonly"],
       },
     });
   });
@@ -149,8 +153,50 @@ auth:
       validateConnectorManifest({ ...base, integrations: { mode: "many" as any } })
     ).toThrow("invalid integrations mode");
     expect(() =>
-      validateConnectorManifest({ ...base, auth: { type: "oauth2", provider: "" } })
-    ).toThrow("oauth2 auth requires provider");
+      validateConnectorManifest({ ...base, auth: { type: "oauth2", tokenEndpoint: "https://x/token" } as any })
+    ).toThrow("requires authorizationEndpoint");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2", authorizationEndpoint: {}, tokenEndpoint: "https://x/token" } as any,
+      })
+    ).toThrow("requires authorizationEndpoint");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2", authorizationEndpoint: "http://x/auth", tokenEndpoint: "https://x/token" } as any,
+      })
+    ).toThrow("must be https");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token" } as any,
+      })
+    ).toThrow("requires clientId");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          clientId: "cid",
+          scope: "read" as any,
+        },
+      })
+    ).toThrow("scope must be an array of strings");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          clientId: "cid",
+          tokenEndpointAuthMethod: "client_secret_jwt" as any,
+        },
+      })
+    ).toThrow("tokenEndpointAuthMethod is invalid");
     expect(() =>
       validateConnectorManifest({ ...base, auth: { type: "localPermission" } as any })
     ).toThrow("invalid auth type");
@@ -1566,7 +1612,12 @@ auth:
         entry: "./index.ts",
         runtime: { mode: "poll" },
         integrations: { mode: "singleton" },
-        auth: { type: "oauth2", provider: "google" },
+        auth: {
+          type: "oauth2",
+          authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+          tokenEndpoint: "https://oauth2.googleapis.com/token",
+          clientId: "feed-client-id",
+        },
       },
       { async run() {} },
     );
