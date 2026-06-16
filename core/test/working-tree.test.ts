@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { openDB } from "../src/db";
+import { openDatabases } from "../src/db";
 import { Guard } from "../src/guard";
 import { WorkingTree } from "../src/working-tree";
 import { mkdtempSync, rmSync, mkdirSync, existsSync, readFileSync, writeFileSync } from "fs";
@@ -9,7 +9,7 @@ import { tmpdir } from "os";
 describe("WorkingTree", () => {
   let workspace: string;
   let pagesDir: string;
-  let db: ReturnType<typeof openDB>["db"];
+  let dataDb: ReturnType<typeof openDatabases>["dataDb"];
   let close: () => void;
   let guard: Guard;
   let tree: WorkingTree;
@@ -18,10 +18,10 @@ describe("WorkingTree", () => {
     workspace = mkdtempSync(join(tmpdir(), "adiabatic-test-"));
     pagesDir = join(workspace, "pages");
     mkdirSync(join(workspace, ".adiabatic"), { recursive: true });
-    const result = openDB(workspace);
-    db = result.db;
+    const result = openDatabases(workspace);
+    dataDb = result.dataDb;
     close = result.close;
-    guard = new Guard({ db, source: "system:test" });
+    guard = new Guard({ db: dataDb, source: "system:test" });
     tree = new WorkingTree({ guard, pagesDir });
   });
 

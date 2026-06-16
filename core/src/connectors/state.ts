@@ -50,7 +50,7 @@ export type UpdateIntegrationInput<TConfig = unknown> = Omit<
 >;
 
 export class ConnectorIntegrationStore {
-  constructor(private db: Database) {}
+  constructor(private systemDb: Database) {}
 
   ensure<TConfig = unknown, TState = unknown>(
     input: EnsureIntegrationInput<TConfig>,
@@ -97,7 +97,7 @@ export class ConnectorIntegrationStore {
       const nextPackageHash = input.packageHash ?? existing.packageHash;
       const nextTrustStatus = input.trustStatus ?? existing.trustStatus;
       const nextAuthRef = input.authRef ?? existing.authRef ?? defaultAuthRef(existing.id);
-      this.db.prepare(
+      this.systemDb.prepare(
         `UPDATE connector_integrations
          SET enabled = ?,
              integration_key = ?,
@@ -136,7 +136,7 @@ export class ConnectorIntegrationStore {
     const status: ConnectorIntegrationStatus = enabled
       ? setupStatus === "setup" ? "setup" : "idle"
       : "disabled";
-    this.db.prepare(
+    this.systemDb.prepare(
       `INSERT INTO connector_integrations
        (id, connector_id, integration_key, enabled, status, setup_status, trust_status,
         schedule_cron, next_run_at, package_hash, config, sync_state, auth_ref, created_at, updated_at)
@@ -179,7 +179,7 @@ export class ConnectorIntegrationStore {
   get<TConfig = unknown, TState = unknown>(
     id: string,
   ): ConnectorIntegration<TConfig, TState> | undefined {
-    const row = this.db.prepare("SELECT * FROM connector_integrations WHERE id = ?").get(id) as IntegrationRow | null;
+    const row = this.systemDb.prepare("SELECT * FROM connector_integrations WHERE id = ?").get(id) as IntegrationRow | null;
     return row ? rowToIntegration<TConfig, TState>(row) : undefined;
   }
 
@@ -190,13 +190,13 @@ export class ConnectorIntegrationStore {
     validateConnectorId(connectorId);
     const key = normalizeIntegrationKey(integrationKey);
     const row = key
-      ? this.db.prepare(
+      ? this.systemDb.prepare(
         `SELECT * FROM connector_integrations
          WHERE connector_id = ? AND integration_key = ?
          ORDER BY created_at
          LIMIT 1`
       ).get(connectorId, key) as IntegrationRow | null
-      : this.db.prepare(
+      : this.systemDb.prepare(
         `SELECT * FROM connector_integrations
          WHERE connector_id = ? AND integration_key IS NULL
          ORDER BY created_at
@@ -206,12 +206,12 @@ export class ConnectorIntegrationStore {
   }
 
   delete(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM connector_integrations WHERE id = ?").run(id);
+    const result = this.systemDb.prepare("DELETE FROM connector_integrations WHERE id = ?").run(id);
     return result.changes > 0;
   }
 
   list(): ConnectorIntegration[] {
-    return (this.db.prepare("SELECT * FROM connector_integrations ORDER BY connector_id, integration_key").all() as IntegrationRow[])
+    return (this.systemDb.prepare("SELECT * FROM connector_integrations ORDER BY connector_id, integration_key").all() as IntegrationRow[])
       .map((row) => rowToIntegration(row));
   }
 
@@ -226,7 +226,7 @@ export class ConnectorIntegrationStore {
   // Explicit recovery from a run error: back to idle, stale failure message and
   // pending schedule cleared so the scheduler picks the integration up fresh.
   resetErrorToIdle(id: string): void {
-    this.db.prepare(
+    this.systemDb.prepare(
       `UPDATE connector_integrations
        SET status = 'idle', last_error = NULL, next_run_at = NULL, updated_at = ?
        WHERE id = ?`
@@ -235,7 +235,7 @@ export class ConnectorIntegrationStore {
 
   setStatus(id: string, status: ConnectorIntegrationStatus, error?: string): void {
     const now = Date.now();
-    this.db.prepare(
+    this.systemDb.prepare(
       `UPDATE connector_integrations
        SET status = ?, last_error = ?, updated_at = ?, last_run_at = CASE WHEN ? THEN ? ELSE last_run_at END
        WHERE id = ?`
@@ -244,7 +244,7 @@ export class ConnectorIntegrationStore {
 
   setTrustForConnector(connectorId: string, trustStatus: ConnectorTrustStatus, packageHash?: string): void {
     validateConnectorId(connectorId);
-    this.db.prepare(
+    this.systemDb.prepare(
       `UPDATE connector_integrations
        SET trust_status = ?, package_hash = COALESCE(?, package_hash), updated_at = ?
        WHERE connector_id = ?`
@@ -252,7 +252,7 @@ export class ConnectorIntegrationStore {
   }
 
   private updateJsonColumn(id: string, column: "config" | "sync_state" | "requirements_status", value: unknown): void {
-    this.db.prepare(
+    this.systemDb.prepare(
       `UPDATE connector_integrations SET ${column} = ?, updated_at = ? WHERE id = ?`
     ).run(stringifyJson(value), Date.now(), id);
   }

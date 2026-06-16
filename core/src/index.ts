@@ -1,7 +1,7 @@
 import { dirname, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
-import { openDB } from "./db";
+import { openDatabases } from "./db";
 import { Guard } from "./guard";
 import type { SchemaOp } from "./guard";
 import { WorkingTree } from "./working-tree";
@@ -72,12 +72,12 @@ await mkdir(adiabaticDir, { recursive: true });
 await ensureClaudeMd(workspacePath);
 
 // Boot
-const { db, close: closeDB } = openDB(workspacePath);
-const guard = new Guard({ db, source: "system:server" });
+const { dataDb, systemDb, close: closeDB } = openDatabases(workspacePath);
+const guard = new Guard({ db: dataDb, source: "system:server" });
 const settings = new SettingsStore(adiabaticDir);
 await settings.update({ workspacePath });
 const connectorSupervisor = new ConnectorSupervisor({
-  db,
+  systemDb,
   guard,
   host: { workspacePath },
 });

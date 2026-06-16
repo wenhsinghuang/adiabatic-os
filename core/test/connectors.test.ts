@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { openDB } from "../src/db";
+import { openDatabases } from "../src/db";
 import { Guard } from "../src/guard";
 import {
   ConnectorScheduler,
@@ -43,7 +43,8 @@ async function waitWithTestTimeout(promise: Promise<unknown>, timeoutMs: number)
 
 describe("Connector system", () => {
   let workspace: string;
-  let db: ReturnType<typeof openDB>["db"];
+  let dataDb: ReturnType<typeof openDatabases>["dataDb"];
+  let systemDb: ReturnType<typeof openDatabases>["systemDb"];
   let close: () => void;
   let supervisor: ConnectorSupervisor;
   let secrets: MemoryConnectorSecretStore;
@@ -51,13 +52,14 @@ describe("Connector system", () => {
   beforeEach(() => {
     workspace = mkdtempSync(join(tmpdir(), "adiabatic-connector-test-"));
     mkdirSync(join(workspace, ".adiabatic"), { recursive: true });
-    const result = openDB(workspace);
-    db = result.db;
+    const result = openDatabases(workspace);
+    dataDb = result.dataDb;
+    systemDb = result.systemDb;
     close = result.close;
     secrets = new MemoryConnectorSecretStore();
     supervisor = new ConnectorSupervisor({
-      db,
-      guard: new Guard({ db, source: "system:test" }),
+      systemDb,
+      guard: new Guard({ db: dataDb, source: "system:test" }),
       host: { workspacePath: workspace },
       platform: "darwin",
       authManager: new ConnectorAuthManager(secrets),
@@ -238,7 +240,7 @@ auth:
     expect(integration.id).not.toBe("app-commits");
     await supervisor.run(integration.id, { config: { label: "override" } });
 
-    const event = db.prepare("SELECT * FROM events WHERE type = ?").get("app.commit") as any;
+    const event = dataDb.prepare("SELECT * FROM events WHERE type = ?").get("app.commit") as any;
     expect(event.source).toBe("connector:app-commits");
     expect(event.external_id).toBe("abc123");
     expect(JSON.parse(event.payload)).toEqual({ sha: "abc123", label: "override" });
@@ -247,6 +249,13 @@ auth:
     expect(stored?.status).toBe("idle");
     expect(stored?.syncState).toEqual({ cursor: "abc123" });
     expect(stored?.lastRunAt).toBeGreaterThan(0);
+
+    expect(() => dataDb.prepare("SELECT * FROM connector_integrations").all()).toThrow("no such table");
+    const storedState = systemDb
+      .prepare("SELECT status, sync_state FROM connector_integrations WHERE id = ?")
+      .get(integration.id) as { status: string; sync_state: string };
+    expect(storedState.status).toBe("idle");
+    expect(JSON.parse(storedState.sync_state)).toEqual({ cursor: "abc123" });
   });
 
   test("supports multiple connector instances with separate sources and state", async () => {
@@ -281,7 +290,7 @@ auth:
     await supervisor.run(personal.id);
     await supervisor.run(work.id);
 
-    const rows = db.prepare("SELECT source, external_id FROM events ORDER BY source").all() as any[];
+    const rows = dataDb.prepare("SELECT source, external_id FROM events ORDER BY source").all() as any[];
     expect(rows).toEqual([
       { source: "connector:calendar:personal", external_id: "same" },
       { source: "connector:calendar:work", external_id: "same" },
@@ -338,7 +347,7 @@ auth:
 
     await supervisor.run(ready.id);
 
-    const event = db.prepare("SELECT source, external_id FROM events").get() as any;
+    const event = dataDb.prepare("SELECT source, external_id FROM events").get() as any;
     expect(event).toEqual({ source: "connector:calendar:work", external_id: "event-1" });
     expect(supervisor.getIntegration(ready.id)?.syncState).toEqual({ seen: "event-1" });
     expect(() =>
@@ -395,7 +404,7 @@ auth:
     await supervisor.run(rotated.id);
 
     expect(tokenSeen).toBe("rotated-token");
-    const event = db.prepare("SELECT source, type FROM events").get() as any;
+    const event = dataDb.prepare("SELECT source, type FROM events").get() as any;
     expect(event).toEqual({ source: "connector:oura", type: "oura.sample" });
   });
 
@@ -430,7 +439,7 @@ auth:
 
     await supervisor.run(integration.id);
 
-    const event = db.prepare("SELECT payload FROM events WHERE type = ?").get("json.string") as any;
+    const event = dataDb.prepare("SELECT payload FROM events WHERE type = ?").get("json.string") as any;
     expect(JSON.parse(event.payload)).toBe("hello");
   });
 
@@ -493,7 +502,7 @@ auth:
     await supervisor.run(integration.id);
 
     expect(ids[0]).toBe(ids[1]);
-    const rows = db.prepare("SELECT source, external_id, payload FROM events").all() as any[];
+    const rows = dataDb.prepare("SELECT source, external_id, payload FROM events").all() as any[];
     expect(rows).toHaveLength(1);
     expect(rows[0].source).toBe("connector:retry-feed");
     expect(rows[0].external_id).toBe("same-event");
@@ -680,8 +689,8 @@ auth:
 
   test("gates integrations by platform", () => {
     const linuxSupervisor = new ConnectorSupervisor({
-      db,
-      guard: new Guard({ db, source: "system:test" }),
+      systemDb,
+      guard: new Guard({ db: dataDb, source: "system:test" }),
       host: { workspacePath: workspace },
       platform: "linux",
     });
@@ -780,7 +789,7 @@ auth:
     expect(supervisor.getIntegration(integration.id)?.setupStatus).toBe("ready");
 
     await supervisor.run(integration.id);
-    const event = db.prepare("SELECT source, type FROM events").get() as any;
+    const event = dataDb.prepare("SELECT source, type FROM events").get() as any;
     expect(event).toEqual({ source: "connector:ax-watch", type: "ax.sample" });
 
     // Requirement regression blocks the next run and demotes back to setup.
@@ -1143,7 +1152,7 @@ auth:
       },
     );
     const integration = supervisor.ensureIntegration({ connectorId: "invalid-schedule-feed" });
-    db.prepare("UPDATE connector_integrations SET schedule_cron = ?, next_run_at = NULL WHERE id = ?")
+    systemDb.prepare("UPDATE connector_integrations SET schedule_cron = ?, next_run_at = NULL WHERE id = ?")
       .run("every 1m", integration.id);
     const errors: unknown[] = [];
     const scheduler = new ConnectorScheduler({
@@ -1158,7 +1167,7 @@ auth:
 
     expect(runs).toBe(0);
     expect(errors).toHaveLength(2);
-    const event = db.prepare("SELECT * FROM events WHERE type = ?").get("invalid-schedule.sample");
+    const event = dataDb.prepare("SELECT * FROM events WHERE type = ?").get("invalid-schedule.sample");
     expect(event).toBeFalsy();
   });
 
@@ -1202,7 +1211,7 @@ auth:
     const scheduler = new ConnectorScheduler({ supervisor });
     await scheduler.tick();
 
-    const event = db.prepare("SELECT * FROM events WHERE type = ?").get("untrusted.sample");
+    const event = dataDb.prepare("SELECT * FROM events WHERE type = ?").get("untrusted.sample");
     expect(event).toBeFalsy();
   });
 
@@ -1338,7 +1347,7 @@ auth:
     await supervisor.approveCurrentPackage("calendar");
     await supervisor.run(integration.id);
 
-    const event = db.prepare("SELECT source, type, external_id FROM events WHERE type = ?")
+    const event = dataDb.prepare("SELECT source, type, external_id FROM events WHERE type = ?")
       .get("calendar.install-test") as any;
     expect(event).toEqual({
       source: "connector:calendar",
@@ -1423,7 +1432,7 @@ auth:
   });
 
   test("lists bundled built-ins as available and installs one explicitly", async () => {
-    const guard = new Guard({ db, source: "system:test" });
+    const guard = new Guard({ db: dataDb, source: "system:test" });
     const builtins = join(workspace, "builtins");
     writeBuiltIn(builtins, "seed");
     const broken = join(builtins, "broken");
@@ -1449,7 +1458,7 @@ auth:
     expect(installed.dir).toBe(join(workspace, "connectors", "seed"));
     expect(existsSync(join(installed.dir, "index.mjs"))).toBe(true);
 
-    const event = db
+    const event = dataDb
       .prepare("SELECT payload FROM events WHERE type = ?")
       .get("connector.installed") as any;
     const payload = JSON.parse(event.payload);
@@ -1466,12 +1475,12 @@ auth:
       }),
     ).rejects.toThrow("Connector already installed: seed");
     expect(
-      db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = ?").get("connector.installed"),
+      dataDb.prepare("SELECT COUNT(*) AS n FROM events WHERE type = ?").get("connector.installed"),
     ).toMatchObject({ n: 1 });
   });
 
   test("reinstall after removal works and D0 keeps the full history", async () => {
-    const guard = new Guard({ db, source: "system:test" });
+    const guard = new Guard({ db: dataDb, source: "system:test" });
     const builtins = join(workspace, "builtins");
     writeBuiltIn(builtins, "seed");
     const installOnce = () =>
@@ -1497,7 +1506,7 @@ auth:
     await supervisor.registerDirectory(join(workspace, "connectors", "seed"));
     expect(existsSync(join(workspace, "connectors", "seed", "index.mjs"))).toBe(true);
 
-    const history = db
+    const history = dataDb
       .prepare(
         "SELECT type, COUNT(*) AS n FROM events WHERE type LIKE 'connector.%' GROUP BY type ORDER BY type",
       )
@@ -1548,7 +1557,7 @@ auth:
     await supervisor.approveCurrentPackage("demo");
     await supervisor.run(integration.id);
 
-    const event = db.prepare("SELECT source, type, external_id FROM events WHERE type = ?")
+    const event = dataDb.prepare("SELECT source, type, external_id FROM events WHERE type = ?")
       .get("demo.event") as any;
     expect(event).toEqual({
       source: "connector:demo",
@@ -1651,16 +1660,20 @@ auth:
     supervisor.ensureFirstIntegration("audited");
     await supervisor.approveCurrentPackage("audited");
 
-    const approved = db
+    const approved = dataDb
       .prepare("SELECT source, payload FROM events WHERE type = ?")
       .get("connector.approved") as any;
     expect(approved.source).toBe("system:test");
     const approvedPayload = JSON.parse(approved.payload);
     expect(approvedPayload.connector_id).toBe("audited");
     expect(approvedPayload.approved_hash).toMatch(/^sha256:/);
+    const approvalState = systemDb
+      .prepare("SELECT approved_hash FROM connector_custom_approvals WHERE connector_id = ?")
+      .get("audited") as { approved_hash: string };
+    expect(approvalState.approved_hash).toBe(approvedPayload.approved_hash);
 
     expect(await supervisor.unregister("audited")).toBe(true);
-    const removed = db
+    const removed = dataDb
       .prepare("SELECT source, payload FROM events WHERE type = ?")
       .get("connector.removed") as any;
     expect(removed.source).toBe("system:test");
@@ -1711,7 +1724,7 @@ auth:
     await supervisor.approveCurrentPackage("pid-probe");
     await supervisor.run(integration.id);
 
-    const event = db.prepare("SELECT payload FROM events WHERE type = ?").get("pid.sample") as any;
+    const event = dataDb.prepare("SELECT payload FROM events WHERE type = ?").get("pid.sample") as any;
     const payload = JSON.parse(event.payload);
     expect(typeof payload.pid).toBe("number");
     // The whole point: connector code did not execute in this process.
@@ -1724,8 +1737,8 @@ auth:
 
   test("force-kills runner processes that ignore abort", async () => {
     const fastKillSupervisor = new ConnectorSupervisor({
-      db,
-      guard: new Guard({ db, source: "system:test" }),
+      systemDb,
+      guard: new Guard({ db: dataDb, source: "system:test" }),
       host: { workspacePath: workspace },
       platform: "darwin",
       runnerKillGraceMs: 150,
@@ -1811,7 +1824,7 @@ auth:
     const handle = supervisor.start(integration.id);
     const started = await waitWithTestTimeout(
       (async () => {
-        while (!db.prepare("SELECT id FROM events WHERE type = ?").get("tidy.start")) {
+        while (!dataDb.prepare("SELECT id FROM events WHERE type = ?").get("tidy.start")) {
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
       })(),
@@ -1830,8 +1843,8 @@ auth:
 
   test("kills runner processes that hang during top-level import", async () => {
     const hangSupervisor = new ConnectorSupervisor({
-      db,
-      guard: new Guard({ db, source: "system:test" }),
+      systemDb,
+      guard: new Guard({ db: dataDb, source: "system:test" }),
       host: { workspacePath: workspace },
       platform: "darwin",
       runnerCommandTimeoutMs: 300,

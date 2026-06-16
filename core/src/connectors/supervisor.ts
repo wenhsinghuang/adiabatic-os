@@ -66,7 +66,7 @@ interface ActiveRun {
 }
 
 export interface ConnectorSupervisorOptions {
-  db: Database;
+  systemDb: Database;
   guard: Guard;
   host: ConnectorHostContext;
   platform?: ConnectorPlatform;
@@ -101,13 +101,13 @@ export class ConnectorSupervisor {
   constructor(opts: ConnectorSupervisorOptions) {
     this.guard = opts.guard;
     this.host = opts.host;
-    this.store = new ConnectorIntegrationStore(opts.db);
+    this.store = new ConnectorIntegrationStore(opts.systemDb);
     this.authManager = opts.authManager ?? new ConnectorAuthManager();
     this.platform = opts.platform ?? currentConnectorPlatform();
     this.runnerKillGraceMs = opts.runnerKillGraceMs;
     this.runnerCommandTimeoutMs = opts.runnerCommandTimeoutMs;
     this.registry = new WorkspaceConnectorRegistry({
-      db: opts.db,
+      systemDb: opts.systemDb,
       officialCatalog: opts.officialCatalog ?? [],
     });
   }

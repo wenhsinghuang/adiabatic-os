@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { openDB } from "../src/db";
+import { openDatabases } from "../src/db";
 import { Guard } from "../src/guard";
 import { mkdtempSync, rmSync, mkdirSync } from "fs";
 import { join } from "path";
@@ -7,17 +7,17 @@ import { tmpdir } from "os";
 
 describe("Guard", () => {
   let workspace: string;
-  let db: ReturnType<typeof openDB>["db"];
+  let dataDb: ReturnType<typeof openDatabases>["dataDb"];
   let close: () => void;
   let guard: Guard;
 
   beforeEach(() => {
     workspace = mkdtempSync(join(tmpdir(), "adiabatic-test-"));
     mkdirSync(join(workspace, ".adiabatic"), { recursive: true });
-    const result = openDB(workspace);
-    db = result.db;
+    const result = openDatabases(workspace);
+    dataDb = result.dataDb;
     close = result.close;
-    guard = new Guard({ db, source: "system:test" });
+    guard = new Guard({ db: dataDb, source: "system:test" });
   });
 
   afterEach(() => {
@@ -26,6 +26,10 @@ describe("Guard", () => {
   });
 
   // -- writeDoc --
+
+  test("cannot query system database tables", () => {
+    expect(() => guard.query("SELECT * FROM connector_integrations")).toThrow("no such table");
+  });
 
   test("writeDoc inserts a new doc", () => {
     guard.writeDoc("journal/today", "# Hello World");
@@ -205,7 +209,7 @@ describe("Guard", () => {
   // -- write (D2) --
 
   test("write runs DML and auto-logs D0", () => {
-    db.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
+    dataDb.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
     guard.write("INSERT INTO focus_sessions (id, duration) VALUES (?, ?)", ["s1", 3600]);
 
     const rows = guard.query("SELECT * FROM focus_sessions") as any[];
@@ -231,7 +235,7 @@ describe("Guard", () => {
   });
 
   test("write logs update and delete snapshots", () => {
-    db.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
+    dataDb.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
     guard.write("INSERT INTO focus_sessions (id, duration) VALUES (?, ?)", ["s1", 3600]);
     guard.write("UPDATE focus_sessions SET duration = ? WHERE id = ?", [4200, "s1"]);
     guard.write("DELETE FROM focus_sessions WHERE id = ?", ["s1"]);
@@ -254,8 +258,8 @@ describe("Guard", () => {
   });
 
   test("write enforces app table grants", () => {
-    db.run("CREATE TABLE allowed_table (id TEXT PRIMARY KEY)");
-    db.run("CREATE TABLE denied_table (id TEXT PRIMARY KEY)");
+    dataDb.run("CREATE TABLE allowed_table (id TEXT PRIMARY KEY)");
+    dataDb.run("CREATE TABLE denied_table (id TEXT PRIMARY KEY)");
     const appGuard = guard.withSource("app:demo", {
       canWriteTable: (table) => table === "allowed_table",
     });
@@ -285,14 +289,14 @@ describe("Guard", () => {
   });
 
   test("write rejects multiple statements", () => {
-    db.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
+    dataDb.run("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY, duration INTEGER)");
     expect(() =>
       guard.write("INSERT INTO focus_sessions (id, duration) VALUES ('s1', 1); DELETE FROM focus_sessions")
     ).toThrow("one DML statement");
   });
 
   test("write allows semicolons inside SQL string literals", () => {
-    db.run("CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT)");
+    dataDb.run("CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT)");
     guard.write("INSERT INTO notes (id, body) VALUES (?, 'one; two')", ["n1"]);
 
     const row = guard.queryOne("SELECT body FROM notes WHERE id = ?", ["n1"]) as any;
@@ -346,6 +350,16 @@ describe("Guard", () => {
     expect(payload.before_schema).toBeTruthy();
     expect(payload.after_schema.tables.some((item: any) => item.name === "memories")).toBe(true);
     expect(payload.requested_by).toBe("test");
+  });
+
+  test("promote refuses system-DB table names in data.db", () => {
+    // Connector control-plane tables live in system.db; an app D2 promote must
+    // not squat their names (or the auth_ prefix) in data.db.
+    for (const table of ["connector_integrations", "connector_custom_approvals", "auth_credentials"]) {
+      expect(() =>
+        guard.promote(`CREATE TABLE ${table} (id TEXT PRIMARY KEY)`, { approved: true }),
+      ).toThrow("system table");
+    }
   });
 
   test("demote accepts allowlisted DDL and logs schema audit", () => {
@@ -404,7 +418,7 @@ describe("Guard", () => {
   });
 
   test("query rejects writes and multi-statement SQL", () => {
-    db.run("CREATE TABLE scratch (id TEXT PRIMARY KEY)");
+    dataDb.run("CREATE TABLE scratch (id TEXT PRIMARY KEY)");
 
     expect(() => guard.query("INSERT INTO scratch (id) VALUES ('x')")).toThrow(
       "readonly database",
@@ -414,7 +428,7 @@ describe("Guard", () => {
       "one read-only statement",
     );
 
-    const rows = db.prepare("SELECT * FROM scratch").all();
+    const rows = dataDb.prepare("SELECT * FROM scratch").all();
     expect(rows).toEqual([]);
   });
 

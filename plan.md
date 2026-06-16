@@ -60,7 +60,8 @@ adiabatic-os/                              ← dev repo
 ~/Adiabatic/                               ← 用戶的 workspace
 ├── CLAUDE.md                              ← conventions（從 template 複製）
 ├── .adiabatic/
-│   └── adiabatic.db                       ← 用戶的資料（runtime 管理，跟 workspace 綁定）
+│   ├── data.db                            ← substrate data（runtime 管理，跟 workspace 綁定）
+│   └── system.db                          ← connector/auth/control-plane state
 ├── apps/                                  ← 用戶的 app（Claude Code 在這裡寫）
 │   └── hello-world/
 ├── connectors/                            ← installed connectors; remove = delete folder

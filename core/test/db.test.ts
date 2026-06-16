@@ -1,7 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
-import { openDB } from "../src/db";
-import { mkdtempSync, rmSync } from "fs";
+import { DATA_DB_FILENAME, openDatabases, SYSTEM_DB_FILENAME } from "../src/db";
+import { existsSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { mkdirSync } from "fs";
@@ -18,27 +17,35 @@ describe("DB", () => {
     rmSync(workspace, { recursive: true, force: true });
   });
 
-  test("opens and creates schema", () => {
-    const { db, close } = openDB(workspace);
+  test("opens and creates split schemas", () => {
+    const { dataDb, systemDb, close } = openDatabases(workspace);
+
+    expect(existsSync(join(workspace, ".adiabatic", DATA_DB_FILENAME))).toBe(true);
+    expect(existsSync(join(workspace, ".adiabatic", SYSTEM_DB_FILENAME))).toBe(true);
 
     // Check events table exists
-    const events = db.prepare(
+    const events = dataDb.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='events'"
     ).get();
     expect(events).toBeTruthy();
 
     // Check docs table exists
-    const docs = db.prepare(
+    const docs = dataDb.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='docs'"
     ).get();
     expect(docs).toBeTruthy();
 
-    const connectorIntegrations = db.prepare(
+    const dataConnectorIntegrations = dataDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='connector_integrations'"
+    ).get();
+    expect(dataConnectorIntegrations).toBeFalsy();
+
+    const connectorIntegrations = systemDb.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='connector_integrations'"
     ).get();
     expect(connectorIntegrations).toBeTruthy();
 
-    const connectorApprovals = db.prepare(
+    const connectorApprovals = systemDb.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='connector_custom_approvals'"
     ).get();
     expect(connectorApprovals).toBeTruthy();
@@ -47,8 +54,8 @@ describe("DB", () => {
   });
 
   test("events table has correct columns", () => {
-    const { db, close } = openDB(workspace);
-    const columns = db.prepare("PRAGMA table_info(events)").all() as { name: string }[];
+    const { dataDb, close } = openDatabases(workspace);
+    const columns = dataDb.prepare("PRAGMA table_info(events)").all() as { name: string }[];
     const names = columns.map((c) => c.name);
 
     expect(names).toContain("id");
@@ -65,8 +72,8 @@ describe("DB", () => {
   });
 
   test("connector integrations table has runtime state columns", () => {
-    const { db, close } = openDB(workspace);
-    const columns = db.prepare("PRAGMA table_info(connector_integrations)").all() as { name: string }[];
+    const { systemDb, close } = openDatabases(workspace);
+    const columns = systemDb.prepare("PRAGMA table_info(connector_integrations)").all() as { name: string }[];
     const names = columns.map((c) => c.name);
 
     expect(names).toContain("id");
@@ -81,6 +88,7 @@ describe("DB", () => {
     expect(names).toContain("package_hash");
     expect(names).toContain("config");
     expect(names).toContain("sync_state");
+    expect(names).toContain("requirements_status");
     expect(names).toContain("auth_ref");
     expect(names).toContain("last_error");
     expect(names).toContain("last_run_at");
@@ -91,41 +99,13 @@ describe("DB", () => {
   });
 
   test("events default to current D0 schema version", () => {
-    const { db, close } = openDB(workspace);
+    const { dataDb, close } = openDatabases(workspace);
 
-    db.prepare(
+    dataDb.prepare(
       "INSERT INTO events (id, source, type, started_at, payload) VALUES (?, ?, ?, ?, ?)"
     ).run("e1", "system:test", "test.event", Date.now(), "{}");
 
-    const event = db.prepare("SELECT schema_version FROM events WHERE id = ?").get("e1") as {
-      schema_version: string;
-    };
-    expect(event.schema_version).toBe("0.1");
-
-    close();
-  });
-
-  test("openDB migrates legacy events table with schema_version", () => {
-    const legacy = new Database(join(workspace, ".adiabatic", "adiabatic.db"), { create: true });
-    legacy.exec(`
-      CREATE TABLE events (
-        id          TEXT PRIMARY KEY,
-        source      TEXT NOT NULL,
-        type        TEXT NOT NULL,
-        external_id TEXT,
-        started_at  INTEGER NOT NULL,
-        ended_at    INTEGER,
-        payload     JSON NOT NULL,
-        created_at  INTEGER NOT NULL DEFAULT (unixepoch('subsec')*1000)
-      );
-    `);
-    legacy.prepare(
-      "INSERT INTO events (id, source, type, started_at, payload) VALUES (?, ?, ?, ?, ?)"
-    ).run("legacy-1", "system:legacy", "legacy.event", Date.now(), "{}");
-    legacy.close();
-
-    const { db, close } = openDB(workspace);
-    const event = db.prepare("SELECT schema_version FROM events WHERE id = ?").get("legacy-1") as {
+    const event = dataDb.prepare("SELECT schema_version FROM events WHERE id = ?").get("e1") as {
       schema_version: string;
     };
     expect(event.schema_version).toBe("0.1");
@@ -134,8 +114,8 @@ describe("DB", () => {
   });
 
   test("docs table has correct columns", () => {
-    const { db, close } = openDB(workspace);
-    const columns = db.prepare("PRAGMA table_info(docs)").all() as { name: string }[];
+    const { dataDb, close } = openDatabases(workspace);
+    const columns = dataDb.prepare("PRAGMA table_info(docs)").all() as { name: string }[];
     const names = columns.map((c) => c.name);
 
     expect(names).toContain("id");
@@ -148,21 +128,21 @@ describe("DB", () => {
   });
 
   test("events dedup index works", () => {
-    const { db, close } = openDB(workspace);
+    const { dataDb, close } = openDatabases(workspace);
 
-    db.prepare(
+    dataDb.prepare(
       "INSERT INTO events (id, source, type, external_id, started_at, payload) VALUES (?, ?, ?, ?, ?, ?)"
     ).run("e1", "connector:oura", "sleep.recorded", "oura-123", Date.now(), "{}");
 
     // Same source + external_id should fail
     expect(() =>
-      db.prepare(
+      dataDb.prepare(
         "INSERT INTO events (id, source, type, external_id, started_at, payload) VALUES (?, ?, ?, ?, ?, ?)"
       ).run("e2", "connector:oura", "sleep.recorded", "oura-123", Date.now(), "{}")
     ).toThrow();
 
     // Different source + same external_id should succeed
-    db.prepare(
+    dataDb.prepare(
       "INSERT INTO events (id, source, type, external_id, started_at, payload) VALUES (?, ?, ?, ?, ?, ?)"
     ).run("e3", "connector:github", "sleep.recorded", "oura-123", Date.now(), "{}");
 
@@ -170,26 +150,28 @@ describe("DB", () => {
   });
 
   test("events table is append-only at SQLite trigger level", () => {
-    const { db, close } = openDB(workspace);
+    const { dataDb, close } = openDatabases(workspace);
 
-    db.prepare(
+    dataDb.prepare(
       "INSERT INTO events (id, source, type, started_at, payload) VALUES (?, ?, ?, ?, ?)"
     ).run("e1", "system:test", "test.event", Date.now(), "{}");
 
     expect(() =>
-      db.prepare("UPDATE events SET type = ? WHERE id = ?").run("test.changed", "e1")
+      dataDb.prepare("UPDATE events SET type = ? WHERE id = ?").run("test.changed", "e1")
     ).toThrow("events are append-only");
     expect(() =>
-      db.prepare("DELETE FROM events WHERE id = ?").run("e1")
+      dataDb.prepare("DELETE FROM events WHERE id = ?").run("e1")
     ).toThrow("events are append-only");
 
     close();
   });
 
-  test("WAL mode is enabled", () => {
-    const { db, close } = openDB(workspace);
-    const result = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
-    expect(result.journal_mode).toBe("wal");
+  test("WAL mode is enabled on both databases", () => {
+    const { dataDb, systemDb, close } = openDatabases(workspace);
+    const dataResult = dataDb.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
+    const systemResult = systemDb.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
+    expect(dataResult.journal_mode).toBe("wal");
+    expect(systemResult.journal_mode).toBe("wal");
     close();
   });
 });

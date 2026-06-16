@@ -782,7 +782,7 @@ Examples:
 
 State is not product data, not D0, and not secret storage. It is runtime bookkeeping so the connector can resume.
 
-Persisted state belongs in `.adiabatic/adiabatic.db`, in a system-owned integration table, not in connector YAML or the workspace connector folder. It is scoped per integration. It has the same storage status as `events` and `docs`: workspace-owned system data managed by the substrate.
+Persisted state belongs in `.adiabatic/system.db`, in a system-owned integration table, not in connector YAML or the workspace connector folder. It is scoped per integration. Connector runtime state is workspace-owned control-plane data; connector-produced D0 events still go through Guard into `.adiabatic/data.db`.
 
 ## Platform Requirements
 
@@ -896,12 +896,12 @@ Connector package definition and connector integration state are separate.
 connectors/<connector_id>/connector.yaml
   static package declaration and code package
 
-.adiabatic/adiabatic.db connector_integrations table
+.adiabatic/system.db connector_integrations table
   id / connector_id / integration_key / enabled / status
   config / sync_state / auth_ref / schedule_cron
   last_error / last_run_at / next_run_at
 
-.adiabatic/adiabatic.db connector_custom_approvals table
+.adiabatic/system.db connector_custom_approvals table
   connector_id / approved_hash / approved_at
 
 .adiabatic cached official catalog metadata

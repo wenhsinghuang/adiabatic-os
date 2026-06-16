@@ -11,16 +11,16 @@ import type {
 } from "./types";
 
 export interface WorkspaceConnectorRegistryOptions {
-  db: Database;
+  systemDb: Database;
   officialCatalog?: ConnectorOfficialCatalogEntry[];
 }
 
 export class ConnectorApprovalStore {
-  constructor(private db: Database) {}
+  constructor(private systemDb: Database) {}
 
   approveCustom(connectorId: string, hash: string, approvedAt = Date.now()): void {
     validateConnectorId(connectorId);
-    this.db.prepare(
+    this.systemDb.prepare(
       `INSERT OR REPLACE INTO connector_custom_approvals (connector_id, approved_hash, approved_at)
        VALUES (?, ?, ?)`
     ).run(connectorId, hash, approvedAt);
@@ -28,7 +28,7 @@ export class ConnectorApprovalStore {
 
   isApproved(connectorId: string, hash: string): boolean {
     validateConnectorId(connectorId);
-    const row = this.db.prepare(
+    const row = this.systemDb.prepare(
       `SELECT 1 FROM connector_custom_approvals
        WHERE connector_id = ? AND approved_hash = ?
        LIMIT 1`
@@ -38,7 +38,7 @@ export class ConnectorApprovalStore {
 
   hasApprovalForConnector(connectorId: string): boolean {
     validateConnectorId(connectorId);
-    const row = this.db.prepare(
+    const row = this.systemDb.prepare(
       `SELECT 1 FROM connector_custom_approvals
        WHERE connector_id = ?
        LIMIT 1`
@@ -52,7 +52,7 @@ export class WorkspaceConnectorRegistry {
   private officialHashes = new Map<string, Set<string>>();
 
   constructor(opts: WorkspaceConnectorRegistryOptions) {
-    this.approvals = new ConnectorApprovalStore(opts.db);
+    this.approvals = new ConnectorApprovalStore(opts.systemDb);
     for (const entry of opts.officialCatalog ?? []) {
       validateConnectorId(entry.id);
       const hashes = this.officialHashes.get(entry.id) ?? new Set<string>();

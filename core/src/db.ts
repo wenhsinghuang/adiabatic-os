@@ -2,9 +2,12 @@ import { Database } from "bun:sqlite";
 import { join } from "path";
 import { D0_SCHEMA_VERSION } from "./schema";
 
-// D0 events + D1 docs schema — one-way door, matches design spec exactly
+export const DATA_DB_FILENAME = "data.db";
+export const SYSTEM_DB_FILENAME = "system.db";
 
-const SCHEMA = `
+// D0 events + D1 docs schema — one-way door, matches design spec exactly.
+// D2 app/user tables are created at runtime through Guard.promote().
+const DATA_SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
   id          TEXT PRIMARY KEY,
   schema_version TEXT NOT NULL DEFAULT '${D0_SCHEMA_VERSION}',
@@ -43,7 +46,9 @@ CREATE TABLE IF NOT EXISTS docs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_docs_updated ON docs(updated_at DESC);
+`;
 
+const SYSTEM_SCHEMA = `
 CREATE TABLE IF NOT EXISTS connector_integrations (
   id            TEXT PRIMARY KEY,
   connector_id  TEXT NOT NULL,
@@ -69,6 +74,9 @@ CREATE INDEX IF NOT EXISTS idx_connector_integrations_connector
   ON connector_integrations(connector_id);
 CREATE INDEX IF NOT EXISTS idx_connector_integrations_status
   ON connector_integrations(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_integrations_identity
+  ON connector_integrations(connector_id, integration_key)
+  WHERE integration_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS connector_custom_approvals (
   connector_id   TEXT NOT NULL,
@@ -78,65 +86,35 @@ CREATE TABLE IF NOT EXISTS connector_custom_approvals (
 );
 `;
 
-export interface AdiabaticDB {
-  db: Database;
+export interface AdiabaticDatabases {
+  dataDb: Database;
+  systemDb: Database;
   close(): void;
 }
 
-export function openDB(workspacePath: string): AdiabaticDB {
-  const dbPath = join(workspacePath, ".adiabatic", "adiabatic.db");
-  const db = new Database(dbPath, { create: true });
+export function openDatabases(workspacePath: string): AdiabaticDatabases {
+  const adiabaticDir = join(workspacePath, ".adiabatic");
+  const dataDb = new Database(join(adiabaticDir, DATA_DB_FILENAME), { create: true });
+  const systemDb = new Database(join(adiabaticDir, SYSTEM_DB_FILENAME), { create: true });
 
-  // Performance pragmas
-  db.run("PRAGMA journal_mode = WAL");
-  db.run("PRAGMA synchronous = NORMAL");
-  db.run("PRAGMA foreign_keys = ON");
+  applyPragmas(dataDb);
+  applyPragmas(systemDb);
 
-  // Apply schema
-  db.exec(SCHEMA);
-  migrateExistingSchema(db);
+  dataDb.exec(DATA_SCHEMA);
+  systemDb.exec(SYSTEM_SCHEMA);
 
   return {
-    db,
+    dataDb,
+    systemDb,
     close() {
-      db.close();
+      dataDb.close();
+      systemDb.close();
     },
   };
 }
 
-function migrateExistingSchema(db: Database): void {
-  const eventColumns = db.prepare("PRAGMA table_info(events)").all() as { name: string }[];
-  if (!eventColumns.some((column) => column.name === "schema_version")) {
-    db.run(`ALTER TABLE events ADD COLUMN schema_version TEXT NOT NULL DEFAULT '${D0_SCHEMA_VERSION}'`);
-  }
-
-  const integrationColumns = db.prepare("PRAGMA table_info(connector_integrations)").all() as { name: string }[];
-  const hasIntegrationColumn = (name: string) => integrationColumns.some((column) => column.name === name);
-  if (!hasIntegrationColumn("integration_key")) {
-    db.run("ALTER TABLE connector_integrations ADD COLUMN integration_key TEXT");
-  }
-  if (!hasIntegrationColumn("setup_status")) {
-    db.run("ALTER TABLE connector_integrations ADD COLUMN setup_status TEXT NOT NULL DEFAULT 'ready'");
-  }
-  if (!hasIntegrationColumn("trust_status")) {
-    db.run("ALTER TABLE connector_integrations ADD COLUMN trust_status TEXT NOT NULL DEFAULT 'missing'");
-  }
-  if (!hasIntegrationColumn("schedule_cron")) {
-    db.run("ALTER TABLE connector_integrations ADD COLUMN schedule_cron TEXT");
-  }
-  if (!hasIntegrationColumn("next_run_at")) {
-    db.run("ALTER TABLE connector_integrations ADD COLUMN next_run_at INTEGER");
-  }
-  if (!hasIntegrationColumn("package_hash")) {
-    db.run("ALTER TABLE connector_integrations ADD COLUMN package_hash TEXT");
-  }
-  if (!hasIntegrationColumn("requirements_status")) {
-    db.run("ALTER TABLE connector_integrations ADD COLUMN requirements_status JSON");
-  }
-  db.run("DROP INDEX IF EXISTS idx_connector_integrations_identity");
-  db.run(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_integrations_identity
-     ON connector_integrations(connector_id, integration_key)
-     WHERE integration_key IS NOT NULL`
-  );
+function applyPragmas(db: Database): void {
+  db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA synchronous = NORMAL");
+  db.run("PRAGMA foreign_keys = ON");
 }

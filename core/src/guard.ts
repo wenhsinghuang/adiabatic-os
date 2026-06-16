@@ -27,6 +27,11 @@ type DmlOp = "insert" | "update" | "delete";
 export type SchemaOp = "promote" | "demote";
 
 const SYSTEM_TABLES = new Set(["events", "docs"]);
+// Table-name prefixes owned by the system DB (connector control-plane, future
+// auth). They never live in data.db, so reserving them here only stops an app
+// D2 table from squatting a confusing system name — namespace protection, not
+// a read denylist (read isolation is the data/system DB split).
+const SYSTEM_TABLE_PREFIXES = ["sqlite_", "_adiabatic_", "connector_", "auth_"];
 
 export class Guard {
   private db: Database;
@@ -489,7 +494,7 @@ function extractTable(sql: string, keyword: string): string | null {
 
 function isSystemTable(table: string): boolean {
   const normalized = table.toLowerCase();
-  return SYSTEM_TABLES.has(normalized) || normalized.startsWith("sqlite_") || normalized.startsWith("_adiabatic_");
+  return SYSTEM_TABLES.has(normalized) || SYSTEM_TABLE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 function isRecord(value: Record<string, unknown> | null): value is Record<string, unknown> {
