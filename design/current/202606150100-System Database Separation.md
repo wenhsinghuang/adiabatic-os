@@ -4,6 +4,8 @@ Status: current refactor decision
 
 This is a substrate-level refactor, not an auth feature. Auth is one beneficiary; the problem predates it.
 
+**This doc is the single canonical owner of storage layout** — which table lives in which database (`data.db` vs `system.db`). Other docs (the D0/D1 schema doc, Connector Runtime Module) describe table *shapes* and *semantics* but defer the *placement* question here; the literal definitions live in `core/src/db.ts`. When the boundary changes, update this doc, not the restatements.
+
 ## Context
 
 Adiabatic keeps everything in one SQLite database in `.adiabatic/`: the user substrate (`D0` / `D1` / `D2`) and the system's own control-plane tables (`connector_integrations`, `connector_custom_approvals`, …). The app read path (`/api/query`) calls a table-agnostic, read-only `Guard.query` for every authenticated caller — there is **no app-aware read filter**. So any table in the shared file is reachable by app code today: an app can already `SELECT * FROM connector_integrations`. This exposes system control-plane state to app code, and it would expose auth ciphertext/metadata the moment auth tables are added to the same file.
