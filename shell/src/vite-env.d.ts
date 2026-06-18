@@ -9,6 +9,13 @@ interface Window {
   adiabaticHost?: {
     getCoreToken(): Promise<string>;
     getBridgeToken(): Promise<string>;
+    getRecoveryCode(): Promise<string>;
+    importRecoveryCode(recoveryCode: string): Promise<{ coreBaseUrl: string }>;
+    getCoreBaseUrl(): Promise<string>;
+    getCoreStartError(): Promise<string | null>;
+    retryCore(): Promise<{ coreBaseUrl: string }>;
+    rotateCorePort(): Promise<{ coreBaseUrl: string }>;
+    openExternal(url: string): Promise<void>;
     getWorkspacePath(): Promise<string>;
     chooseWorkspacePath(): Promise<{ path: string | null }>;
     setWorkspacePath(path: string): Promise<{ path: string }>;

@@ -1,7 +1,7 @@
 // WorkspacePanel — shows the active workspace and lets the Electron host switch it.
 
 import { useCallback, useEffect, useState } from "react";
-import { getWorkspace } from "../lib/api";
+import { clearCoreBaseUrlCache, getWorkspace } from "../lib/api";
 import styles from "./WorkspacePanel.module.css";
 
 interface WorkspacePanelProps {
@@ -15,6 +15,9 @@ export function WorkspacePanel({ coreStatus, onCoreChanged }: WorkspacePanelProp
   const [hostPath, setHostPath] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [coreBaseUrl, setCoreBaseUrl] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recoveryInput, setRecoveryInput] = useState("");
   const [busy, setBusy] = useState(false);
 
   const hasHost = Boolean(window.adiabaticHost);
@@ -22,15 +25,25 @@ export function WorkspacePanel({ coreStatus, onCoreChanged }: WorkspacePanelProp
   const refresh = useCallback(async () => {
     setError(null);
     setMessage(null);
+    const [host, baseUrl, startError] = await Promise.all([
+      window.adiabaticHost?.getWorkspacePath().catch(() => "") ?? Promise.resolve(""),
+      window.adiabaticHost?.getCoreBaseUrl().catch(() => "") ?? Promise.resolve(""),
+      window.adiabaticHost?.getCoreStartError().catch(() => null) ?? Promise.resolve(null),
+    ]);
+    setHostPath(host);
+    setCoreBaseUrl(baseUrl);
+    if (host) setWorkspacePath(host);
+    if (startError) {
+      setError(startError);
+      setCorePath("");
+      return;
+    }
     try {
-      const [core, host] = await Promise.all([
-        getWorkspace(),
-        window.adiabaticHost?.getWorkspacePath().catch(() => "") ?? Promise.resolve(""),
-      ]);
+      const core = await getWorkspace();
       setCorePath(core.path);
-      setHostPath(host);
       setWorkspacePath(host || core.path);
     } catch (err) {
+      setCorePath("");
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
@@ -52,6 +65,7 @@ export function WorkspacePanel({ coreStatus, onCoreChanged }: WorkspacePanelProp
       setMessage("Switching workspace...");
       try {
         const result = await window.adiabaticHost.setWorkspacePath(normalized);
+        clearCoreBaseUrlCache();
         setWorkspacePath(result.path);
         setHostPath(result.path);
         setCorePath(result.path);
@@ -76,6 +90,7 @@ export function WorkspacePanel({ coreStatus, onCoreChanged }: WorkspacePanelProp
     try {
       const result = await window.adiabaticHost.chooseWorkspacePath();
       if (!result.path) return;
+      clearCoreBaseUrlCache();
       setWorkspacePath(result.path);
       setHostPath(result.path);
       setCorePath(result.path);
@@ -88,6 +103,73 @@ export function WorkspacePanel({ coreStatus, onCoreChanged }: WorkspacePanelProp
       setBusy(false);
     }
   }, [onCoreChanged]);
+
+  const retryCore = useCallback(async () => {
+    if (!window.adiabaticHost) return;
+    setBusy(true);
+    setError(null);
+    setMessage("Retrying core...");
+    try {
+      await window.adiabaticHost.retryCore();
+      clearCoreBaseUrlCache();
+      await onCoreChanged();
+      await refresh();
+      setMessage("Core is running.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setMessage(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [onCoreChanged, refresh]);
+
+  const rotateCorePort = useCallback(async () => {
+    if (!window.adiabaticHost) return;
+    setBusy(true);
+    setError(null);
+    setMessage("Rotating core port...");
+    try {
+      const result = await window.adiabaticHost.rotateCorePort();
+      clearCoreBaseUrlCache();
+      setCoreBaseUrl(result.coreBaseUrl);
+      await onCoreChanged();
+      setMessage("Core port rotated. OAuth providers with exact redirect matching need their callback URL updated before reconnecting.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setMessage(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [onCoreChanged]);
+
+  const revealRecoveryCode = useCallback(async () => {
+    if (!window.adiabaticHost) return;
+    setError(null);
+    try {
+      setRecoveryCode(await window.adiabaticHost.getRecoveryCode());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const importRecoveryCode = useCallback(async () => {
+    if (!window.adiabaticHost || !recoveryInput.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.adiabaticHost.importRecoveryCode(recoveryInput.trim());
+      clearCoreBaseUrlCache();
+      setCoreBaseUrl(result.coreBaseUrl);
+      await onCoreChanged();
+      await refresh();
+      setRecoveryInput("");
+      setMessage("Recovery code imported.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [onCoreChanged, recoveryInput, refresh]);
 
   return (
     <div className={styles.panel}>
@@ -109,6 +191,19 @@ export function WorkspacePanel({ coreStatus, onCoreChanged }: WorkspacePanelProp
           </div>
           <div className={styles.pathBox} title={corePath || "Unknown"}>
             {corePath || "Unknown workspace"}
+          </div>
+          {coreBaseUrl && (
+            <div className={styles.pathBox} title={coreBaseUrl}>
+              {coreBaseUrl}
+            </div>
+          )}
+          <div className={styles.buttonRow}>
+            <button className={styles.button} onClick={retryCore} disabled={!hasHost || busy}>
+              Retry Core
+            </button>
+            <button className={styles.button} onClick={rotateCorePort} disabled={!hasHost || busy}>
+              Rotate Port
+            </button>
           </div>
         </section>
 
@@ -140,6 +235,34 @@ export function WorkspacePanel({ coreStatus, onCoreChanged }: WorkspacePanelProp
             Workspace switching is available in the Electron shell. This browser session can still
             show the workspace that the local core is already running with.
           </p>
+        )}
+
+        {hasHost && (
+          <section className={styles.section}>
+            <div className={styles.label}>Vault Recovery</div>
+            {recoveryCode ? (
+              <div className={styles.pathBox} title={recoveryCode}>{recoveryCode}</div>
+            ) : (
+              <button className={styles.button} onClick={revealRecoveryCode} disabled={busy}>
+                Reveal Recovery Code
+              </button>
+            )}
+            <input
+              className={styles.input}
+              type="password"
+              placeholder="import recovery code"
+              value={recoveryInput}
+              onChange={(event) => setRecoveryInput(event.target.value)}
+              disabled={busy}
+            />
+            <button
+              className={styles.button}
+              onClick={importRecoveryCode}
+              disabled={busy || !recoveryInput.trim()}
+            >
+              Import Recovery Code
+            </button>
+          </section>
         )}
 
         {message && <div className={styles.message}>{message}</div>}

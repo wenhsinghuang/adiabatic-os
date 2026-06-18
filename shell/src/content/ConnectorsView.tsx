@@ -13,10 +13,12 @@ import {
   connectConnectorIntegration,
   createConnectorIntegration,
   deleteConnectorIntegration,
+  getConnectorOAuthAttempt,
   installConnector,
   removeConnector,
   requestConnectorRequirement,
   restartConnectorIntegration,
+  startConnectorOAuth,
   updateConnectorIntegration,
   type ConnectorIntegrationView,
   type ConnectorRequirementView,
@@ -358,6 +360,7 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
   const state = channelState(c);
   const needs = setupNeeds(c);
   const [tokenInput, setTokenInput] = useState("");
+  const [clientSecretInput, setClientSecretInput] = useState("");
   const [keyInput, setKeyInput] = useState("");
   const cardBusy = Boolean(busy[c.id]);
   const showSetup = trusted && interactive && c.enabled;
@@ -421,6 +424,20 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
         </div>
       )}
 
+      {c.authAttention === "redirect_uri_changed" && (
+        <div className={styles.lastError}>
+          <span className={styles.errorGlyph}>▲</span>
+          OAuth redirect URI changed. Existing tokens may keep working, but update the provider app before reconnecting this account.
+        </div>
+      )}
+
+      {c.authAttention === "refresh_failed" && (
+        <div className={styles.lastError}>
+          <span className={styles.errorGlyph}>▲</span>
+          OAuth refresh failed. Reconnect this account.
+        </div>
+      )}
+
       {showSetup && c.setupPending.includes("integration_key") && (
         <form
           className={styles.inlineForm}
@@ -469,10 +486,51 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
               {busy[c.id] === "connect" ? "connecting…" : "Connect"}
             </button>
           </form>
+        ) : c.authType === "oauth2" ? (
+          <form
+            className={styles.oauthBox}
+            onSubmit={(event) => {
+              event.preventDefault();
+              const requiresSecret = c.authTokenEndpointAuthMethod
+                && c.authTokenEndpointAuthMethod !== "none";
+              if (requiresSecret && !clientSecretInput.trim()) return;
+              onAct(c.id, "oauth", async () => {
+                const started = await startConnectorOAuth(
+                  c.id,
+                  clientSecretInput.trim() || undefined,
+                );
+                await openAuthorizationUrl(started.authorizationUrl);
+                await waitForOAuthAttempt(c.id, started.attemptId);
+                setClientSecretInput("");
+              });
+            }}
+          >
+            {c.oauthRedirectUri && (
+              <div className={styles.oauthNote}>
+                redirect <span className={styles.redirectUri}>{c.oauthRedirectUri}</span>
+              </div>
+            )}
+            {c.authTokenEndpointAuthMethod && c.authTokenEndpointAuthMethod !== "none" && (
+              <input
+                className={styles.inlineInput}
+                type="password"
+                placeholder="OAuth client secret"
+                value={clientSecretInput}
+                onChange={(event) => setClientSecretInput(event.target.value)}
+              />
+            )}
+            <button
+              className={styles.primaryBtn}
+              disabled={
+                cardBusy
+                || Boolean(c.authTokenEndpointAuthMethod && c.authTokenEndpointAuthMethod !== "none" && !clientSecretInput.trim())
+              }
+            >
+              {busy[c.id] === "oauth" ? "waiting…" : "Connect Account"}
+            </button>
+          </form>
         ) : (
-          <div className={styles.oauthNote}>
-            OAuth account connection is coming with the auth module.
-          </div>
+          <div className={styles.oauthNote}>Unsupported auth type.</div>
         )
       )}
 
@@ -502,6 +560,25 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
       )}
     </div>
   );
+}
+
+async function openAuthorizationUrl(url: string): Promise<void> {
+  if (window.adiabaticHost?.openExternal) {
+    await window.adiabaticHost.openExternal(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener");
+}
+
+async function waitForOAuthAttempt(integrationId: string, attemptId: string): Promise<void> {
+  for (let i = 0; i < 180; i++) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    const result = await getConnectorOAuthAttempt(integrationId, attemptId);
+    if (result.status === "pending") continue;
+    if (result.status === "connected") return;
+    throw new Error(result.error ?? `OAuth ${result.status}`);
+  }
+  throw new Error("OAuth connection timed out");
 }
 
 interface RequirementChipProps {

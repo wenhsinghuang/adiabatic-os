@@ -15,7 +15,7 @@
 
 import { WebContainer } from "@webcontainer/api";
 import { SANDBOX_FILES } from "./sandbox-files";
-import { getAppSource, getBridgeToken, type AppInfo } from "../lib/api";
+import { getAppSource, getBridgeToken, getCoreBaseUrl, type AppInfo } from "../lib/api";
 
 let instance: WebContainer | null = null;
 let serverUrl: string | null = null;
@@ -110,6 +110,7 @@ export async function startBridgeServer(): Promise<string> {
     const serverProcess = await instance!.spawn("node", ["bridge-server.js"], {
       env: {
         ADIABATIC_BRIDGE_TOKEN: await getBridgeToken(),
+        ADIABATIC_CORE_URL: await getCoreBaseUrl(),
       },
     });
 

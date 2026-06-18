@@ -4,9 +4,8 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { getCoreBaseUrl } from "../lib/api";
 import styles from "./TerminalPanel.module.css";
-
-const WS_URL = "ws://localhost:3000/api/terminal";
 
 interface TerminalPanelProps {
   visible: boolean;
@@ -162,48 +161,64 @@ function connectWebSocketTerminal(
   setStatus: (status: TerminalStatus) => void,
   resizeRef: MutableRefObject<(cols: number, rows: number) => void>,
 ): () => void {
-  const ws = new WebSocket(WS_URL);
-  ws.binaryType = "arraybuffer";
+  let ws: WebSocket | null = null;
+  let disposed = false;
 
-  ws.onopen = () => {
-    setStatus("connected");
-    sendResize(ws, term.cols, term.rows);
-  };
+  void getCoreBaseUrl()
+    .then((base) => {
+      if (disposed) return;
+      const url = new URL("/api/terminal", base);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(url.toString());
+      ws.binaryType = "arraybuffer";
 
-  ws.onmessage = (event) => {
-    if (event.data instanceof ArrayBuffer) {
-      term.write(new Uint8Array(event.data));
-    } else {
-      term.write(event.data);
-    }
-  };
+      ws.onopen = () => {
+        setStatus("connected");
+        if (ws) sendResize(ws, term.cols, term.rows);
+      };
 
-  ws.onclose = () => {
-    setStatus("disconnected");
-    term.writeln("\r\n\x1b[90m~ Terminal disconnected ~\x1b[0m");
-  };
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(event.data));
+        } else {
+          term.write(event.data);
+        }
+      };
 
-  ws.onerror = () => {
-    setStatus("error");
-    term.writeln("\r\n\x1b[31m~ Connection error ~\x1b[0m");
-  };
+      ws.onclose = () => {
+        setStatus("disconnected");
+        term.writeln("\r\n\x1b[90m~ Terminal disconnected ~\x1b[0m");
+      };
+
+      ws.onerror = () => {
+        setStatus("error");
+        term.writeln("\r\n\x1b[31m~ Connection error ~\x1b[0m");
+      };
+    })
+    .catch((err) => {
+      setStatus("error");
+      term.writeln(`\r\n\x1b[31m~ Connection error: ${String(err)} ~\x1b[0m`);
+    });
 
   const inputDisposable = term.onData((data) => {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws?.readyState === WebSocket.OPEN) {
       ws.send(data);
     }
   });
 
   const resizeDisposable = term.onResize(({ cols, rows }) => {
-    sendResize(ws, cols, rows);
+    if (ws) sendResize(ws, cols, rows);
   });
 
-  resizeRef.current = (cols, rows) => sendResize(ws, cols, rows);
+  resizeRef.current = (cols, rows) => {
+    if (ws) sendResize(ws, cols, rows);
+  };
 
   return () => {
+    disposed = true;
     inputDisposable.dispose();
     resizeDisposable.dispose();
-    ws.close();
+    ws?.close();
   };
 }
 

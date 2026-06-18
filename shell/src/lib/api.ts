@@ -1,6 +1,21 @@
-// HTTP client for core runtime (localhost:3000)
+// HTTP client for core runtime. Electron provides the production URL; browser
+// dev keeps a default so `npm run dev` can still talk to a standalone core.
 
-const BASE = "http://localhost:3000";
+let cachedCoreBaseUrl: string | null = null;
+
+export async function getCoreBaseUrl(): Promise<string> {
+  if (cachedCoreBaseUrl) return cachedCoreBaseUrl;
+  const hostBase = await window.adiabaticHost?.getCoreBaseUrl().catch(() => null);
+  const resolved = hostBase
+    ?? import.meta.env.VITE_ADIABATIC_CORE_URL
+    ?? "http://localhost:3000";
+  cachedCoreBaseUrl = resolved;
+  return resolved;
+}
+
+export function clearCoreBaseUrlCache(): void {
+  cachedCoreBaseUrl = null;
+}
 
 export async function getCoreToken(): Promise<string> {
   const token = await window.adiabaticHost?.getCoreToken();
@@ -28,7 +43,8 @@ async function coreHeaders(options?: RequestInit): Promise<Headers> {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const base = await getCoreBaseUrl();
+  const res = await fetch(`${base}${path}`, {
     ...options,
     headers: await coreHeaders(options),
   });
@@ -46,7 +62,8 @@ export function subscribeDocEvents(
 
   void (async () => {
     try {
-      const res = await fetch(`${BASE}/api/docs/events`, {
+      const base = await getCoreBaseUrl();
+      const res = await fetch(`${base}/api/docs/events`, {
         headers: await coreHeaders(),
         signal: controller.signal,
       });
@@ -223,7 +240,11 @@ export interface ConnectorIntegrationView {
   setupStatus: "setup" | "ready";
   packageTrust: ConnectorTrust;
   authType: "none" | "apiKey" | "oauth2";
+  authTokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
+  authStatus?: string;
+  authAttention?: "refresh_failed" | "redirect_uri_changed";
   authReady: boolean;
+  oauthRedirectUri?: string;
   setupPending: ConnectorSetupPendingReason[];
   source?: string;
   running: boolean;
@@ -349,6 +370,40 @@ export function connectConnectorIntegration(
     method: "POST",
     body: JSON.stringify({ token }),
   });
+}
+
+export interface OAuthStartResult {
+  authorizationUrl: string;
+  attemptId: string;
+  redirectUri: string;
+  expiresAt: number;
+}
+
+export type OAuthAttemptStatus = "pending" | "connected" | "failed" | "expired";
+
+export interface OAuthAttemptResult {
+  status: OAuthAttemptStatus;
+  credentialId?: string;
+  error?: string;
+}
+
+export function startConnectorOAuth(
+  integrationId: string,
+  clientSecret?: string,
+): Promise<OAuthStartResult> {
+  return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}/oauth/start`, {
+    method: "POST",
+    body: JSON.stringify({ clientSecret }),
+  });
+}
+
+export function getConnectorOAuthAttempt(
+  integrationId: string,
+  attemptId: string,
+): Promise<OAuthAttemptResult> {
+  return request(
+    `/api/connectors/integrations/${encodeURIComponent(integrationId)}/oauth/attempts/${encodeURIComponent(attemptId)}`,
+  );
 }
 
 export function removeConnector(connectorId: string): Promise<{ ok: true; removed: boolean }> {

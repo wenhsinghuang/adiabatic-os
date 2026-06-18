@@ -525,6 +525,19 @@
   padding: 3px 10px;
 }
 
+.oauthBox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.redirectUri {
+  color: var(--c-ink-dim);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
 /* ── Requirements ───────────────────────────────────────────────────── */
 
 .requirements {

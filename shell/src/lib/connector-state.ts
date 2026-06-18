@@ -17,6 +17,7 @@ export function channelState(c: ConnectorIntegrationView): ChannelState {
   if (!c.supported) return "unsupported";
   if (c.packageTrust !== "official" && c.packageTrust !== "custom") return "quarantined";
   if (!c.enabled || c.status === "disabled") return "disabled";
+  if (c.authAttention) return "attention";
   if (c.status === "error" && c.setupStatus === "ready") return "attention";
   if (c.running) return "live";
   if (c.setupStatus === "setup" || c.status === "error") return "setup";

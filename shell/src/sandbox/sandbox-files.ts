@@ -161,7 +161,7 @@ import { createServer } from "http";
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 
-const CORE_URL = "http://localhost:3000";
+const CORE_URL = process.env.ADIABATIC_CORE_URL || "http://localhost:3000";
 const PORT = 4000;
 const APP_ID_HEADER = "X-Adiabatic-App-Id";
 const BRIDGE_TOKEN_HEADER = "X-Adiabatic-Bridge-Token";

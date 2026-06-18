@@ -109,7 +109,7 @@ export function Dashboard({
       {coreStatus === "offline" && (
         <div className={styles.notice}>
           <strong>Core is not reachable.</strong>
-          <span>{coreError ?? "Start the core server on localhost:3000 to use workspace data."}</span>
+          <span>{coreError ?? "Start the core server to use workspace data."}</span>
         </div>
       )}
 
