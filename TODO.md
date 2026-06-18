@@ -6,20 +6,18 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 
 ### Cold start prereqs
 
-- [ ] System DB separation: substrate vs control-plane
+- [x] System DB separation: substrate vs control-plane
   - Design: [System Database Separation](design/current/202606150100-System%20Database%20Separation.md).
-  - Split the one SQLite file into a data DB (D0/D1/D2, app-queryable via Guard) and a system DB (connector + auth control-plane, never app-readable); app query/write paths open only the data DB.
-  - Closes the pre-existing exposure of `connector_integrations` etc. via `/api/query`, and is a prerequisite for adding any auth table.
-  - Substrate-level refactor, not auth-specific; auth is one consumer.
+  - Done: data.db (D0/D1/D2, Guard, app-queryable) + system.db (connector + auth control-plane, app-unreachable); app paths open only data.db. No migration (pre-ship).
 
-- [ ] Auth / secrets module
-  - Unified management for API keys, OAuth, and scoped runtime credentials.
+- [x] Auth / secrets module
   - Design: [Auth and Secret Store](design/current/202606150000-Auth%20and%20Secret%20Store.md).
-  - Broker holds raw secrets; callers get capability handles. E2E envelope: random vault_key, ciphertext-only in DB, recovery-code unlock with keyslots as future extensibility.
-  - Build the whole local module together (no build-effort phasing): SecretStore + vault_key envelope + OS-keychain unlock + recovery code + apiKey + OAuth2 PKCE engine + loopback callback. Depends on the system DB separation above.
-  - Deferred only by external dependency: shared-secret confidential OAuth (needs hosted relay); google_account / multi-device keyslots (need the devices registry).
+  - Done: AES-256-GCM secret broker in system.db behind the unchanged `getToken()` handle; apiKey + OAuth2 PKCE (single-flight refresh, user-supplied confidential client secret); per-workspace vault_key via Electron safeStorage + recovery code (locked→recovery on a new device); auth lifecycle is system.db state, no D0 events; stable persisted core port.
+  - Verified by unit/integration tests (secret-store crypto, callback binds auth_ref, single-flight). **Still pending: OAuth end-to-end against a real provider** — needs the first real OAuth connector to exercise the live authorize→callback→refresh path.
+  - Deferred (external dependency): shared-secret confidential OAuth (hosted relay); google_account / multi-device keyslots (devices registry).
 
 - [ ] Built first few important connectors
+  - Includes the first real OAuth connector, which doubles as the OAuth engine's end-to-end verification.
 
 - [ ] Cold-start my personal system
   - Cold start is apps/data built on the substrate, not substrate itself.
