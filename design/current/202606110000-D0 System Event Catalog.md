@@ -4,6 +4,23 @@ Status: canon. Update this catalog whenever a system component starts emitting a
 
 D0 is the append-only event ledger. Every write goes through Guard, which stamps `source` provenance. This doc catalogs the event types the **system itself** writes — as opposed to product data written by apps and connectors. It exists so that event consumers (Activity view, retrieval, future triggers) and future agents know exactly what is in the ledger and what is not.
 
+## Recording Boundary — what is D0 material, and what is not
+
+D0 is the substrate's permanent history, not an operations log. Keeping a hard floor here is what stops D0 from degrading into UI/ops telemetry. An event is D0 material only if it is one of exactly three kinds:
+
+1. **Substrate fact** — something Adiabatic should remember long-term and that future derivation can use: a connector observation (commit, calendar event, terminal line), a D1 doc edit, a D2 row change.
+2. **User-owned executable artifact changed** — an inspectable, diffable, revertable system-capability artifact changed: a connector package installed/removed, app code committed. *Not* runtime config or status.
+3. **Human trust decision on executable code** — the user authorized a specific piece of code/hash to become an executable capability: connector package approved. This is not an ordinary permission; it is "this code may enter my system."
+
+Everything else stays in **control-plane current state** (`system.db`), never D0. Two anti-slip tests catch the rest:
+
+- *Would this still matter if the connector/app stopped running tomorrow?* `connector.approved` would (you once trusted that code); `app.commit` would (the capability itself changed); `auth.refresh_failed` would not (it was just the runtime state at the time).
+- *Is this primarily for UI status, debugging, retry, setup, or health display?* If yes, it is not D0. This excludes **auth** (connect/refresh/revoke/fail), **requirements/provisioning**, **scheduler/run status**, `last_error`, `next_run`, `enabled/disabled`, and integration config.
+
+So **auth credential lifecycle does not produce D0 events.** Auth is provisioning that lets a connector run (the setup evaluator already treats it as a *requirement*, alongside OS permissions) — not a substrate fact, not an executable artifact, not a code-trust decision. Credential metadata and status live in `system.db` as control-plane state.
+
+This is deliberately reversible: a new event type is additive and non-breaking, so the default is to *exclude*. If a concrete need later appears (e.g. a privacy audit of "when did I grant which external scope"), add the event then — or keep it as `system.db` credential metadata (`granted_at`). `system.db` holds control-plane current state (some of it durable, like credential metadata and integration config); it is **not** a second event log.
+
 ## Source conventions
 
 ```text

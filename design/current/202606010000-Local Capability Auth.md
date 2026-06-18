@@ -2,7 +2,7 @@
 
 Status: current implementation decision
 
-Adiabatic is local-first, but the core server is still an HTTP process on localhost. Localhost is not a security boundary: browser pages, local tools, and sandboxed app code can all attempt requests to `http://localhost:3000`.
+Adiabatic is local-first, but the core server is still an HTTP process on localhost. Localhost is not a security boundary: browser pages, local tools, and sandboxed app code can all attempt requests to the local core URL.
 
 This matters because Guard is the substrate write boundary. If a caller can reach core without a capability, or if a read route can mutate SQLite, then D0 audit, source provenance, and app write permissions stop being trustworthy.
 

@@ -5,16 +5,6 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 ## Roadmap
 
 ### Cold start prereqs
-- [ ] Connector production
-  - Status: v0.1 local substrate exists — manifest/framework, `connectors/<id>/` install/remove, explicit bundled catalog install, Source Console/Catalog UI, hash trust gate, runner isolation, scheduler, and `app-commits` package.
-  - End-to-end verify `app-commits`: install from catalog -> approve package -> scheduler run -> D0 `app.commit` events.
-  - built-in: Terminal connector, after capture/privacy policy is explicit.
-  - Official trust catalog: generate hashes from `template/connectors/`, publish signed/R2 catalog, load/cache at runtime, and auto-classify matching packages as `official`.
-  - Update/reinstall flow: detect newer bundled/official package hashes, preserve runtime state, never overwrite edited packages silently.
-  - Auth/secrets: replace temporary API-key token path with unified secret store and OAuth browser flow.
-  - Push / webhook runtime mode: a 4th mode beyond watch/poll/import where the provider pushes events to a public receive endpoint (see Hosted relay / edge). Only needed for inbound-webhook-only services (e.g. Stripe). Outbound realtime — long polling, WebSocket, Socket Mode (Telegram getUpdates, Slack Socket Mode) — is already covered by `watch` and needs no endpoint; webhook-capable services fall back to watch/poll until the relay exists.
-  - Remote connector catalog/download source; current catalog only lists bundled packages.
-  - Purge/forget connector action for destructive cleanup of integration config, checkpoint, auth refs, and schedules.
 
 - [ ] System DB separation: substrate vs control-plane
   - Design: [System Database Separation](design/current/202606150100-System%20Database%20Separation.md).
@@ -28,6 +18,8 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Broker holds raw secrets; callers get capability handles. E2E envelope: random vault_key, ciphertext-only in DB, recovery-code unlock with keyslots as future extensibility.
   - Build the whole local module together (no build-effort phasing): SecretStore + vault_key envelope + OS-keychain unlock + recovery code + apiKey + OAuth2 PKCE engine + loopback callback. Depends on the system DB separation above.
   - Deferred only by external dependency: shared-secret confidential OAuth (needs hosted relay); google_account / multi-device keyslots (need the devices registry).
+
+- [ ] Built first few important connectors
 
 - [ ] Cold-start my personal system
   - Cold start is apps/data built on the substrate, not substrate itself.
@@ -64,6 +56,17 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 - [ ] Retrieval / memory module
   - Replaceable retrieval data source over D0/D1/D2.
   - See [Retrieval Memory Module Requirements](design/current/202606040000-Retrieval%20Memory%20Module%20Requirements.md).
+
+- [ ] Connector production
+  - Status: v0.1 local substrate exists — manifest/framework, `connectors/<id>/` install/remove, explicit bundled catalog install, Source Console/Catalog UI, hash trust gate, runner isolation, scheduler, and `app-commits` package.
+  - End-to-end verify `app-commits`: install from catalog -> approve package -> scheduler run -> D0 `app.commit` events.
+  - built-in: Terminal connector, after capture/privacy policy is explicit.
+  - Official trust catalog: generate hashes from `template/connectors/`, publish signed/R2 catalog, load/cache at runtime, and auto-classify matching packages as `official`.
+  - Update/reinstall flow: detect newer bundled/official package hashes, preserve runtime state, never overwrite edited packages silently.
+  - Auth/secrets: replace temporary API-key token path with unified secret store and OAuth browser flow.
+  - Push / webhook runtime mode: a 4th mode beyond watch/poll/import where the provider pushes events to a public receive endpoint (see Hosted relay / edge). Only needed for inbound-webhook-only services (e.g. Stripe). Outbound realtime — long polling, WebSocket, Socket Mode (Telegram getUpdates, Slack Socket Mode) — is already covered by `watch` and needs no endpoint; webhook-capable services fall back to watch/poll until the relay exists.
+  - Remote connector catalog/download source; current catalog only lists bundled packages.
+  - Purge/forget connector action for destructive cleanup of integration config, checkpoint, auth refs, and schedules.
 
 ### Production
 

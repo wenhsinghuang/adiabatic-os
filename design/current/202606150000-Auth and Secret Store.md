@@ -75,6 +75,7 @@ use:    vault_key = keychain.get()                                # not from DB
 Two custody domains stay separate: the database/substrate holds only ciphertext, and the key lives elsewhere (device keychain plus the recovery code). A breach of one domain alone does not expose secrets; both halves are required.
 
 - **OS keychain** caches the `vault_key` per device. It is device-dependent by design: the cached key never leaves the machine, so keychain alone does not solve multi-device — it only removes daily re-entry.
+- **`vault_id` is workspace-local, stable, and non-secret.** Electron uses it to find the per-workspace keychain entry for the `vault_key`. It lives in `.adiabatic/settings.json` as system-owned workspace metadata, is generated once when the workspace vault is first initialized, and is never derived from the workspace path (so moving/renaming the folder does not change the keychain lookup identity).
 - **Recovery code** is the cross-device bridge: the `vault_key` rendered as a human-typable string (reversible encoding, *not* a hash — a hash cannot be reversed back to the key). Typing it on a new device reconstructs the `vault_key` into that device's keychain. The recovery code and the root key are the same material in two representations.
 
 A new device needs both halves: the key (via the recovery code) and the ciphertext (via the synced substrate / the user's own folder sync). The recovery code transports the key; ciphertext transport is the separate substrate-sync concern. Keeping them on different channels preserves the two-domain separation.
@@ -104,7 +105,9 @@ Because keyslots coexist, custody need not be a single global decision — multi
 
 ## OAuth2 — Authorization Code + PKCE
 
-v1 supports only the Authorization Code flow with PKCE (public client). The flow is local and has no intermediary: the broker opens the provider authorization URL, receives the redirect on a loopback callback (core `/oauth/callback`, unauthenticated, `state` as CSRF protection), and exchanges the code directly with the provider. The token never transits a third party.
+v1 supports the Authorization Code flow with PKCE. The flow is local and has no intermediary: the broker opens the provider authorization URL, receives the redirect on a loopback callback (core `/oauth/callback`, unauthenticated, `state` as CSRF protection), and exchanges the code directly with the provider. The token never transits a third party.
+
+The v1 redirect URI is derived from the workspace's persisted core port: `http://127.0.0.1:<corePort>/oauth/callback`. The broker uses exactly that value in the authorization request, and the setup UI shows it to users setting up custom OAuth apps because providers require the redirect URI to be pre-registered. The callback stays outside `/api/*`, but still enforces the localhost host restriction and live `state` validation. If the user explicitly rotates the core port later, existing OAuth tokens may continue to refresh, but exact-match providers require updating the registered redirect URI before the next reconnect/re-authorization.
 
 The manifest OAuth config is the standard OAuth/OIDC fields — `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `scope`, `tokenEndpointAuthMethod` — spelled in the manifest's camelCase convention. `clientId` (the OAuth app's public, non-secret client identifier) is **required** even for a public client, and lives in the manifest like every other config field. PKCE (`code_challenge_method=S256`) is always-on broker behavior, not a manifest field. `scope` is given as an array for YAML ergonomics and joined to the standard space-delimited string at the broker boundary. `tokenEndpointAuthMethod` defaults to `none` (public client). The broker is one config-driven Authorization Code executor: it assembles the request from this config and is blind to which "variant" results. PKCE-public, user-confidential (a user-supplied `client_secret`, `tokenEndpointAuthMethod: client_secret_*`), and relay are points in that config space, not engine branches:
 
@@ -118,7 +121,7 @@ The only genuinely external differences are infra (the relay must exist and be o
 
 - **`clientId` always lives in the connector manifest** — for official and custom connectors alike, exactly like the endpoints and scope. An official connector is just a package whose hash the catalog vouches for; the catalog carries only `id`/`hash`/`version` for trust and is **not a config source**, so there is no catalog fallback for `clientId`. (For an official OAuth connector, the org registers the OAuth app and writes its public `clientId` into the published manifest.) Custom connectors are additionally gated by the human approve flow.
 - **A shared `client_secret` is never bundled into a connector.** A connector manifest may declare that a confidential client is needed, but never carries the secret value.
-- **Confidential clients** split by where the secret comes from. A *user-supplied* `client_secret` is per-user and is a low-cost future extension (one more stored secret + one token-exchange parameter). A *shared* `client_secret` cannot be distributed to user machines honestly and requires a hosted token-exchange relay — a separate future hosted-cloud line, not a connector concern.
+- **Confidential clients** split by where the secret comes from. A *user-supplied* `client_secret` is per-user and is in scope for v1 (one more stored secret + one token-exchange parameter). A *shared* `client_secret` cannot be distributed to user machines honestly and requires a hosted token-exchange relay — a separate future hosted-cloud line, not a connector concern.
 
 Adiabatic's own "Sign in with Google" (used by the future `google_account` keyslot) is the app's own public/installed OAuth client (PKCE + loopback); it is unrelated to the connector shared-secret rule.
 
@@ -128,15 +131,15 @@ The OAuth2 secret blob holds the access token, the refresh token, and the expiry
 
 Local Capability Auth requires every `/api/*` route to reject unauthenticated requests. The OAuth redirect lands on a callback that is necessarily unauthenticated (the provider's browser redirect carries no core token), so it is a **deliberate carve-out**: it lives at `/oauth/callback`, *outside* the `/api/*` capability gate by design. It still enforces the localhost-`Host` restriction, and the `state` parameter is not merely "CSRF protection" — it is **single-use, time-boxed, and bound to the specific pending PKCE transaction** (its `code_verifier`), so a callback that does not match a live, unexpired, unconsumed authorization attempt is rejected.
 
-## Data Model and Audit
+## Data Model and Control-Plane Status
 
 ```
 auth_accounts        id, label, subject, created_at
-auth_credentials     id, kind, account_id, owner_type, owner_id, scopes_json, status, secret_item_id, expires_at, created_at, updated_at
+auth_credentials     id, kind, account_id, owner_type, owner_id, scopes_json, status, secret_item_id, expires_at, status_changed_at, created_at, updated_at
 auth_secret_items    id, ciphertext, nonce, algorithm, created_at, updated_at      # encrypted value
 ```
 
-(No `provider` column: the upstream service is implied by the owning connector, and a `provider` label would be redundant with the connector id/name. Display uses the connector name; audit groups by the connector in `owner` / event `source`.)
+(No `provider` column: the upstream service is implied by the owning connector, and a `provider` label would be redundant with the connector id/name. Display and control-plane review group by the connector recorded in `owner`.)
 
 (A keyslot table for unlock methods beyond v1 is future work — see Unlock; v1 stores the `vault_key` in the OS keychain with the recovery code as the bootstrap, so it needs no keyslot rows.)
 
@@ -169,23 +172,13 @@ The auth tables live in the **system DB**, not the user-substrate DB, so app cod
 
 The `vault_key` residing in core memory is acceptable under the existing threat model (Local Capability Auth already excludes process-memory inspection). Standalone core with no Electron host (dev/tests) takes the `vault_key` from an env var or an ephemeral key — deliberately minimal, no elaborate encrypted-file fallback.
 
-D0 records credential lifecycle only, never values:
-
-```
-auth.credential.created   { owner, credential_id, scopes }
-auth.credential.rotated   { owner, credential_id }
-auth.credential.revoked   { owner, credential_id }
-auth.oauth.connected      { owner, credential_id, scopes, expires_at }
-auth.oauth.refresh_failed { owner, credential_id }
-```
-
-`auth.oauth.refresh_failed` feeds the Source Console attention surface: a credential whose refresh fails surfaces for the user exactly like a crashed watch connector.
+Auth lifecycle does **not** produce D0 events. Credential connect, rotate, revoke, refresh, and refresh failure are provisioning/control-plane state, not substrate facts or code-trust decisions. The broker updates `auth_credentials.status`, timestamps, and non-secret metadata in `system.db`; the Source Console attention surface derives from that state plus integration setup state. Do not add `auth.*` D0 event types and do not reserve an `auth.*` event namespace in Guard. Keep the `auth_` table-name prefix reserved in Guard only as data-DB schema protection.
 
 ## What to Build, and What Is Externally Blocked
 
 There is no artificial build-effort phasing: the whole local auth module is built together. What is deferred is deferred only because it depends on something that does not exist yet, not because the code is large.
 
-**Build now — the complete local auth module:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + the **OAuth2 PKCE engine** + loopback callback. This is one coherent thing, built together.
+**Build now — the complete local auth module:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + the **OAuth2 PKCE engine** + user-supplied confidential client secret support (`client_secret_basic` / `client_secret_post`) + loopback callback. This is one coherent thing, built together.
 
 **Deferred only by an external dependency** (not by build effort, and not by verification):
 
