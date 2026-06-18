@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { readFile } from "fs/promises";
 
-const baseUrl = process.env.ADIABATIC_CORE_URL ?? "http://localhost:3000";
+const baseUrl = process.env.ADIABATIC_CORE_URL ?? `http://localhost:${process.env.PORT ?? "3000"}`;
 const coreToken = process.env.ADIABATIC_CORE_TOKEN;
 
 async function main(): Promise<void> {

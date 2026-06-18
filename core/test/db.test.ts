@@ -50,6 +50,15 @@ describe("DB", () => {
     ).get();
     expect(connectorApprovals).toBeTruthy();
 
+    for (const table of ["auth_accounts", "auth_credentials", "auth_secret_items"]) {
+      expect(dataDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
+      ).get(table)).toBeFalsy();
+      expect(systemDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
+      ).get(table)).toBeTruthy();
+    }
+
     close();
   });
 

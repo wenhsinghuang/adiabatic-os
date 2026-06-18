@@ -1613,7 +1613,7 @@ auth:
     expect(placeholder?.setupStatus).toBe("setup");
   });
 
-  test("rejects oauth2 token connect until the auth module exists", async () => {
+  test("rejects oauth2 token connect because oauth uses the browser flow", async () => {
     supervisor.register(
       {
         id: "oauth-feed",
@@ -1634,6 +1634,56 @@ auth:
     await expect(
       supervisor.connectIntegrationWithToken(integration.id, "tok")
     ).rejects.toThrow("oauth2");
+  });
+
+  test("oauth callback binds auth_ref to first-connect setup rows", async () => {
+    supervisor = new ConnectorSupervisor({
+      systemDb,
+      guard: new Guard({ db: dataDb, source: "system:test" }),
+      host: { workspacePath: workspace },
+      platform: "darwin",
+      authManager: new ConnectorAuthManager(secrets, {
+        fetchImpl: async () => new Response(JSON.stringify({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          expires_in: 3600,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      }),
+    });
+    supervisor.register(
+      {
+        id: "oauth-bind",
+        name: "OAuth Bind",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        auth: {
+          type: "oauth2",
+          authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+          tokenEndpoint: "https://oauth2.googleapis.com/token",
+          clientId: "feed-client-id",
+        },
+      },
+      { async run() {} },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "oauth-bind" });
+    systemDb.prepare("UPDATE connector_integrations SET auth_ref = NULL WHERE id = ?").run(integration.id);
+    expect(supervisor.getIntegration(integration.id)?.authRef).toBeUndefined();
+
+    const started = supervisor.startOAuthIntegration(integration.id, {
+      redirectUri: "http://127.0.0.1:32123/oauth/callback",
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await expect(supervisor.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" })))
+      .resolves.toMatchObject({ status: "connected", integrationId: integration.id });
+
+    const connected = supervisor.getIntegration(integration.id)!;
+    expect(connected.authRef).toBe(`connector-integration:${integration.id}:auth`);
+    expect(connected.setupStatus).toBe("ready");
+    expect(await supervisor.getAuthManager().hasToken(connected.authRef!)).toBe(true);
   });
 
   test("emits D0 audit events for connector approve and remove", async () => {

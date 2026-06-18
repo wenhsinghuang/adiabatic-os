@@ -1,6 +1,7 @@
 import { dirname, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
+import { randomBytes } from "crypto";
 import { openDatabases } from "./db";
 import { Guard } from "./guard";
 import type { SchemaOp } from "./guard";
@@ -17,6 +18,12 @@ import {
   registerWorkspaceConnectors,
   removeInstalledConnector,
 } from "./connectors";
+import {
+  AuthCredentialStore,
+  ConnectorAuthManager,
+  SqliteEncryptedSecretStore,
+  encodeVaultKey,
+} from "./connectors/auth";
 import { ulid } from "./utils/ulid";
 import { SettingsStore } from "./settings";
 import {
@@ -40,6 +47,9 @@ const authSecrets: AuthSecrets = {
   coreToken: requireSecret("ADIABATIC_CORE_TOKEN"),
   bridgeToken: requireSecret("ADIABATIC_BRIDGE_TOKEN"),
 };
+const corePort = Number(process.env.PORT) || 3000;
+const coreHost = process.env.HOST || "127.0.0.1";
+const oauthRedirectUri = `http://127.0.0.1:${corePort}/oauth/callback`;
 const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
   type JsonValue =
     | null
@@ -76,10 +86,17 @@ const { dataDb, systemDb, close: closeDB } = openDatabases(workspacePath);
 const guard = new Guard({ db: dataDb, source: "system:server" });
 const settings = new SettingsStore(adiabaticDir);
 await settings.update({ workspacePath });
+const vaultKey = process.env.ADIABATIC_VAULT_KEY ?? encodeVaultKey(randomBytes(32));
+const authManager = new ConnectorAuthManager(
+  new SqliteEncryptedSecretStore(systemDb, vaultKey),
+  { credentialStore: new AuthCredentialStore(systemDb) },
+);
 const connectorSupervisor = new ConnectorSupervisor({
   systemDb,
   guard,
   host: { workspacePath },
+  authManager,
+  oauthRedirectUri,
 });
 // Built-ins are bundled catalog entries; installing one is an explicit user
 // action through the same install flow as any other connector package.
@@ -273,14 +290,22 @@ function resolveAppFile(appDir: string, filename: string): string {
   return target;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 // Track active terminal subprocesses for cleanup
 const terminalProcs = new Set<import("bun").Subprocess>();
 const ptyHelperPath = join(dirname(new URL(import.meta.url).pathname), "pty-helper.cjs");
 
 // Routes
 const server = Bun.serve({
-  hostname: process.env.HOST || "127.0.0.1",
-  port: Number(process.env.PORT) || 3000,
+  hostname: coreHost,
+  port: corePort,
   idleTimeout: 255, // max — SSE connections need long-lived responses
   async fetch(req, server) {
     const url = new URL(req.url);
@@ -298,8 +323,20 @@ const server = Bun.serve({
       return new Response(null, { status: 204, headers });
     }
 
-    if (path.startsWith("/api/") && !isAllowedHost(req)) {
+    if ((path.startsWith("/api/") || path === "/oauth/callback") && !isAllowedHost(req)) {
       return json({ error: "invalid host" }, 403);
+    }
+
+    if (path === "/oauth/callback" && method === "GET") {
+      const result = await connectorSupervisor.completeOAuthCallback(url.searchParams);
+      const ok = result.status === "connected";
+      return new Response(
+        `<!doctype html><meta charset="utf-8"><title>Adiabatic OAuth</title><body style="font-family: system-ui; padding: 24px;"><h1>${ok ? "Connected" : "OAuth failed"}</h1><p>${ok ? "You can return to Adiabatic." : escapeHtml(result.error ?? result.status)}</p></body>`,
+        {
+          status: ok ? 200 : 400,
+          headers: { "Content-Type": "text/html; charset=utf-8", ...headers },
+        },
+      );
     }
 
     const auth = path.startsWith("/api/") ? authenticateRequest(req, authSecrets) : null;
@@ -427,7 +464,11 @@ const server = Bun.serve({
       // -- Connectors --
       if (path === "/api/connectors" && method === "GET") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
-        return json({ connectors: await connectorSupervisor.list() });
+        const connectors = (await connectorSupervisor.list()).map((connector) => ({
+          ...connector,
+          oauthRedirectUri: connector.authType === "oauth2" ? oauthRedirectUri : undefined,
+        }));
+        return json({ connectors });
       }
 
       // Bundled catalog entries; installed reflects whether the package is
@@ -538,6 +579,32 @@ const server = Bun.serve({
           body.token ?? "",
         );
         return json({ integration });
+      }
+
+      const oauthStartMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/oauth\/start$/);
+      if (oauthStartMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const body = await readBody<{ clientSecret?: string }>(req);
+        const result = connectorSupervisor.startOAuthIntegration(
+          decodeURIComponent(oauthStartMatch[1]),
+          {
+            redirectUri: oauthRedirectUri,
+            clientSecret: body.clientSecret,
+          },
+        );
+        return json(result);
+      }
+
+      const oauthAttemptMatch = path.match(
+        /^\/api\/connectors\/integrations\/([^/]+)\/oauth\/attempts\/([^/]+)$/,
+      );
+      if (oauthAttemptMatch && method === "GET") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const result = connectorSupervisor.getOAuthAttempt(
+          decodeURIComponent(oauthAttemptMatch[1]),
+          decodeURIComponent(oauthAttemptMatch[2]),
+        );
+        return json(result);
       }
 
       const restartIntegrationMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/restart$/);

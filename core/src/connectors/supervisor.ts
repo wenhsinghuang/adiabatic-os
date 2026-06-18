@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Guard } from "../guard";
 import { ConnectorAuthManager } from "./auth";
+import type { OAuthAttemptView, OAuthStartResult } from "./auth";
 import { createBoundConnectorGuard, sourceForConnector } from "./guard";
 import {
   InProcessRunnerSession,
@@ -78,6 +79,7 @@ export interface ConnectorSupervisorOptions {
   // How long bounded runner commands (load/check/request) may take before the
   // child is killed and the operation fails.
   runnerCommandTimeoutMs?: number;
+  oauthRedirectUri?: string;
 }
 
 const MANUAL_TRUST: ConnectorPackageTrust = {
@@ -97,6 +99,7 @@ export class ConnectorSupervisor {
   private guard: Guard;
   private host: ConnectorHostContext;
   private registry: WorkspaceConnectorRegistry;
+  private oauthRedirectUri: string | undefined;
 
   constructor(opts: ConnectorSupervisorOptions) {
     this.guard = opts.guard;
@@ -106,6 +109,7 @@ export class ConnectorSupervisor {
     this.platform = opts.platform ?? currentConnectorPlatform();
     this.runnerKillGraceMs = opts.runnerKillGraceMs;
     this.runnerCommandTimeoutMs = opts.runnerCommandTimeoutMs;
+    this.oauthRedirectUri = opts.oauthRedirectUri;
     this.registry = new WorkspaceConnectorRegistry({
       systemDb: opts.systemDb,
       officialCatalog: opts.officialCatalog ?? [],
@@ -230,7 +234,7 @@ export class ConnectorSupervisor {
   }
 
   // apiKey connect: store the pasted token and run the normal connect flow.
-  // oauth2 needs the auth module's browser flow and is rejected until then.
+  // oauth2 uses the browser authorization flow, not this token endpoint.
   async connectIntegrationWithToken<TConfig = unknown, TState = unknown>(
     instanceId: string,
     token: string,
@@ -245,14 +249,54 @@ export class ConnectorSupervisor {
       throw new Error(`Connector ${existing.connectorId} does not require auth`);
     }
     if (auth.type === "oauth2") {
-      throw new Error(`Connector ${existing.connectorId} uses oauth2; browser connect flow is not supported yet`);
+      throw new Error(`Connector ${existing.connectorId} uses oauth2; use the browser connect flow`);
     }
     if (!token || !token.trim()) {
       throw new Error("Connector apiKey connect requires a non-empty token");
     }
     const authRef = existing.authRef ?? defaultAuthRef(existing.id);
-    await this.authManager.setToken(authRef, token.trim());
+    await this.authManager.setToken(authRef, token.trim(), {
+      ownerType: "connector",
+      ownerId: existing.id,
+    });
     return this.connectIntegration<TConfig, TState>(instanceId, { authRef });
+  }
+
+  startOAuthIntegration(
+    instanceId: string,
+    input: { redirectUri: string; clientSecret?: string },
+  ): OAuthStartResult {
+    const existing = this.store.get(instanceId);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(existing.connectorId);
+    const auth = registration.manifest.auth ?? { type: "none" };
+    if (auth.type !== "oauth2") {
+      throw new Error(`Connector ${existing.connectorId} does not use oauth2`);
+    }
+    if (!isPlatformSupported(registration.manifest, this.platform)) {
+      throw new Error(`Connector ${existing.connectorId} is not supported on ${this.platform}`);
+    }
+    return this.authManager.startOAuth(existing, auth, input);
+  }
+
+  getOAuthAttempt(instanceId: string, attemptId: string): OAuthAttemptView {
+    return this.authManager.getOAuthAttempt(instanceId, attemptId);
+  }
+
+  async completeOAuthCallback(params: URLSearchParams): Promise<OAuthAttemptView> {
+    const result = await this.authManager.completeOAuthCallback(params);
+    if (result.status === "connected" && result.integrationId && result.authRef) {
+      const integration = this.store.get(result.integrationId);
+      if (integration) {
+        if (integration.authRef !== result.authRef) {
+          this.store.update(integration.id, { authRef: result.authRef });
+        }
+        await this.refreshSetupStatus(integration.id);
+      }
+    }
+    return result;
   }
 
   ensureIntegration<TConfig = unknown, TState = unknown>(
@@ -402,6 +446,9 @@ export class ConnectorSupervisor {
     supported: boolean;
     packageTrust: ConnectorPackageTrust["status"];
     authType: string;
+    authTokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
+    authStatus?: string;
+    authAttention?: "refresh_failed" | "redirect_uri_changed";
     authReady: boolean;
     setupPending: ConnectorSetupPendingReason[];
     requirements: ConnectorRequirementView[];
@@ -416,6 +463,21 @@ export class ConnectorSupervisor {
         ? activePlatformRequirements(registration.manifest, this.platform)
         : [];
       const authType = (registration?.manifest.auth ?? { type: "none" }).type;
+      const authTokenEndpointAuthMethod = registration?.manifest.auth?.type === "oauth2"
+        ? registration.manifest.auth.tokenEndpointAuthMethod ?? "none"
+        : undefined;
+      const credential = integration.authRef ? this.authManager.credential(integration.authRef) : undefined;
+      const storedRedirectUri = typeof credential?.metadata?.redirect_uri === "string"
+        ? credential.metadata.redirect_uri
+        : undefined;
+      const authAttention = credential?.status === "refresh_failed"
+        ? "refresh_failed"
+        : authType === "oauth2"
+          && storedRedirectUri
+          && this.oauthRedirectUri
+          && storedRedirectUri !== this.oauthRedirectUri
+            ? "redirect_uri_changed"
+            : undefined;
       const authReady = authType === "none"
         || Boolean(integration.authRef && (await this.authManager.hasToken(integration.authRef)));
 
@@ -440,6 +502,9 @@ export class ConnectorSupervisor {
         supported: registration ? isPlatformSupported(registration.manifest, this.platform) : false,
         packageTrust: registration?.trust.status ?? "missing",
         authType,
+        authTokenEndpointAuthMethod,
+        authStatus: credential?.status,
+        authAttention,
         authReady,
         setupPending,
         requirements: activeRequirements.map((id) => ({

@@ -84,6 +84,43 @@ CREATE TABLE IF NOT EXISTS connector_custom_approvals (
   approved_at    INTEGER NOT NULL,
   PRIMARY KEY (connector_id, approved_hash)
 );
+
+CREATE TABLE IF NOT EXISTS auth_accounts (
+  id          TEXT PRIMARY KEY,
+  label       TEXT,
+  subject     TEXT,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_secret_items (
+  id          TEXT PRIMARY KEY,
+  ciphertext  TEXT NOT NULL,
+  nonce       TEXT NOT NULL,
+  algorithm   TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_credentials (
+  id                TEXT PRIMARY KEY,
+  kind              TEXT NOT NULL,
+  account_id        TEXT REFERENCES auth_accounts(id),
+  owner_type        TEXT NOT NULL,
+  owner_id          TEXT NOT NULL,
+  scopes_json       JSON,
+  status            TEXT NOT NULL,
+  secret_item_id    TEXT NOT NULL REFERENCES auth_secret_items(id) ON DELETE CASCADE,
+  expires_at        INTEGER,
+  metadata          JSON,
+  status_changed_at INTEGER NOT NULL,
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_credentials_owner
+  ON auth_credentials(owner_type, owner_id);
+CREATE INDEX IF NOT EXISTS idx_auth_credentials_status
+  ON auth_credentials(status);
 `;
 
 export interface AdiabaticDatabases {
