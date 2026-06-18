@@ -1259,8 +1259,7 @@ auth:
       externalId: `hello-world:${firstSha}`,
       payload: {
         appId: "hello-world",
-        repoPath: appDir,
-        sha: firstSha,
+        commitSha: firstSha,
         authorName: "Test User",
         authorEmail: "test@example.com",
         subject: "Initial app",

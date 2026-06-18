@@ -55,8 +55,7 @@ async function syncAppRepo({ guard, repo, lastSha, signal }) {
       startedAt: Number(committedAt) * 1000,
       payload: {
         appId: repo.appId,
-        repoPath: repo.dir,
-        sha,
+        commitSha: sha,
         authorName,
         authorEmail,
         subject,
