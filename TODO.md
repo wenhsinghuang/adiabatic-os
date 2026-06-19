@@ -16,6 +16,11 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Verified by unit/integration tests (secret-store crypto, callback binds auth_ref, single-flight). **Still pending: OAuth end-to-end against a real provider** — needs the first real OAuth connector to exercise the live authorize→callback→refresh path.
   - Deferred (external dependency): shared-secret confidential OAuth (hosted relay); google_account / multi-device keyslots (devices registry).
 
+- [x] app lifecycle D0 events
+  - `app.created` (POST /api/apps) + `app.archived` (POST /api/apps/:id/archive, non-destructive move to `.adiabatic/archived-apps/`); both system-written + reserved in Guard. The "U" is `app.commit`; "R" gets no event. No hard-delete path — removal is archival.
+  - Catalogued in [D0 System Event Catalog](design/current/202606110000-D0%20System%20Event%20Catalog.md).
+  - Archive button wired in AppsPanel (per-app, confirm + refresh). Restore deferred — re-add `POST /api/apps/:id/restore` + `app.restored` + a button when needed.
+
 - [ ] Built first few important connectors
   - Includes the first real OAuth connector, which doubles as the OAuth engine's end-to-end verification.
 
@@ -31,6 +36,9 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Shared substrate for app subscribe and connector subscribe
   - All automation/event flow should continue to pass through D0
 
+- [ ] app runtime
+  - Reference connector runtime manifest, design app runtime manifest
+ 
 - [ ] Trigger runtime
   - Trigger/Cron table
   - Two minimal app convention entry points (1 normal, 1 job run)

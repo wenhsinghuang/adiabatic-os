@@ -6,7 +6,7 @@ import { openDatabases } from "./db";
 import { Guard } from "./guard";
 import type { SchemaOp } from "./guard";
 import { WorkingTree } from "./working-tree";
-import { loadApps } from "./app-loader";
+import { archiveApp, loadApps } from "./app-loader";
 import { ensureClaudeMd } from "./claude-md";
 import {
   ConnectorScheduler,
@@ -711,7 +711,37 @@ const server = Bun.serve({
 
         // Reload registry
         registry = await loadApps(appsDir);
+
+        // D0 composition: a new capability unit was registered into the system.
+        // Only the id is recorded — at creation name mirrors the id and the
+        // write scope is always empty; both evolve later through app.commit.
+        guard.writeEvent({
+          type: "app.created",
+          startedAt: Date.now(),
+          payload: { appId: id },
+        });
         return json({ ok: true, id });
+      }
+
+      // -- Archive App (non-destructive removal) --
+      const archiveMatch = path.match(/^\/api\/apps\/([^/]+)\/archive$/);
+      if (archiveMatch && method === "POST") {
+        const appId = decodeURIComponent(archiveMatch[1]);
+        const app = registry.apps.get(appId);
+        if (!app) return json({ error: "app not found" }, 404);
+
+        await archiveApp(appsDir, join(adiabaticDir, "archived-apps"), appId);
+        registry = await loadApps(appsDir);
+
+        // D0 composition: the capability was retired (recoverable, not deleted).
+        // Only the id is recorded — the archive location is conventional
+        // (.adiabatic/archived-apps/<appId>) and the name is in the kept manifest.
+        guard.writeEvent({
+          type: "app.archived",
+          startedAt: Date.now(),
+          payload: { appId },
+        });
+        return json({ ok: true, id: appId });
       }
 
       // -- Save App File --

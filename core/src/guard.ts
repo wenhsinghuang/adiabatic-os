@@ -631,7 +631,17 @@ function containsStatementSeparator(sql: string): boolean {
 // The system event namespaces (see D0 System Event Catalog) are audit
 // records; only system code may write them explicitly. Internal auto-logs
 // (logD0) do not pass through writeEvent and are unaffected.
-const RESERVED_EVENT_TYPE_PREFIXES = ["connector.", "d1.", "d2.", "ddl."];
+// `app.created`/`app.archived` are app-lifecycle composition acts written by
+// the core; `app.commit` is intentionally NOT reserved — the app-commits
+// connector emits it from a connector source.
+const RESERVED_EVENT_TYPE_PREFIXES = [
+  "connector.",
+  "d1.",
+  "d2.",
+  "ddl.",
+  "app.created",
+  "app.archived",
+];
 
 function assertEventTypeAllowed(source: string, type: string): void {
   if (source.startsWith("system:")) return;

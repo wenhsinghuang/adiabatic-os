@@ -118,6 +118,29 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
+.archiveBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.appItem:hover .archiveBtn {
+  opacity: 1;
+}
+
+.archiveBtn:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .fileItem {
   display: flex;
   align-items: center;

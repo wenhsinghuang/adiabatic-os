@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { loadApps } from "../src/app-loader";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import { archiveApp, loadApps } from "../src/app-loader";
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -119,6 +119,53 @@ describe("App Loader", () => {
 
     expect(registry.resolveComponent("FocusStats")?.appId).toBe("focus");
     expect(registry.resolveComponent("Unknown")).toBeNull();
+  });
+
+  test("archiveApp moves the app out of apps/ and out of the registry", async () => {
+    const appDir = join(appsDir, "retired");
+    mkdirSync(appDir);
+    writeFileSync(
+      join(appDir, "manifest.json"),
+      JSON.stringify({ id: "retired", name: "Retired", permissions: { write: [] } }),
+    );
+    writeFileSync(join(appDir, "index.tsx"), "export default function App() { return null; }");
+
+    const archiveRoot = join(workspace, ".adiabatic", "archived-apps");
+    const archivedTo = await archiveApp(appsDir, archiveRoot, "retired");
+
+    expect(archivedTo).toBe(join(archiveRoot, "retired"));
+    expect(existsSync(appDir)).toBe(false);
+    expect(existsSync(join(archivedTo, "manifest.json"))).toBe(true);
+    const registry = await loadApps(appsDir);
+    expect(registry.apps.has("retired")).toBe(false);
+  });
+
+  test("archiveApp keeps prior archives on id collision", async () => {
+    const archiveRoot = join(workspace, ".adiabatic", "archived-apps");
+
+    function makeApp() {
+      const appDir = join(appsDir, "dup");
+      mkdirSync(appDir);
+      writeFileSync(
+        join(appDir, "manifest.json"),
+        JSON.stringify({ id: "dup", name: "Dup", permissions: { write: [] } }),
+      );
+    }
+
+    makeApp();
+    const first = await archiveApp(appsDir, archiveRoot, "dup");
+    makeApp();
+    const second = await archiveApp(appsDir, archiveRoot, "dup");
+
+    expect(first).toBe(join(archiveRoot, "dup"));
+    expect(second).not.toBe(first);
+    expect(existsSync(first)).toBe(true);
+    expect(existsSync(second)).toBe(true);
+  });
+
+  test("archiveApp throws for a missing app", async () => {
+    const archiveRoot = join(workspace, ".adiabatic", "archived-apps");
+    await expect(archiveApp(appsDir, archiveRoot, "ghost")).rejects.toThrow("not found");
   });
 
   test("defaults components to empty array when missing", async () => {

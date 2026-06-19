@@ -175,6 +175,12 @@ export function createApp(id: string, name: string): Promise<{ ok: true; id: str
   });
 }
 
+export function archiveApp(appId: string): Promise<{ ok: true; id: string }> {
+  return request(`/api/apps/${encodeURIComponent(appId)}/archive`, {
+    method: "POST",
+  });
+}
+
 export function saveAppFile(
   appId: string,
   filename: string,

@@ -9,7 +9,7 @@ D0 is the append-only event ledger. Every write goes through Guard, which stamps
 D0 is the substrate's permanent history, not an operations log. Keeping a hard floor here is what stops D0 from degrading into UI/ops telemetry. An event is D0 material only if it is one of exactly three kinds:
 
 1. **Substrate fact** — something Adiabatic should remember long-term and that future derivation can use: a connector observation (commit, calendar event, terminal line), a D1 doc edit, a D2 row change.
-2. **User-owned executable artifact changed** — an inspectable, diffable, revertable system-capability artifact changed: a connector package installed/removed, app code committed. *Not* runtime config or status.
+2. **User-owned executable artifact changed** — an inspectable, diffable, revertable system-capability artifact changed: a connector package installed/removed, an app created/archived, app code committed. *Not* runtime config or status.
 3. **Human trust decision on executable code** — the user authorized a specific piece of code/hash to become an executable capability: connector package approved. This is not an ordinary permission; it is "this code may enter my system."
 
 Everything else stays in **control-plane current state** (`system.db`), never D0. Two anti-slip tests catch the rest:
@@ -131,6 +131,28 @@ payload:
 
 Integration rows survive removal as non-runnable (trust flips to missing); this event records the package-level action.
 
+### `app.created` — app registered
+
+Emitted by the create-app flow (`POST /api/apps`) after the app folder is scaffolded and the registry reloads.
+
+```text
+payload:
+  appId   string
+```
+
+Only the id is recorded: at creation the name mirrors the id and the write scope is always empty, so both would be redundant/constant. The name and scope evolve later through `app.commit` (manifest edits are code commits) — `app.created` is the composition act, `app.commit` is the content history.
+
+### `app.archived` — app retired
+
+Emitted by the archive flow (`POST /api/apps/:id/archive`). Archiving moves the app's folder — git history and all — out of `apps/` into `.adiabatic/archived-apps/<appId>`, so it leaves the active registry and the app-commits watcher but stays recoverable by moving the folder back. There is deliberately **no hard-delete path**: removal is archival.
+
+```text
+payload:
+  appId   string
+```
+
+Only the id is recorded: the archive location is conventional (`.adiabatic/archived-apps/<appId>`) and the name lives in the preserved manifest. The capability was retired, not destroyed — D0 keeps the full create → commit → archive history regardless of the folder's later fate.
+
 ## Explicit `writeEvent` paths (not system events)
 
 For completeness — these write D0 but are product data, not part of this catalog's namespace:
@@ -143,5 +165,5 @@ For completeness — these write D0 but are product data, not part of this catal
 
 - D0 is append-only; system events are never updated or deleted.
 - Every event has `source` stamped by Guard from runtime identity — callers never supply it.
-- The `d1.*` / `d2.*` / `ddl.*` / `connector.*` (lifecycle) type namespaces are system-reserved. Guard enforces this at write time: an explicit `writeEvent` with a reserved-namespace type requires a `system:*` source, so apps and connectors cannot forge lifecycle or CDC records.
+- The `d1.*` / `d2.*` / `ddl.*` / `connector.*` (lifecycle) namespaces, plus the `app.created` / `app.archived` lifecycle types, are system-reserved. (`app.commit` is connector product data and stays open.) Guard enforces this at write time: an explicit `writeEvent` with a reserved type requires a `system:*` source, so apps and connectors cannot forge lifecycle or CDC records.
 - Locked docs (`metadata.locked`) are the single sanctioned gap in the audit trail.

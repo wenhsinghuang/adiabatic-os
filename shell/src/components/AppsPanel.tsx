@@ -49,6 +49,23 @@ export function AppsPanel({ onOpenAppFile, onOpenApp }: AppsPanelProps) {
     [refresh],
   );
 
+  const handleArchive = useCallback(
+    async (appId: string, name: string) => {
+      const ok = window.confirm(
+        `Archive "${name}"? It leaves the active app list but stays recoverable in .adiabatic/archived-apps/.`,
+      );
+      if (!ok) return;
+      await api.archiveApp(appId);
+      setExpandedApps((prev) => {
+        const next = new Map(prev);
+        next.delete(appId);
+        return next;
+      });
+      await refresh();
+    },
+    [refresh],
+  );
+
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
@@ -101,6 +118,18 @@ export function AppsPanel({ onOpenAppFile, onOpenApp }: AppsPanelProps) {
                   >
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                       <path d="M4 2.5v11l9-5.5-9-5.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    className={styles.archiveBtn}
+                    title="Archive app"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleArchive(app.id, app.name);
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M2 4v1h12V4H2zm-1 .5A.5.5 0 0 1 1.5 4h13a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5H14v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6h-.5a.5.5 0 0 1-.5-.5v-1zM3 6v6h10V6H3zm3 2.5A.5.5 0 0 1 6.5 8h3a.5.5 0 0 1 0 1h-3A.5.5 0 0 1 6 8.5z" />
                     </svg>
                   </button>
                 </div>

@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "fs/promises";
+import { mkdir, readdir, readFile, rename, stat } from "fs/promises";
 import { join } from "path";
 
 // App Loader — scans apps/ directory, reads manifests, builds registry.
@@ -72,6 +72,40 @@ export async function loadApps(appsDir: string): Promise<AppRegistry> {
   }
 
   return createRegistry(apps);
+}
+
+// Archive (not delete): retire an app by moving its folder — git history and
+// all — out of apps/ into the archive root. It drops out of the active
+// registry and the app-commits watcher naturally (both only look at apps/),
+// and stays fully recoverable by moving the folder back. Returns the archive
+// path; on id collision a timestamp suffix keeps prior archives intact.
+export async function archiveApp(
+  appsDir: string,
+  archiveRoot: string,
+  appId: string,
+): Promise<string> {
+  const appDir = join(appsDir, appId);
+  try {
+    if (!(await stat(appDir)).isDirectory()) {
+      throw new Error(`App "${appId}" is not a directory`);
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw new Error(`App "${appId}" not found`);
+    }
+    throw err;
+  }
+
+  await mkdir(archiveRoot, { recursive: true });
+  let target = join(archiveRoot, appId);
+  try {
+    await stat(target);
+    target = join(archiveRoot, `${appId}-${Date.now()}`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+  }
+  await rename(appDir, target);
+  return target;
 }
 
 async function resolveEntryPoint(appDir: string): Promise<string> {

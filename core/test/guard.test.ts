@@ -137,7 +137,15 @@ describe("Guard", () => {
 
   test("writeEvent reserves system event namespaces for system sources", () => {
     const appGuard = guard.withSource("app:tracker");
-    for (const type of ["connector.installed", "connector.approved", "d1.write", "d2.write", "ddl.promote"]) {
+    for (const type of [
+      "connector.installed",
+      "connector.approved",
+      "d1.write",
+      "d2.write",
+      "ddl.promote",
+      "app.created",
+      "app.archived",
+    ]) {
       expect(() =>
         appGuard.writeEvent({ type, startedAt: Date.now(), payload: { connector_id: "x" } }),
       ).toThrow("system-reserved");
@@ -162,6 +170,15 @@ describe("Guard", () => {
     ).toBeTruthy();
     expect(
       connectorGuard.writeEvent({ type: "oura.sample", startedAt: Date.now(), payload: {} }),
+    ).toBeTruthy();
+    // app.commit is connector-emitted, so it must stay open to connector sources.
+    expect(
+      connectorGuard.writeEvent({
+        type: "app.commit",
+        externalId: "app:abc",
+        startedAt: Date.now(),
+        payload: { appId: "x", commitSha: "abc" },
+      }),
     ).toBeTruthy();
   });
 
