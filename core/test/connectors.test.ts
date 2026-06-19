@@ -1262,19 +1262,20 @@ auth:
         commitSha: firstSha,
         authorName: "Test User",
         authorEmail: "test@example.com",
-        subject: "Initial app",
+        message: "Initial app",
       },
     });
 
     writeFileSync(join(appDir, "index.tsx"), "export default function App() { return 'updated'; }\n");
     execFileSync("git", ["-C", appDir, "add", "."], { stdio: "ignore" });
-    execFileSync("git", ["-C", appDir, "commit", "-m", "Update app"], { stdio: "ignore" });
+    execFileSync("git", ["-C", appDir, "commit", "-m", "Update app", "-m", "Refine the render path."], { stdio: "ignore" });
     const secondSha = execFileSync("git", ["-C", appDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 
     await syncOnce(context);
     expect(events).toHaveLength(2);
     expect(events[1].externalId).toBe(`hello-world:${secondSha}`);
-    expect(events[1].payload.subject).toBe("Update app");
+    // Full multi-line message (subject + body) is captured, not just the subject.
+    expect(events[1].payload.message).toBe("Update app\n\nRefine the render path.");
     expect(syncState).toEqual({
       apps: {
         "hello-world": { lastSha: secondSha },
@@ -1289,8 +1290,8 @@ auth:
     const fallbackStart = events.length;
     await syncOnce(context);
     expect(events).toHaveLength(fallbackStart + 2);
-    expect(events[fallbackStart].payload.subject).toBe("Initial app");
-    expect(events[fallbackStart + 1].payload.subject).toBe("Update app");
+    expect(events[fallbackStart].payload.message).toBe("Initial app");
+    expect(events[fallbackStart + 1].payload.message).toBe("Update app\n\nRefine the render path.");
     expect(syncState).toEqual({
       apps: {
         "hello-world": { lastSha: secondSha },

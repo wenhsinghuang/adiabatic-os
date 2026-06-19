@@ -5,7 +5,9 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_WATCH_INTERVAL_MS = 5000;
-const GIT_LOG_FORMAT = "%H%x00%ct%x00%an%x00%ae%x00%s";
+// Fields are unit-separated (%x1f) and records NUL-separated (git log -z), so
+// %B (the full raw commit message, which contains newlines) parses cleanly.
+const GIT_LOG_FORMAT = "%H%x1f%ct%x1f%an%x1f%ae%x1f%B";
 
 export default {
   async run(context) {
@@ -44,9 +46,9 @@ async function syncAppRepo({ guard, repo, lastSha, signal }) {
   const stdout = await readGitLog(repo.dir, lastSha, signal);
   let newestSha = lastSha;
 
-  for (const line of stdout.split("\n")) {
-    if (!line) continue;
-    const [sha, committedAt, authorName, authorEmail, subject] = line.split("\0");
+  for (const record of stdout.split("\0")) {
+    if (!record) continue;
+    const [sha, committedAt, authorName, authorEmail, message] = record.split("\x1f");
     if (!sha || sha === lastSha) continue;
 
     await guard.writeEvent({
@@ -58,7 +60,7 @@ async function syncAppRepo({ guard, repo, lastSha, signal }) {
         commitSha: sha,
         authorName,
         authorEmail,
-        subject,
+        message: (message ?? "").trimEnd(),
       },
     });
     newestSha = sha;
@@ -78,6 +80,7 @@ async function readGitLogRange(repoDir, range, signal, opts = {}) {
       "-C",
       repoDir,
       "log",
+      "-z",
       "--reverse",
       `--format=${GIT_LOG_FORMAT}`,
       range,
