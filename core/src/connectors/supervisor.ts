@@ -117,7 +117,7 @@ export class ConnectorSupervisor {
   }
 
   register<TConfig = unknown, TState = unknown>(
-    manifest: ConnectorManifest<TConfig>,
+    manifest: ConnectorManifest,
     definition: ConnectorDefinition<TConfig, TState>,
   ): void {
     const normalized = validateConnectorManifest(manifest as ConnectorManifest);
@@ -810,7 +810,7 @@ export class ConnectorSupervisor {
         session = await this.openTrustedSession(registration, controller.signal);
         await this.assertRunRequirements(registration, integration, session);
         await session.run({
-          config: mergeConfig(registration.manifest.config, integration.config, opts?.config),
+          config: mergeConfig(integration.config, opts?.config),
           host: this.host,
           signal: controller.signal,
           capabilities: this.buildRunCapabilities(registration, integration),

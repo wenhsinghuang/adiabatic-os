@@ -437,11 +437,21 @@ The manifest declares what the system needs to know:
 - integration cardinality
 - structured platform compatibility and requirements
 - auth type
-- default config schema, later
 
 The manifest id must match the containing folder name. `entry` is resolved relative to the connector package root and must stay inside that root.
 
-The manifest should not contain secrets, auth tokens, enabled/disabled status, mutable config, or sync checkpoints. The connector folder is plugin material, not runtime state.
+The manifest contains **no config** — no secrets, auth tokens, enabled/disabled status, sync checkpoints, and no default values either. The manifest is part of the trust-hashed package, so putting settings there would make every config change a re-approval. Instead, connector **defaults live in the connector's own code** (`config.interval ?? 5000`, co-located with the read site) and **user settings live in integration config**. The connector folder is plugin material, not runtime state.
+
+### What belongs in config
+
+Config is a user-facing surface, not a place for every parameter. A value should be `config` **only if both hold**:
+
+1. **The user understands it** — it maps to something the user has a mental model of (which account, which calendar, which folder, how far back to import), not an implementation detail (buffer sizes, retry backoff, field delimiters, log format, endpoint versions).
+2. **Adjusting it has real UX meaning** — different users would genuinely want different values, and changing it visibly changes behaviour the user cares about.
+
+Everything else is a **constant in the connector code**. A value that fails either test — the 5s watch tick in `app-commits`, a parser's record separator — is not config; hard-code it. Defaults already live in code, so "make it a constant" is the path of least resistance, not extra work.
+
+When in doubt, start as a code constant. Promoting a constant to config later is cheap; demoting a config the user has already set is a migration.
 
 `runtime.defaultSchedule` is only valid for `poll` connectors. It is a creation default for new integrations, not the scheduler's long-term source of truth. When an integration is created, the system copies the default into the integration schedule. After that, the scheduler reads the integration's own schedule.
 
@@ -640,7 +650,7 @@ The connector author should only need to understand:
 - `guard.writeEvent(...)`
 - `auth` as a capability handle
 - `state` as private checkpoint storage
-- `config` as manifest, integration, and run override configuration
+- `config` as the integration's settings (plus any one-off run override); package defaults live in the connector's own code
 - `host` as stable host-owned runtime context
 - `signal` for cancellation
 

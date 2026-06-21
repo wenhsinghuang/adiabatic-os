@@ -56,7 +56,7 @@ export interface ConnectorPlatformSpec {
 
 export type ConnectorPlatformsSpec = Partial<Record<ConnectorPlatform, ConnectorPlatformSpec>>;
 
-export interface ConnectorManifest<TConfig = JsonObject> {
+export interface ConnectorManifest {
   id: string;
   name: string;
   entry: string;
@@ -67,7 +67,9 @@ export interface ConnectorManifest<TConfig = JsonObject> {
   platforms?: ConnectorPlatformsSpec;
   capabilities?: string[];
   auth?: ConnectorAuthSpec;
-  config?: TConfig;
+  // No config field. The manifest is trust-hashed, so settings here would turn
+  // every config change into a re-approval. Connector defaults live in the
+  // connector's own code; user settings live in integration config.
 }
 
 export interface ConnectorEventInput {

@@ -228,7 +228,6 @@ auth:
         runtime: { mode: "poll" },
         integrations: { mode: "singleton" },
         auth: { type: "none" },
-        config: { label: "manifest" },
       },
       definition,
     );
