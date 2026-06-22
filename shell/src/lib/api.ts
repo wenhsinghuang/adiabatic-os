@@ -253,6 +253,7 @@ export interface ConnectorIntegrationView {
   packageTrust: ConnectorTrust;
   authType: "none" | "apiKey" | "oauth2";
   authTokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
+  authNeedsClientId?: boolean;
   authStatus?: string;
   authAttention?: "refresh_failed" | "redirect_uri_changed";
   authReady: boolean;
@@ -417,11 +418,11 @@ export interface OAuthAttemptResult {
 
 export function startConnectorOAuth(
   integrationId: string,
-  clientSecret?: string,
+  input?: { clientSecret?: string; clientId?: string },
 ): Promise<OAuthStartResult> {
   return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}/oauth/start`, {
     method: "POST",
-    body: JSON.stringify({ clientSecret }),
+    body: JSON.stringify({ clientSecret: input?.clientSecret, clientId: input?.clientId }),
   });
 }
 

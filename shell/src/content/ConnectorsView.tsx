@@ -362,6 +362,7 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
   const needs = setupNeeds(c);
   const [tokenInput, setTokenInput] = useState("");
   const [clientSecretInput, setClientSecretInput] = useState("");
+  const [clientIdInput, setClientIdInput] = useState("");
   const [keyInput, setKeyInput] = useState("");
   const cardBusy = Boolean(busy[c.id]);
   const showSetup = trusted && interactive && c.enabled;
@@ -505,14 +506,16 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
               const requiresSecret = c.authTokenEndpointAuthMethod
                 && c.authTokenEndpointAuthMethod !== "none";
               if (requiresSecret && !clientSecretInput.trim()) return;
+              if (c.authNeedsClientId && !clientIdInput.trim()) return;
               onAct(c.id, "oauth", async () => {
-                const started = await startConnectorOAuth(
-                  c.id,
-                  clientSecretInput.trim() || undefined,
-                );
+                const started = await startConnectorOAuth(c.id, {
+                  clientSecret: clientSecretInput.trim() || undefined,
+                  clientId: clientIdInput.trim() || undefined,
+                });
                 await openAuthorizationUrl(started.authorizationUrl);
                 await waitForOAuthAttempt(c.id, started.attemptId);
                 setClientSecretInput("");
+                setClientIdInput("");
               });
             }}
           >
@@ -520,6 +523,15 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
               <div className={styles.oauthNote}>
                 redirect <span className={styles.redirectUri}>{c.oauthRedirectUri}</span>
               </div>
+            )}
+            {c.authNeedsClientId && (
+              <input
+                className={styles.inlineInput}
+                type="text"
+                placeholder="OAuth client ID (your registered app)"
+                value={clientIdInput}
+                onChange={(event) => setClientIdInput(event.target.value)}
+              />
             )}
             {c.authTokenEndpointAuthMethod && c.authTokenEndpointAuthMethod !== "none" && (
               <input
@@ -535,6 +547,7 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
               disabled={
                 cardBusy
                 || Boolean(c.authTokenEndpointAuthMethod && c.authTokenEndpointAuthMethod !== "none" && !clientSecretInput.trim())
+                || Boolean(c.authNeedsClientId && !clientIdInput.trim())
               }
             >
               {busy[c.id] === "oauth" ? "waiting…" : "Connect Account"}

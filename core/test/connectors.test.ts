@@ -169,12 +169,20 @@ auth:
         auth: { type: "oauth2", authorizationEndpoint: "http://x/auth", tokenEndpoint: "https://x/token" } as any,
       })
     ).toThrow("must be https");
+    // clientId is optional (BYO): an oauth2 manifest without it is valid.
+    expect(
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token" },
+      }).auth,
+    ).toMatchObject({ type: "oauth2" });
+    // but a present clientId must be a non-empty string.
     expect(() =>
       validateConnectorManifest({
         ...base,
-        auth: { type: "oauth2", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token" } as any,
+        auth: { type: "oauth2", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token", clientId: "" } as any,
       })
-    ).toThrow("requires clientId");
+    ).toThrow("clientId must be a non-empty string");
     expect(() =>
       validateConnectorManifest({
         ...base,

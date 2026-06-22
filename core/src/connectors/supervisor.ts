@@ -265,7 +265,7 @@ export class ConnectorSupervisor {
 
   startOAuthIntegration(
     instanceId: string,
-    input: { redirectUri: string; clientSecret?: string },
+    input: { redirectUri: string; clientSecret?: string; clientId?: string },
   ): OAuthStartResult {
     const existing = this.store.get(instanceId);
     if (!existing) {
@@ -448,6 +448,7 @@ export class ConnectorSupervisor {
     packageTrust: ConnectorPackageTrust["status"];
     authType: string;
     authTokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
+    authNeedsClientId?: boolean;
     authStatus?: string;
     authAttention?: "refresh_failed" | "redirect_uri_changed";
     authReady: boolean;
@@ -468,6 +469,10 @@ export class ConnectorSupervisor {
       const authTokenEndpointAuthMethod = registration?.manifest.auth?.type === "oauth2"
         ? registration.manifest.auth.tokenEndpointAuthMethod ?? "none"
         : undefined;
+      // BYO client: the manifest carries no clientId, so the user supplies it at
+      // connect. The shell shows a clientId field when this is true.
+      const authNeedsClientId = registration?.manifest.auth?.type === "oauth2"
+        && !registration.manifest.auth.clientId;
       const credential = integration.authRef ? this.authManager.credential(integration.authRef) : undefined;
       const storedRedirectUri = typeof credential?.metadata?.redirect_uri === "string"
         ? credential.metadata.redirect_uri
@@ -505,6 +510,7 @@ export class ConnectorSupervisor {
         packageTrust: registration?.trust.status ?? "missing",
         authType,
         authTokenEndpointAuthMethod,
+        authNeedsClientId,
         authStatus: credential?.status,
         authAttention,
         authReady,

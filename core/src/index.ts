@@ -584,12 +584,13 @@ const server = Bun.serve({
       const oauthStartMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/oauth\/start$/);
       if (oauthStartMatch && method === "POST") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
-        const body = await readBody<{ clientSecret?: string }>(req);
+        const body = await readBody<{ clientSecret?: string; clientId?: string }>(req);
         const result = connectorSupervisor.startOAuthIntegration(
           decodeURIComponent(oauthStartMatch[1]),
           {
             redirectUri: oauthRedirectUri,
             clientSecret: body.clientSecret,
+            clientId: body.clientId,
           },
         );
         return json(result);

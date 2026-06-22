@@ -57,6 +57,9 @@ type SecretPayload =
       expiresAt?: number;
       tokenType?: string;
       clientSecret?: string;
+      // Effective clientId (manifest or BYO user-supplied), persisted so refresh
+      // works for BYO connectors whose manifest carries no clientId.
+      clientId?: string;
     };
 
 interface CredentialUpsertInput {
@@ -315,13 +318,21 @@ export class ConnectorAuthManager {
   startOAuth(
     integration: ConnectorIntegration,
     auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>,
-    input: { redirectUri: string; clientSecret?: string },
+    input: { redirectUri: string; clientSecret?: string; clientId?: string },
   ): OAuthStartResult {
     const method = auth.tokenEndpointAuthMethod ?? "none";
     const clientSecret = input.clientSecret?.trim();
     if (method !== "none" && !clientSecret) {
       throw new Error(`Connector ${integration.connectorId} OAuth requires a client secret`);
     }
+    // clientId comes from the manifest (author client) or the user (BYO). Bake
+    // the resolved value into the attempt's auth so every downstream step
+    // (authorize URL, code/refresh exchange) reads one effective clientId.
+    const clientId = auth.clientId ?? input.clientId?.trim();
+    if (!clientId) {
+      throw new Error(`Connector ${integration.connectorId} OAuth requires a client id`);
+    }
+    const effectiveAuth = { ...auth, clientId };
     const codeVerifier = base64url(randomBytes(32));
     const state = base64url(randomBytes(32));
     const attemptId = base64url(randomBytes(16));
@@ -331,7 +342,7 @@ export class ConnectorAuthManager {
       id: attemptId,
       integrationId: integration.id,
       authRef,
-      auth,
+      auth: effectiveAuth,
       ownerType: "connector",
       ownerId: integration.id,
       codeVerifier,
@@ -346,7 +357,7 @@ export class ConnectorAuthManager {
 
     const url = new URL(auth.authorizationEndpoint);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("client_id", auth.clientId);
+    url.searchParams.set("client_id", clientId);
     url.searchParams.set("redirect_uri", input.redirectUri);
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", pkceChallenge(codeVerifier));
@@ -532,7 +543,8 @@ export class ConnectorAuthManager {
     body.set("grant_type", "authorization_code");
     body.set("code", code);
     body.set("redirect_uri", attempt.redirectUri);
-    body.set("client_id", attempt.auth.clientId);
+    // startOAuth guarantees the attempt's auth carries a resolved clientId.
+    body.set("client_id", attempt.auth.clientId ?? "");
     body.set("code_verifier", attempt.codeVerifier);
     return this.fetchToken(attempt.auth, body, attempt.clientSecret);
   }
@@ -541,11 +553,16 @@ export class ConnectorAuthManager {
     auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>,
     payload: Extract<SecretPayload, { kind: "oauth2" }>,
   ): Promise<TokenResponse> {
+    // BYO connectors carry no clientId in the manifest; use the one persisted at
+    // connect. Falls back to the manifest clientId for author clients.
+    const clientId = payload.clientId ?? auth.clientId;
+    if (!clientId) throw new Error("OAuth refresh requires a client id");
+    const effectiveAuth = { ...auth, clientId };
     const body = new URLSearchParams();
     body.set("grant_type", "refresh_token");
     body.set("refresh_token", payload.refreshToken!);
-    body.set("client_id", auth.clientId);
-    return this.fetchToken(auth, body, payload.clientSecret);
+    body.set("client_id", clientId);
+    return this.fetchToken(effectiveAuth, body, payload.clientSecret);
   }
 
   private async fetchToken(
@@ -587,6 +604,7 @@ export class ConnectorAuthManager {
       expiresAt: tokenExpiresAt(token),
       tokenType: token.token_type,
       clientSecret: attempt.clientSecret,
+      clientId: attempt.auth.clientId,
     };
     await this.writePayload(attempt.authRef, payload);
     this.credentialStore?.upsert({

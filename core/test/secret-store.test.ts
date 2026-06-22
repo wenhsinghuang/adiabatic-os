@@ -141,6 +141,45 @@ describe("Secret store and OAuth broker", () => {
     await expect(Promise.all([handle.getToken(), handle.getToken()])).resolves.toEqual(["new", "new"]);
     expect(calls).toBe(2);
   });
+
+  test("BYO oauth: user-supplied clientId flows through start, exchange, and refresh", async () => {
+    const seen: string[] = [];
+    const manager = new ConnectorAuthManager(
+      new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
+      {
+        credentialStore: new AuthCredentialStore(opened.systemDb),
+        fetchImpl: async (_url, init) => {
+          const body = String(init?.body);
+          seen.push(body);
+          if (body.includes("authorization_code")) {
+            return jsonResponse({ access_token: "byo-access", refresh_token: "byo-refresh", expires_in: -1 });
+          }
+          return jsonResponse({ access_token: "byo-access-2", expires_in: 3600 });
+        },
+      },
+    );
+    // Manifest carries NO clientId — BYO. The user supplies it at connect.
+    const auth = {
+      type: "oauth2" as const,
+      authorizationEndpoint: "https://provider.example/authorize",
+      tokenEndpoint: "https://provider.example/token",
+    };
+    const started = manager.startOAuth(integration("byo-ref"), auth, {
+      redirectUri: "http://127.0.0.1:32123/oauth/callback",
+      clientId: "byo-client",
+    });
+    expect(new URL(started.authorizationUrl).searchParams.get("client_id")).toBe("byo-client");
+
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await manager.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" }));
+    expect(seen.some((b) => b.includes("authorization_code") && b.includes("client_id=byo-client"))).toBe(true);
+
+    // Token is expired, so getToken refreshes — and refresh must use the
+    // persisted clientId even though the manifest auth has none.
+    const token = await manager.createHandle(auth, integration("byo-ref")).getToken();
+    expect(token).toBe("byo-access-2");
+    expect(seen.some((b) => b.includes("refresh_token") && b.includes("client_id=byo-client"))).toBe(true);
+  });
 });
 
 function integration(authRef: string): ConnectorIntegration {

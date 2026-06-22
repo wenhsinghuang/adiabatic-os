@@ -21,20 +21,21 @@ export type ConnectorAuthSpec =
       // the standard fields spelled in this manifest's camelCase convention.
       // The broker is a generic Authorization Code executor; there is no
       // provider registry. PKCE (S256) is always-on broker behavior, not a
-      // manifest field. `clientId` (the OAuth app's public, non-secret client
-      // identifier) is required even for a public client and lives in the
-      // manifest like every other field; the official catalog carries only
-      // id/hash/version for trust, never config, so there is no catalog
-      // fallback. `scope` is an array for YAML ergonomics, joined to the
+      // manifest field. `scope` is an array for YAML ergonomics, joined to the
       // standard space-delimited string at the broker boundary.
       // `tokenEndpointAuthMethod` defaults to "none" (public client + PKCE);
       // the client_secret_* values describe confidential clients (a
       // user-supplied client_secret), whose secret never appears in the
       // manifest.
+      //
+      // `clientId` (the OAuth app's public, non-secret client identifier) is
+      // OPTIONAL: present means the author ships a registered (public) client;
+      // omitted means BYO — the user registers their own app and supplies the
+      // clientId at connect, stored with the credential, never in the manifest.
       type: "oauth2";
       authorizationEndpoint: string;
       tokenEndpoint: string;
-      clientId: string;
+      clientId?: string;
       scope?: string[];
       tokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
     };

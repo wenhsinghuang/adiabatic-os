@@ -190,11 +190,11 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
         throw new Error(`Connector ${connectorId} oauth2 ${field} must be https: ${value}`);
       }
     }
-    // clientId is the OAuth app's public client identifier and lives in the
-    // manifest like any other config; the catalog is trust-only, not a config
-    // source, so there is no fallback for it.
-    if (typeof auth.clientId !== "string" || !auth.clientId) {
-      throw new Error(`Connector ${connectorId} oauth2 auth requires clientId`);
+    // clientId is the OAuth app's public client identifier. It is optional:
+    // omitting it means BYO (the user supplies their own app's clientId at
+    // connect). When present it must be a non-empty string.
+    if (auth.clientId !== undefined && (typeof auth.clientId !== "string" || !auth.clientId)) {
+      throw new Error(`Connector ${connectorId} oauth2 clientId must be a non-empty string when set`);
     }
     if (auth.scope !== undefined &&
       (!Array.isArray(auth.scope) || auth.scope.some((s) => typeof s !== "string"))) {
