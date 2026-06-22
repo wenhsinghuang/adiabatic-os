@@ -202,6 +202,29 @@ auth:
     expect(() =>
       validateConnectorManifest({ ...base, auth: { type: "localPermission" } as any })
     ).toThrow("invalid auth type");
+
+    // Config schema: a valid map of fields is accepted and normalized.
+    expect(
+      validateConnectorManifest({
+        ...base,
+        config: { interval: { type: "number", label: "Interval (ms)", default: 5000 } },
+      }).config,
+    ).toEqual({ interval: { type: "number", label: "Interval (ms)", default: 5000 } });
+    expect(() =>
+      validateConnectorManifest({ ...base, config: [] as any })
+    ).toThrow("must be a map of fields");
+    expect(() =>
+      validateConnectorManifest({ ...base, config: { x: { type: "json" as any, label: "X" } } })
+    ).toThrow("invalid type");
+    expect(() =>
+      validateConnectorManifest({ ...base, config: { x: { type: "number" } as any } })
+    ).toThrow("requires a label");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        config: { x: { type: "number", label: "X", default: "five" as any } },
+      })
+    ).toThrow("default must be a number");
   });
 
   test("runs a connector with bound guard, config, and persistent state", async () => {
@@ -255,6 +278,39 @@ auth:
       .get(integration.id) as { status: string; sync_state: string };
     expect(storedState.status).toBe("idle");
     expect(JSON.parse(storedState.sync_state)).toEqual({ cursor: "abc123" });
+  });
+
+  test("merges config-schema defaults under integration and run overrides", async () => {
+    let received: unknown;
+    const definition: ConnectorDefinition = {
+      async run({ config }) {
+        received = config;
+      },
+    };
+    supervisor.register(
+      {
+        id: "cfg-merge",
+        name: "Cfg Merge",
+        entry: "./index.ts",
+        runtime: { mode: "poll" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+        config: {
+          interval: { type: "number", label: "Interval", default: 5000 },
+          label: { type: "string", label: "Label", default: "base" },
+          extra: { type: "boolean", label: "Extra", default: false },
+        },
+      },
+      definition,
+    );
+    const integration = supervisor.ensureIntegration({
+      connectorId: "cfg-merge",
+      config: { label: "integration" },
+    });
+    await supervisor.run(integration.id, { config: { extra: true } });
+
+    // interval = schema default, label = integration override, extra = run override
+    expect(received).toEqual({ interval: 5000, label: "integration", extra: true });
   });
 
   test("supports multiple connector instances with separate sources and state", async () => {
@@ -413,7 +469,7 @@ auth:
         id: "json-feed",
         name: "JSON Feed",
         entry: "./index.ts",
-        runtime: { mode: "import" },
+        runtime: { mode: "manual" },
         integrations: { mode: "singleton" },
         auth: { type: "none" },
       },
@@ -448,7 +504,7 @@ auth:
         id: "id-feed",
         name: "ID Feed",
         entry: "./index.ts",
-        runtime: { mode: "import" },
+        runtime: { mode: "manual" },
         integrations: { mode: "singleton" },
         auth: { type: "none" },
       },
@@ -1298,6 +1354,103 @@ auth:
     });
   });
 
+  test("oura sync uses revision-aware external ids and per-stream cursors", async () => {
+    const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(ouraUrl) as {
+      syncOnce(context: unknown, deps?: unknown): Promise<void>;
+    };
+
+    let syncState: unknown;
+    let score = 90;
+    const events: any[] = [];
+    const requests: URL[] = [];
+    const context = {
+      auth: {
+        type: "oauth2",
+        async getToken() {
+          return "oura-token";
+        },
+      },
+      guard: {
+        async writeEvents(batch: any[]) {
+          const start = events.length;
+          events.push(...batch);
+          return { ids: batch.map((_, index) => `event-${start + index}`) };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      config: {
+        initialStartDate: "2026-01-01",
+        lookbackDays: 1,
+        streams: ["daily_sleep"],
+      },
+      signal: new AbortController().signal,
+    };
+
+    const fetchImpl = async (url: string, init: RequestInit) => {
+      const requestUrl = new URL(url);
+      requests.push(requestUrl);
+      expect((init.headers as Record<string, string>).Authorization).toBe("Bearer oura-token");
+      return new Response(JSON.stringify({
+        data: [{
+          id: "sleep-doc-1",
+          day: "2026-01-02",
+          timestamp: "2026-01-02T08:00:00+00:00",
+          contributors: { total_sleep: score },
+          score,
+        }],
+        next_token: null,
+      }), { status: 200 });
+    };
+
+    const now = Date.UTC(2026, 0, 3, 12);
+    await syncOnce(context, { fetchImpl, now });
+    const firstExternalId = events[0].externalId;
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "oura.daily_sleep",
+      externalId: expect.stringMatching(/^daily_sleep:sleep-doc-1:[a-f0-9]{16}$/),
+      startedAt: Date.UTC(2026, 0, 2),
+      payload: {
+        provider: "oura",
+        stream: "daily_sleep",
+        record: {
+          id: "sleep-doc-1",
+          day: "2026-01-02",
+          score: 90,
+        },
+      },
+    });
+    expect(syncState).toEqual({
+      version: 1,
+      streams: {
+        daily_sleep: {
+          lastSyncedDate: "2026-01-03",
+          lastSyncedAt: now,
+        },
+      },
+    });
+    expect(requests[0].searchParams.get("start_date")).toBe("2026-01-01");
+    expect(requests[0].searchParams.get("end_date")).toBe("2026-01-03");
+
+    score = 91;
+    await syncOnce(context, { fetchImpl, now });
+
+    expect(events).toHaveLength(2);
+    expect(events[1].externalId).not.toBe(firstExternalId);
+    expect(events[1].externalId).toMatch(/^daily_sleep:sleep-doc-1:[a-f0-9]{16}$/);
+    expect(requests[1].searchParams.get("start_date")).toBe("2026-01-02");
+    expect(requests[1].searchParams.get("end_date")).toBe("2026-01-03");
+  });
+
   test("installs connectors as workspace folders, registers them, and removes the folder", async () => {
     const sourceDir = join(workspace, "source-connectors", "calendar");
     mkdirSync(sourceDir, { recursive: true });
@@ -1307,7 +1460,7 @@ auth:
 name: Calendar
 entry: ./index.mjs
 runtime:
-  mode: import
+  mode: manual
 integrations:
   mode: singleton
 platforms:
@@ -1397,7 +1550,7 @@ auth:
 name: ${id}
 entry: ./index.mjs
 runtime:
-  mode: import
+  mode: manual
 integrations:
   mode: singleton
 platforms:
@@ -1415,7 +1568,7 @@ auth:
       id: "anywhere",
       name: "Anywhere",
       entry: "./index.mjs",
-      runtime: { mode: "import" },
+      runtime: { mode: "manual" },
       integrations: { mode: "singleton" },
       auth: { type: "none" },
     } as ConnectorManifest);
@@ -1525,7 +1678,7 @@ auth:
 name: Demo
 entry: ./index.mjs
 runtime:
-  mode: import
+  mode: manual
 integrations:
   mode: singleton
 platforms:
@@ -1694,7 +1847,7 @@ auth:
 name: Audited
 entry: ./index.mjs
 runtime:
-  mode: import
+  mode: manual
 integrations:
   mode: singleton
 platforms:
@@ -1743,7 +1896,7 @@ auth:
 name: PID Probe
 entry: ./index.mjs
 runtime:
-  mode: import
+  mode: manual
 integrations:
   mode: singleton
 platforms:

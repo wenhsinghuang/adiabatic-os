@@ -234,12 +234,18 @@ export interface ConnectorRequirementView {
 
 export type ConnectorSetupPendingReason = "integration_key" | "auth" | "requirements";
 
+export interface ConnectorConfigFieldView {
+  type: "string" | "number" | "boolean";
+  label: string;
+  default?: string | number | boolean;
+}
+
 export interface ConnectorIntegrationView {
   id: string;
   connectorId: string;
   integrationKey?: string;
   name: string;
-  mode: "watch" | "poll" | "import" | "unknown";
+  mode: "watch" | "poll" | "manual" | "unknown";
   integrationsMode: "singleton" | "multiple";
   enabled: boolean;
   status: "setup" | "idle" | "running" | "error" | "disabled";
@@ -261,6 +267,10 @@ export interface ConnectorIntegrationView {
   requirements: ConnectorRequirementView[];
   lastError?: string;
   lastRunAt?: number;
+  // Config schema declared by the connector manifest (user-facing fields).
+  configSchema?: Record<string, ConnectorConfigFieldView>;
+  // Current user override values stored on the integration.
+  config?: Record<string, string | number | boolean>;
 }
 
 export function listConnectors(): Promise<{ connectors: ConnectorIntegrationView[] }> {
@@ -273,7 +283,7 @@ export function listConnectors(): Promise<{ connectors: ConnectorIntegrationView
 export interface AvailableConnectorView {
   connectorId: string;
   name: string;
-  mode: "watch" | "poll" | "import";
+  mode: "watch" | "poll" | "manual";
   integrationsMode: "singleton" | "multiple";
   authType: "none" | "apiKey" | "oauth2";
   supported: boolean;
@@ -326,6 +336,18 @@ export function restartConnectorIntegration(
   );
 }
 
+// Trigger a one-off run on demand (manual connectors; or any connector's
+// explicit run). Optional config rides as a one-off run override.
+export function runConnectorIntegration(
+  integrationId: string,
+  config?: Record<string, unknown>,
+): Promise<{ ok: true }> {
+  return request(
+    `/api/connectors/integrations/${encodeURIComponent(integrationId)}/run`,
+    { method: "POST", body: JSON.stringify(config !== undefined ? { config } : {}) },
+  );
+}
+
 // Mutation endpoints return the raw integration row (no name/setupPending/
 // requirements enrichment — those only come from listConnectors). Callers
 // should refresh the list after a mutation instead of consuming this shape.
@@ -344,7 +366,7 @@ export interface ConnectorIntegrationRow {
 
 export function updateConnectorIntegration(
   integrationId: string,
-  input: { enabled?: boolean; scheduleCron?: string | null; integrationKey?: string },
+  input: { enabled?: boolean; scheduleCron?: string | null; integrationKey?: string; config?: Record<string, unknown> },
 ): Promise<{ integration: ConnectorIntegrationRow }> {
   return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}`, {
     method: "PATCH",

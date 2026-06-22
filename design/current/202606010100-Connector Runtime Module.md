@@ -33,7 +33,7 @@ System / core
   Connector registry   workspace connector discovery and package trust status
   Connector runner     process execution boundary for one connector integration
   Capability broker    host-side proxy for guard, state, auth, and source authority
-  Trigger runtime      decides when poll/import runs happen
+  Trigger runtime      decides when poll/manual runs happen
   Shell                integration UI and auth UX
   Secret store         credentials, via unified auth/secrets module
   Official catalog     signed/hash source for official connector packages
@@ -164,7 +164,7 @@ If an official connector is edited and then approved by the user, it becomes a c
 Trust checks happen at execution boundaries:
 
 ```text
-poll/import
+poll/manual
   check current hash before each run
 
 watch
@@ -437,10 +437,11 @@ The manifest declares what the system needs to know:
 - integration cardinality
 - structured platform compatibility and requirements
 - auth type
+- config schema — the user-facing config fields, their types, labels, and author defaults
 
 The manifest id must match the containing folder name. `entry` is resolved relative to the connector package root and must stay inside that root.
 
-The manifest contains **no config** — no secrets, auth tokens, enabled/disabled status, sync checkpoints, and no default values either. The manifest is part of the trust-hashed package, so putting settings there would make every config change a re-approval. Instead, connector **defaults live in the connector's own code** (`config.interval ?? 5000`, co-located with the read site) and **user settings live in integration config**. The connector folder is plugin material, not runtime state.
+The manifest holds **no mutable runtime state** — no secrets, auth tokens, enabled/disabled status, or sync checkpoints. Those would turn the trust-hashed package into a settings store, making every change a re-approval. What it *does* declare for config is a **config schema**: each user-facing field with its `type`, `label`, and author **`default`**. User-chosen values are stored as **overrides in integration config**, never in the manifest. At run time the host composes the effective config as `schema defaults → integration overrides → one-off run override`. The connector folder is plugin material, not runtime state.
 
 ### What belongs in config
 
@@ -449,9 +450,18 @@ Config is a user-facing surface, not a place for every parameter. A value should
 1. **The user understands it** — it maps to something the user has a mental model of (which account, which calendar, which folder, how far back to import), not an implementation detail (buffer sizes, retry backoff, field delimiters, log format, endpoint versions).
 2. **Adjusting it has real UX meaning** — different users would genuinely want different values, and changing it visibly changes behaviour the user cares about.
 
-Everything else is a **constant in the connector code**. A value that fails either test — the 5s watch tick in `app-commits`, a parser's record separator — is not config; hard-code it. Defaults already live in code, so "make it a constant" is the path of least resistance, not extra work.
+If a value passes both, declare it in the **config schema** with its `default`. Because config is by definition user-facing, its default is **shown to the user** — the setup form renders it and "reset" restores it — not hidden in code. A value that fails either test — the 5s watch tick in `app-commits`, a parser's record separator — is **not** config: it is a plain constant in the connector code, never declared and never surfaced. So `??`-with-a-literal-default goes away for config fields (the host supplies the schema default at run time); a literal default in code remains only for non-config internals, which are just ordinary constants.
 
-When in doubt, start as a code constant. Promoting a constant to config later is cheap; demoting a config the user has already set is a migration.
+When in doubt, start as a code constant. Promoting it to config later — declaring it in the schema — is cheap; demoting a config the user has already set is a migration.
+
+### Setup UI: config and auth are separate surfaces
+
+The shell renders setup as two distinct components, because they map to two different things:
+
+- **Config component** — a form generated from the connector's config schema. Plain settings: values are shown, freely editable, and resettable to the declared default. Stored as integration-config overrides.
+- **Auth component** — rendered by `auth.type` (an API-key field, or an OAuth connect flow). Credentials are secrets: handled by the auth module, stored encrypted, never displayed back. The UI signals sensitivity (masked input, "stored encrypted", connect/revoke) so the user knows they are handing over a key, not setting an option.
+
+Keeping them separate is also a boundary guard: secrets always flow through the auth component into the encrypted store, never into the config schema. A connector declaring neither shows neither — the surface is driven entirely by the manifest.
 
 `runtime.defaultSchedule` is only valid for `poll` connectors. It is a creation default for new integrations, not the scheduler's long-term source of truth. When an integration is created, the system copies the default into the integration schedule. After that, the scheduler reads the integration's own schedule.
 
@@ -459,19 +469,25 @@ When in doubt, start as a code constant. Promoting a constant to config later is
 
 ## Runtime Modes
 
-Mode is package-level host/scheduler metadata. Connector code still has one entrypoint.
+Mode classifies **how the runtime is triggered to invoke the connector** — the trigger axis, not what the connector does. It is package-level host/scheduler metadata; connector code still has one entrypoint.
 
 ```text
-watch   long-running runtime; exits when signal is aborted
-poll    scheduled one-pass run; returns after syncing current changes
-import  manual one-pass run over bounded input
+watch   self-driven: the connector holds a long-lived loop or outbound
+        connection and emits as data arrives; exits when the signal aborts
+poll    runtime-driven on a schedule: one pass that syncs since its cursor and returns
+manual  on-demand: runs only on an explicit trigger with a bounded input;
+        never auto-scheduled
 ```
+
+`push` (inbound: the provider calls a public receive endpoint you host) is a future fourth mode, gated on the hosted relay — localhost has no inbound endpoint. The split is **who initiates the connection**: outbound (you dial out and hold it) is `watch`; inbound (the provider dials you) is `push`.
 
 Examples:
 
-- `watch`: terminal, app commits watcher, macOS accessibility capture.
+- `watch`: terminal, app-commits watcher, macOS accessibility capture; and all *outbound* realtime — WebSocket, long-poll, Slack Socket Mode, Telegram getUpdates — because the connector dials out and holds the connection, so no public endpoint is needed.
 - `poll`: Google Calendar, Oura, GitHub API.
-- `import`: Obsidian vault, Notion export, CSV/archive import.
+- `manual`: a connector whose *entire* nature is on-demand — a bounded archive/export that yields events, or a one-time extraction of old material into D0 facts.
+
+A one-time **backfill of a live source** (e.g. Oura history) is **not** `manual`. It is a one-off triggered run on the underlying `poll`/`watch` connector, which branches into its backfill path. `import` is an *operation* — a triggered run with input, available to any connector — not a mode; `manual` is reserved for connectors that *only* ever run on demand.
 
 Do not add `stream` as a separate mode yet. High-throughput streams are watch connectors with batching and backpressure policy.
 
@@ -490,6 +506,13 @@ poll connector
   core down -> no execution
   next core startup -> due integrations run once as catch-up
   run crash -> surfaced as needs-attention; still retried at the next due schedule
+
+manual connector
+  never auto-run by the scheduler (not started on core up, not scheduled)
+  runs only on an explicit run-now trigger (host run endpoint -> supervisor.run),
+    shown in the shell as a Run button; the trigger carries the bounded input
+  run-now is the only execution path for a manual connector, and is also how any
+    connector takes a one-off on-demand run (e.g. a poll connector's backfill)
 
 Any run error is surfaced to the user as needs-attention — an error is by
 nature something the user should see. The runtime recovery behavior differs by
@@ -546,7 +569,7 @@ ConnectorScheduler
 `ConnectorRunner` is a separate process runner: every workspace package connector executes in a spawned Bun child with an IPC capability broker. The child has no database handle, no Guard, and no secrets — `guard.writeEvent`, `state.get/set`, and `auth.getToken` are RPC calls served by the host, where source injection and validation happen. Requirement `check`/`request` handlers also execute in the child. Abort is cooperative first (AbortSignal in the child), then enforced: a runner that ignores abort is force-killed after a grace period. This is not a sandbox claim. The process boundary exists for connector lifecycle, crash isolation, cancellation, and future runner backend flexibility. Trust still comes from official hash/signature verification or human-approved custom hashes, verified by the host before any spawn. Manually registered in-memory definitions (tests, embedding) run in-process with identical semantics.
 
 ```text
-poll/import
+poll/manual
   host checks trust
   spawn runner process
   run once
@@ -788,7 +811,7 @@ Examples:
 - `google-calendar`: sync token.
 - `oura`: last synced day.
 - `terminal`: current session checkpoint or last flushed chunk pointer.
-- `import`: last imported file hash or offset.
+- `manual`: last imported file hash or offset.
 
 State is not product data, not D0, and not secret storage. It is runtime bookkeeping so the connector can resume.
 

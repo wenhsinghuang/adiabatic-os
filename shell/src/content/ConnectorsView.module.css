@@ -518,6 +518,35 @@
   color: var(--c-ink-faint);
 }
 
+.configForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--c-panel-raised);
+  border: 1px solid var(--c-line);
+  border-radius: 4px;
+}
+
+.configField {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.configLabel {
+  flex: 0 0 180px;
+  font-size: 11.5px;
+  color: var(--c-ink-dim);
+}
+
+.configActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .oauthNote {
   font-size: 11px;
   color: var(--c-ink-faint);

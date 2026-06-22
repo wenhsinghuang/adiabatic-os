@@ -4,7 +4,7 @@ export type MaybePromise<T> = T | Promise<T>;
 export type { JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 
-export type ConnectorRuntimeMode = "watch" | "poll" | "import";
+export type ConnectorRuntimeMode = "watch" | "poll" | "manual";
 export type ConnectorPlatform =
   | "darwin"
   | "linux"
@@ -56,6 +56,16 @@ export interface ConnectorPlatformSpec {
 
 export type ConnectorPlatformsSpec = Partial<Record<ConnectorPlatform, ConnectorPlatformSpec>>;
 
+export type ConnectorConfigFieldType = "string" | "number" | "boolean";
+
+// One user-facing config field, keyed by name in ConnectorManifest.config.
+// `default` is the author default (shown to the user, applied by the host).
+export interface ConnectorConfigField {
+  type: ConnectorConfigFieldType;
+  label: string;
+  default?: JsonValue;
+}
+
 export interface ConnectorManifest {
   id: string;
   name: string;
@@ -67,9 +77,10 @@ export interface ConnectorManifest {
   platforms?: ConnectorPlatformsSpec;
   capabilities?: string[];
   auth?: ConnectorAuthSpec;
-  // No config field. The manifest is trust-hashed, so settings here would turn
-  // every config change into a re-approval. Connector defaults live in the
-  // connector's own code; user settings live in integration config.
+  // Config schema: user-facing fields (type/label/default). Author defaults live
+  // here (shown to the user, applied by the host); user-chosen values are
+  // overrides in integration config. Internal constants stay in code, undeclared.
+  config?: Record<string, ConnectorConfigField>;
 }
 
 export interface ConnectorEventInput {

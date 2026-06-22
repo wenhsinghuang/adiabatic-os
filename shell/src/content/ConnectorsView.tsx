@@ -5,7 +5,7 @@
 // it. Trust and platform availability are connector-level; setup, auth,
 // permissions, and lifecycle actions are per integration.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConnectors } from "../hooks/useConnectors";
 import {
   approveConnector,
@@ -18,6 +18,7 @@ import {
   removeConnector,
   requestConnectorRequirement,
   restartConnectorIntegration,
+  runConnectorIntegration,
   startConnectorOAuth,
   updateConnectorIntegration,
   type ConnectorIntegrationView,
@@ -394,6 +395,16 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
                   : "Clear error"}
           </button>
         )}
+        {c.mode === "manual" && interactive && trusted && c.setupStatus === "ready" && c.status !== "error" && (
+          <button
+            className={styles.primaryBtn}
+            title="Run this connector now"
+            disabled={cardBusy || c.status === "running"}
+            onClick={() => onAct(c.id, "run", () => runConnectorIntegration(c.id))}
+          >
+            {busy[c.id] === "run" || c.status === "running" ? "running…" : "Run"}
+          </button>
+        )}
         {c.integrationsMode === "multiple" && interactive && trusted && (
           <button
             className={styles.ghostBtn}
@@ -558,7 +569,98 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
           )}
         </div>
       )}
+
+      {trusted && interactive && c.configSchema && Object.keys(c.configSchema).length > 0 && (
+        <ConfigForm connector={c} busy={busy} onAct={onAct} />
+      )}
     </div>
+  );
+}
+
+// Schema-driven settings form: one input per declared config field, prefilled
+// from the integration's stored override or the author default. Save writes the
+// overrides; Reset clears them so the schema defaults apply again.
+function buildConfigValues(
+  schema: NonNullable<ConnectorIntegrationView["configSchema"]>,
+  config: ConnectorIntegrationView["config"],
+): Record<string, string | number | boolean> {
+  const next: Record<string, string | number | boolean> = {};
+  for (const [key, field] of Object.entries(schema)) {
+    const current = config?.[key];
+    const fallback = field.default ?? (field.type === "boolean" ? false : field.type === "number" ? 0 : "");
+    next[key] = (current ?? fallback) as string | number | boolean;
+  }
+  return next;
+}
+
+function ConfigForm({ connector: c, busy, onAct }: {
+  connector: ConnectorIntegrationView;
+  busy: Record<string, string>;
+  onAct: Act;
+}) {
+  const schema = c.configSchema ?? {};
+  const cardBusy = Boolean(busy[c.id]);
+
+  // Key the re-sync on the *content* of the stored config (+ schema), not object
+  // identity: useConnectors polls every 2s and hands us fresh refs each tick, so
+  // keying on identity would revert an in-progress edit. This re-syncs only when
+  // the stored values actually change (after Save/Reset).
+  const storedKey = JSON.stringify([c.config ?? {}, schema]);
+  const [values, setValues] = useState<Record<string, string | number | boolean>>(
+    () => buildConfigValues(schema, c.config),
+  );
+  useEffect(() => {
+    setValues(buildConfigValues(schema, c.config));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedKey]);
+
+  return (
+    <form
+      className={styles.configForm}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onAct(c.id, "config", () => updateConnectorIntegration(c.id, { config: values }));
+      }}
+    >
+      {Object.entries(schema).map(([key, field]) => (
+        <label key={key} className={styles.configField}>
+          <span className={styles.configLabel}>{field.label}</span>
+          {field.type === "boolean" ? (
+            <input
+              type="checkbox"
+              checked={Boolean(values[key])}
+              onChange={(event) => setValues((v) => ({ ...v, [key]: event.target.checked }))}
+            />
+          ) : (
+            <input
+              className={styles.inlineInput}
+              type={field.type === "number" ? "number" : "text"}
+              value={String(values[key] ?? "")}
+              onChange={(event) =>
+                setValues((v) => ({
+                  ...v,
+                  [key]: field.type === "number" ? Number(event.target.value) : event.target.value,
+                }))
+              }
+            />
+          )}
+        </label>
+      ))}
+      <div className={styles.configActions}>
+        <button className={styles.primaryBtn} disabled={cardBusy}>
+          {busy[c.id] === "config" ? "saving…" : "Save settings"}
+        </button>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={cardBusy}
+          title="Clear overrides and restore defaults"
+          onClick={() => onAct(c.id, "config", () => updateConnectorIntegration(c.id, { config: {} }))}
+        >
+          {busy[c.id] === "config" ? "…" : "Reset"}
+        </button>
+      </div>
+    </form>
   );
 }
 

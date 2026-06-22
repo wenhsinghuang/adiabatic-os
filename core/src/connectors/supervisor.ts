@@ -27,6 +27,7 @@ import {
 } from "./state";
 import { validateConnectorSchedule } from "./schedule";
 import type {
+  ConnectorConfigField,
   ConnectorDefinition,
   ConnectorHostContext,
   ConnectorIntegration,
@@ -452,6 +453,7 @@ export class ConnectorSupervisor {
     authReady: boolean;
     setupPending: ConnectorSetupPendingReason[];
     requirements: ConnectorRequirementView[];
+    configSchema?: Record<string, ConnectorConfigField>;
   }>> {
     return Promise.all(this.store.list().map(async (integration) => {
       const registration = this.registrations.get(integration.connectorId);
@@ -513,6 +515,7 @@ export class ConnectorSupervisor {
           message: integration.requirementsStatus?.[id]?.message,
           lastCheckedAt: integration.requirementsStatus?.[id]?.lastCheckedAt,
         })),
+        configSchema: registration?.manifest.config,
       };
     }));
   }
@@ -810,7 +813,7 @@ export class ConnectorSupervisor {
         session = await this.openTrustedSession(registration, controller.signal);
         await this.assertRunRequirements(registration, integration, session);
         await session.run({
-          config: mergeConfig(integration.config, opts?.config),
+          config: mergeConfig(schemaDefaults(registration.manifest), integration.config, opts?.config),
           host: this.host,
           signal: controller.signal,
           capabilities: this.buildRunCapabilities(registration, integration),
@@ -912,6 +915,19 @@ export class ConnectorSupervisor {
     }
     return registration;
   }
+}
+
+// Author defaults declared in the manifest config schema. They form the base
+// layer of the run-time config merge (schema defaults -> integration overrides
+// -> one-off run override), so connector code reads merged values directly.
+function schemaDefaults(manifest: ConnectorManifest): Record<string, unknown> | undefined {
+  const schema = manifest.config;
+  if (!schema) return undefined;
+  const defaults: Record<string, unknown> = {};
+  for (const [key, field] of Object.entries(schema)) {
+    if (field.default !== undefined) defaults[key] = field.default;
+  }
+  return Object.keys(defaults).length > 0 ? defaults : undefined;
 }
 
 function mergeConfig(...configs: unknown[]): unknown {

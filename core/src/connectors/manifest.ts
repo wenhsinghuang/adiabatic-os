@@ -2,6 +2,8 @@ import { readFile, readdir } from "fs/promises";
 import { join } from "path";
 import type {
   ConnectorAuthSpec,
+  ConnectorConfigField,
+  ConnectorConfigFieldType,
   ConnectorIntegrationMode,
   ConnectorManifest,
   ConnectorPlatform,
@@ -12,7 +14,7 @@ import { validateConnectorSchedule } from "./schedule";
 
 const CONNECTOR_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const INTEGRATION_KEY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const CONNECTOR_MODES = new Set<ConnectorRuntimeMode>(["watch", "poll", "import"]);
+const CONNECTOR_MODES = new Set<ConnectorRuntimeMode>(["watch", "poll", "manual"]);
 const INTEGRATION_MODES = new Set<ConnectorIntegrationMode>(["singleton", "multiple"]);
 const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
   "darwin",
@@ -23,6 +25,7 @@ const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
   "cloud",
 ]);
 const AUTH_TYPES = new Set(["none", "apiKey", "oauth2"]);
+const CONFIG_FIELD_TYPES = new Set<ConnectorConfigFieldType>(["string", "number", "boolean"]);
 const OAUTH_TOKEN_ENDPOINT_AUTH_METHODS = new Set([
   "none",
   "client_secret_basic",
@@ -75,13 +78,49 @@ export function validateConnectorManifest(manifest: ConnectorManifest): Connecto
 
   const platforms = validatePlatformsSpec(manifest.id, manifest.platforms);
   validateAuthSpec(manifest.id, manifest.auth ?? { type: "none" });
+  const config = validateConfigSchema(manifest.id, manifest.config);
   return {
     ...manifest,
     integrations,
     auth: manifest.auth ?? { type: "none" },
     platforms,
     capabilities: manifest.capabilities ?? [],
+    config,
   };
+}
+
+// The config schema is a map of user-facing fields. Each field declares a
+// `type`, a `label`, and an optional author `default` (which must match the
+// type). Secrets never go here — those are auth. Internal constants are not
+// declared at all; they stay in connector code.
+function validateConfigSchema(
+  connectorId: string,
+  config: Record<string, ConnectorConfigField> | undefined,
+): Record<string, ConnectorConfigField> | undefined {
+  if (config === undefined) return undefined;
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error(`Connector ${connectorId} config schema must be a map of fields`);
+  }
+  const normalized: Record<string, ConnectorConfigField> = {};
+  for (const [key, field] of Object.entries(config)) {
+    if (!CONNECTOR_ID_PATTERN.test(key)) {
+      throw new Error(`Connector ${connectorId} config field "${key}" has an invalid key`);
+    }
+    if (field === null || typeof field !== "object" || Array.isArray(field)) {
+      throw new Error(`Connector ${connectorId} config field "${key}" must be an object`);
+    }
+    if (!CONFIG_FIELD_TYPES.has(field.type)) {
+      throw new Error(`Connector ${connectorId} config field "${key}" has invalid type: ${(field as { type?: string }).type}`);
+    }
+    if (typeof field.label !== "string" || !field.label.trim()) {
+      throw new Error(`Connector ${connectorId} config field "${key}" requires a label`);
+    }
+    if (field.default !== undefined && typeof field.default !== field.type) {
+      throw new Error(`Connector ${connectorId} config field "${key}" default must be a ${field.type}`);
+    }
+    normalized[key] = { type: field.type, label: field.label, default: field.default };
+  }
+  return normalized;
 }
 
 export function currentConnectorPlatform(): ConnectorPlatform {

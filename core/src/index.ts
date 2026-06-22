@@ -155,7 +155,7 @@ const ALLOWED_ORIGINS = new Set([
 function corsHeaders(req: Request, extra?: Record<string, string>): Record<string, string> {
   const origin = req.headers.get("origin");
   const headers: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": [
       "Authorization",
       "Content-Type",
@@ -619,6 +619,19 @@ const server = Bun.serve({
           console.warn(`[adiabatic] Connector scheduler tick after restart failed: ${err}`);
         });
         return json({ integration });
+      }
+
+      // Trigger a one-off run on demand: the only execution path for a manual
+      // connector, and how any connector takes an explicit run (e.g. backfill).
+      // Non-blocking — the run proceeds in the background; status shows on the
+      // integration. The optional config body rides as a one-off run override.
+      const runIntegrationMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/run$/);
+      if (runIntegrationMatch && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        const body = await readBody<{ config?: unknown }>(req).catch(() => ({} as { config?: unknown }));
+        const instanceId = decodeURIComponent(runIntegrationMatch[1]);
+        connectorSupervisor.start(instanceId, { config: body.config });
+        return json({ ok: true });
       }
 
       const requirementRequestMatch = path.match(
