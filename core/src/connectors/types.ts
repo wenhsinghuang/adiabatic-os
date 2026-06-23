@@ -23,15 +23,17 @@ export type ConnectorAuthSpec =
       // provider registry. PKCE (S256) is always-on broker behavior, not a
       // manifest field. `scope` is an array for YAML ergonomics, joined to the
       // standard space-delimited string at the broker boundary.
-      // `tokenEndpointAuthMethod` defaults to "none" (public client + PKCE);
-      // the client_secret_* values describe confidential clients (a
-      // user-supplied client_secret), whose secret never appears in the
-      // manifest.
+      // `tokenEndpointAuthMethod` defaults to "none" (public client + PKCE).
+      // A client_secret_* value means the core attaches a user-supplied
+      // client_secret, so it implies BYO (see below); the secret never appears
+      // in the manifest. A shared confidential client is the relay case, a
+      // different config, not client_secret_*.
       //
       // `clientId` (the OAuth app's public, non-secret client identifier) is
-      // OPTIONAL: present means the author ships a registered (public) client;
-      // omitted means BYO — the user registers their own app and supplies the
-      // clientId at connect, stored with the credential, never in the manifest.
+      // OPTIONAL: present means the author ships a registered public client
+      // (PKCE-only here); omitted means BYO — the user registers their own app
+      // and supplies the clientId at connect, stored with the credential.
+      // Invariant: client_secret_* requires BYO, so clientId must be absent.
       type: "oauth2";
       authorizationEndpoint: string;
       tokenEndpoint: string;

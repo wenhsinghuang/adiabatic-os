@@ -204,6 +204,16 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
       !OAUTH_TOKEN_ENDPOINT_AUTH_METHODS.has(auth.tokenEndpointAuthMethod)) {
       throw new Error(`Connector ${connectorId} oauth2 tokenEndpointAuthMethod is invalid: ${auth.tokenEndpointAuthMethod}`);
     }
+    // A confidential method (client_secret_*) means the core attaches a
+    // client_secret, so the secret — and therefore the client — is the user's:
+    // it must be BYO (no manifest clientId). An author/shared confidential
+    // client cannot ship its secret and is the relay case (a different config),
+    // so clientId + client_secret_* is contradictory.
+    if (auth.clientId
+      && auth.tokenEndpointAuthMethod
+      && auth.tokenEndpointAuthMethod !== "none") {
+      throw new Error(`Connector ${connectorId} oauth2 ${auth.tokenEndpointAuthMethod} requires a BYO client; omit clientId (a shared confidential client needs the hosted relay)`);
+    }
   }
 }
 

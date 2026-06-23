@@ -183,6 +183,31 @@ auth:
         auth: { type: "oauth2", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token", clientId: "" } as any,
       })
     ).toThrow("clientId must be a non-empty string");
+    // confidential (client_secret_*) implies BYO: clientId + a secret method is rejected.
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          clientId: "cid",
+          tokenEndpointAuthMethod: "client_secret_post",
+        },
+      })
+    ).toThrow("requires a BYO client");
+    // BYO + confidential (no clientId) is valid.
+    expect(
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          tokenEndpointAuthMethod: "client_secret_post",
+        },
+      }).auth,
+    ).toMatchObject({ tokenEndpointAuthMethod: "client_secret_post" });
     expect(() =>
       validateConnectorManifest({
         ...base,
