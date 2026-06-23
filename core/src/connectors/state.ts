@@ -5,6 +5,8 @@ import type {
   ConnectorRequirementRecord,
   ConnectorSetupStatus,
   ConnectorTrustStatus,
+  ConnectorWarningInput,
+  ConnectorWarningRecord,
 } from "./types";
 import { validateConnectorId, validateIntegrationKey } from "./manifest";
 import { ulid } from "../utils/ulid";
@@ -25,6 +27,7 @@ interface IntegrationRow {
   requirements_status: string | null;
   auth_ref: string | null;
   last_error: string | null;
+  warnings: string | null;
   last_run_at: number | null;
   created_at: number;
   updated_at: number;
@@ -236,6 +239,41 @@ export class ConnectorIntegrationStore {
     this.updateJsonColumn(id, "requirements_status", value);
   }
 
+  setWarning(id: string, input: ConnectorWarningInput): void {
+    const warning = normalizeWarningInput(input);
+    const existing = this.get(id);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${id}`);
+    }
+
+    const now = Date.now();
+    const warnings = [...(existing.warnings ?? [])];
+    const index = warnings.findIndex((record) => record.key === warning.key);
+    const nextRecord: ConnectorWarningRecord = {
+      ...warning,
+      firstSeenAt: index >= 0 ? warnings[index].firstSeenAt : now,
+      lastSeenAt: now,
+    };
+
+    if (index >= 0) {
+      warnings[index] = nextRecord;
+    } else {
+      warnings.push(nextRecord);
+    }
+    this.setWarnings(id, warnings);
+  }
+
+  clearWarning(id: string, key: string): void {
+    const existing = this.get(id);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${id}`);
+    }
+    const warnings = existing.warnings ?? [];
+    const next = warnings.filter((record) => record.key !== key);
+    if (next.length === warnings.length) return;
+    this.setWarnings(id, next);
+  }
+
   // Explicit recovery from a run error: back to idle, stale failure message and
   // pending schedule cleared so the scheduler picks the integration up fresh.
   resetErrorToIdle(id: string): void {
@@ -268,6 +306,12 @@ export class ConnectorIntegrationStore {
     this.systemDb.prepare(
       `UPDATE connector_integrations SET ${column} = ?, updated_at = ? WHERE id = ?`
     ).run(stringifyJson(value), Date.now(), id);
+  }
+
+  private setWarnings(id: string, warnings: ConnectorWarningRecord[]): void {
+    this.systemDb.prepare(
+      `UPDATE connector_integrations SET warnings = ?, updated_at = ? WHERE id = ?`
+    ).run(stringifyJson(warnings.length ? warnings : undefined), Date.now(), id);
   }
 
   private assertIdentityAvailable(
@@ -343,6 +387,7 @@ function rowToIntegration<TConfig, TState>(row: IntegrationRow): ConnectorIntegr
       | undefined,
     authRef: row.auth_ref ?? undefined,
     lastError: row.last_error ?? undefined,
+    warnings: normalizeWarningRecords(parseJson(row.warnings)),
     lastRunAt: row.last_run_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -355,4 +400,34 @@ function parseJson(value: string | null): unknown {
 
 function stringifyJson(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value);
+}
+
+function normalizeWarningInput(input: ConnectorWarningInput): ConnectorWarningInput {
+  if (!input || typeof input !== "object") {
+    throw new Error("Connector warning must be an object");
+  }
+  const key = typeof input.key === "string" ? input.key.trim() : "";
+  const message = typeof input.message === "string" ? input.message.trim() : "";
+  if (!key) throw new Error("Connector warning key is required");
+  if (!message) throw new Error("Connector warning message is required");
+  const warning: ConnectorWarningInput = { key, message };
+  if (input.details !== undefined) warning.details = input.details;
+  return warning;
+}
+
+function normalizeWarningRecords(value: unknown): ConnectorWarningRecord[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const records = value.filter(isWarningRecord);
+  return records.length ? records : undefined;
+}
+
+function isWarningRecord(value: unknown): value is ConnectorWarningRecord {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && typeof (value as ConnectorWarningRecord).key === "string"
+      && typeof (value as ConnectorWarningRecord).message === "string"
+      && Number.isFinite((value as ConnectorWarningRecord).firstSeenAt)
+      && Number.isFinite((value as ConnectorWarningRecord).lastSeenAt),
+  );
 }

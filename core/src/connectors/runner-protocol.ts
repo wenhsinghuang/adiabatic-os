@@ -38,4 +38,6 @@ export type RunnerRpcMethod =
   | "writeEvents"
   | "stateGet"
   | "stateSet"
-  | "authGetToken";
+  | "authGetToken"
+  | "warningSet"
+  | "warningClear";

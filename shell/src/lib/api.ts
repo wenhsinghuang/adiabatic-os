@@ -240,6 +240,14 @@ export interface ConnectorRequirementView {
   lastCheckedAt?: number;
 }
 
+export interface ConnectorWarningRecord {
+  key: string;
+  message: string;
+  details?: unknown;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+
 export type ConnectorSetupPendingReason = "integration_key" | "auth" | "requirements";
 
 export interface ConnectorConfigFieldView {
@@ -276,6 +284,7 @@ export interface ConnectorIntegrationView {
   packageHash?: string;
   requirements: ConnectorRequirementView[];
   lastError?: string;
+  warnings?: ConnectorWarningRecord[];
   lastRunAt?: number;
   // Config schema declared by the connector manifest (user-facing fields).
   configSchema?: Record<string, ConnectorConfigFieldView>;
@@ -371,6 +380,7 @@ export interface ConnectorIntegrationRow {
   scheduleCron?: string;
   nextRunAt?: number;
   lastError?: string;
+  warnings?: ConnectorWarningRecord[];
   lastRunAt?: number;
 }
 

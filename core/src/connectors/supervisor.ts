@@ -46,6 +46,7 @@ import type {
   ConnectorRequirementState,
   ConnectorRequirementStatus,
   ConnectorRunHandle,
+  ConnectorWarningInput,
 } from "./types";
 
 export interface ConnectorRequirementView {
@@ -918,6 +919,13 @@ export class ConnectorSupervisor {
       authGetToken: () => authHandle.type === "none"
         ? Promise.reject(new Error("Connector does not use auth"))
         : authHandle.getToken(),
+      warningSet: async (value) => {
+        this.store.setWarning(integration.id, value as ConnectorWarningInput);
+      },
+      warningClear: async (key) => {
+        if (typeof key !== "string") throw new Error("Connector warning key must be a string");
+        this.store.clearWarning(integration.id, key);
+      },
     };
   }
 

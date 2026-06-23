@@ -157,6 +157,22 @@ export interface ConnectorStateHandle<TState = unknown> {
   set(state: TState): Promise<void>;
 }
 
+export interface ConnectorWarningInput {
+  key: string;
+  message: string;
+  details?: JsonValue;
+}
+
+export interface ConnectorWarningRecord extends ConnectorWarningInput {
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+
+export interface ConnectorWarningsHandle {
+  set(warning: ConnectorWarningInput): Promise<void>;
+  clear(key: string): Promise<void>;
+}
+
 export interface ConnectorHostContext {
   workspacePath: string;
 }
@@ -165,6 +181,7 @@ export interface ConnectorRunContext<TConfig = unknown, TState = unknown> {
   guard: BoundConnectorGuard;
   auth: ConnectorAuthHandle;
   state: ConnectorStateHandle<TState>;
+  warnings: ConnectorWarningsHandle;
   config: TConfig;
   host: ConnectorHostContext;
   signal: AbortSignal;
@@ -217,6 +234,7 @@ export interface ConnectorIntegration<TConfig = unknown, TState = unknown> {
   requirementsStatus: Record<string, ConnectorRequirementRecord> | undefined;
   authRef: string | undefined;
   lastError: string | undefined;
+  warnings: ConnectorWarningRecord[] | undefined;
   lastRunAt: number | undefined;
   createdAt: number;
   updatedAt: number;

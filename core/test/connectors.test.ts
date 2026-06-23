@@ -683,6 +683,55 @@ auth:
     expect(JSON.parse(rows[0].payload)).toEqual({ attempt: 1 });
   });
 
+  test("connector warnings are keyed non-fatal integration metadata", async () => {
+    let shouldClear = false;
+    supervisor.register(
+      {
+        id: "warning-feed",
+        name: "Warning Feed",
+        entry: "./index.ts",
+        runtime: { mode: "manual" },
+        integrations: { mode: "singleton" },
+        auth: { type: "none" },
+      },
+      {
+        async run({ warnings }) {
+          if (shouldClear) {
+            await warnings.clear("missing");
+            await warnings.clear("backfill");
+            return;
+          }
+          await warnings.set({
+            key: "backfill",
+            message: "Backfill paused",
+            details: { stream: "sleep" },
+          });
+          await warnings.set({
+            key: "backfill",
+            message: "Backfill still paused",
+          });
+        },
+      },
+    );
+    const integration = supervisor.ensureIntegration({ connectorId: "warning-feed" });
+
+    await supervisor.run(integration.id);
+    const warned = supervisor.getIntegration(integration.id);
+    expect(warned?.status).toBe("idle");
+    expect(warned?.lastError).toBeUndefined();
+    expect(warned?.warnings).toHaveLength(1);
+    expect(warned?.warnings?.[0]).toMatchObject({
+      key: "backfill",
+      message: "Backfill still paused",
+    });
+    expect(warned?.warnings?.[0].details).toBeUndefined();
+    expect(warned?.warnings?.[0].firstSeenAt).toBeLessThanOrEqual(warned?.warnings?.[0].lastSeenAt ?? 0);
+
+    shouldClear = true;
+    await supervisor.run(integration.id);
+    expect(supervisor.getIntegration(integration.id)?.warnings).toBeUndefined();
+  });
+
   test("blocks runs up front when credentials disappear after ready", async () => {
     let connectorSawAuth = false;
     supervisor.register(
@@ -1506,8 +1555,8 @@ auth:
         },
       },
       config: {
-        initialStartDate: "2026-01-01",
         lookbackDays: 1,
+        backfillYears: 0,
         streams: ["daily_sleep"],
       },
       signal: new AbortController().signal,
@@ -1549,15 +1598,18 @@ auth:
       },
     });
     expect(syncState).toEqual({
-      version: 1,
-      streams: {
-        daily_sleep: {
-          lastSyncedDate: "2026-01-03",
-          lastSyncedAt: now,
+      version: 2,
+      incremental: {
+        streams: {
+          daily_sleep: {
+            lastSyncedDate: "2026-01-03",
+            lastSyncedAt: now,
+          },
         },
       },
+      backfill: undefined,
     });
-    expect(requests[0].searchParams.get("start_date")).toBe("2026-01-01");
+    expect(requests[0].searchParams.get("start_date")).toBe("2026-01-02");
     expect(requests[0].searchParams.get("end_date")).toBe("2026-01-03");
 
     score = 91;
@@ -1568,6 +1620,398 @@ auth:
     expect(events[1].externalId).toMatch(/^daily_sleep:sleep-doc-1:[a-f0-9]{16}$/);
     expect(requests[1].searchParams.get("start_date")).toBe("2026-01-02");
     expect(requests[1].searchParams.get("end_date")).toBe("2026-01-03");
+  });
+
+  test("oura backfill completes available chunks after incremental sync", async () => {
+    const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(ouraUrl) as {
+      syncOnce(context: unknown, deps?: unknown): Promise<void>;
+    };
+
+    let syncState: unknown;
+    const events: any[] = [];
+    const requests: URL[] = [];
+    const context = {
+      auth: {
+        type: "oauth2",
+        async getToken() {
+          return "oura-token";
+        },
+      },
+      guard: {
+        async writeEvents(batch: any[]) {
+          const start = events.length;
+          events.push(...batch);
+          return { ids: batch.map((_, index) => `event-${start + index}`) };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      config: {
+        lookbackDays: 1,
+        backfillYears: 1,
+        streams: ["daily_sleep"],
+      },
+      signal: new AbortController().signal,
+    };
+
+    const fetchImpl = async (url: string) => {
+      const requestUrl = new URL(url);
+      requests.push(requestUrl);
+      const day = requestUrl.searchParams.get("start_date") ?? "2026-01-02";
+      return new Response(JSON.stringify({
+        data: [{
+          id: `sleep-${day}`,
+          day,
+          timestamp: `${day}T08:00:00+00:00`,
+          score: 90,
+        }],
+        next_token: null,
+      }), { status: 200 });
+    };
+
+    const now = Date.UTC(2026, 0, 3, 12);
+    await syncOnce(context, { fetchImpl, now });
+
+    expect(requests).toHaveLength(6);
+    expect(requests[0].searchParams.get("start_date")).toBe("2026-01-02");
+    expect(requests[0].searchParams.get("end_date")).toBe("2026-01-03");
+    expect(requests[1].searchParams.get("start_date")).toBe("2025-01-03");
+    expect(requests[1].searchParams.get("end_date")).toBe("2025-04-03");
+    expect(requests[5].searchParams.get("start_date")).toBe("2025-12-29");
+    expect(requests[5].searchParams.get("end_date")).toBe("2026-01-03");
+    expect(events).toHaveLength(6);
+    expect(syncState).toEqual({
+      version: 2,
+      incremental: {
+        streams: {
+          daily_sleep: {
+            lastSyncedDate: "2026-01-03",
+            lastSyncedAt: now,
+          },
+        },
+      },
+      backfill: {
+        fromDate: "2025-01-03",
+        untilDate: "2026-01-03",
+        streams: {
+          daily_sleep: {
+            nextDate: "2026-01-03",
+            done: true,
+            lastSyncedAt: now,
+          },
+        },
+        done: true,
+      },
+    });
+
+    await syncOnce(context, { fetchImpl, now });
+    expect(requests).toHaveLength(7);
+    expect(requests[6].searchParams.get("start_date")).toBe("2026-01-02");
+    expect(requests[6].searchParams.get("end_date")).toBe("2026-01-03");
+  });
+
+  test("oura backfill records errors and resumes from the failed chunk", async () => {
+    const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(ouraUrl) as {
+      syncOnce(context: unknown, deps?: unknown): Promise<void>;
+    };
+
+    let syncState: unknown;
+    const events: any[] = [];
+    const requests: URL[] = [];
+    const warnings = new Map<string, any>();
+    let failSecondBackfillChunk = true;
+    const context = {
+      auth: {
+        type: "oauth2",
+        async getToken() {
+          return "oura-token";
+        },
+      },
+      guard: {
+        async writeEvents(batch: any[]) {
+          const start = events.length;
+          events.push(...batch);
+          return { ids: batch.map((_, index) => `event-${start + index}`) };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      warnings: {
+        async set(warning: any) {
+          warnings.set(warning.key, warning);
+        },
+        async clear(key: string) {
+          warnings.delete(key);
+        },
+      },
+      config: {
+        lookbackDays: 1,
+        backfillYears: 1,
+        streams: ["daily_sleep"],
+      },
+      signal: new AbortController().signal,
+    };
+
+    const fetchImpl = async (url: string) => {
+      const requestUrl = new URL(url);
+      requests.push(requestUrl);
+      const startDate = requestUrl.searchParams.get("start_date") ?? "2026-01-02";
+      if (failSecondBackfillChunk && startDate === "2025-04-03") {
+        throw new Error("synthetic rate limit");
+      }
+      return new Response(JSON.stringify({
+        data: [{
+          id: `sleep-${startDate}`,
+          day: startDate,
+          timestamp: `${startDate}T08:00:00+00:00`,
+          score: 90,
+        }],
+        next_token: null,
+      }), { status: 200 });
+    };
+
+    const now = Date.UTC(2026, 0, 3, 12);
+    await syncOnce(context, { fetchImpl, now });
+
+    expect(requests).toHaveLength(3);
+    expect(requests[1].searchParams.get("start_date")).toBe("2025-01-03");
+    expect(requests[2].searchParams.get("start_date")).toBe("2025-04-03");
+    expect(syncState).toMatchObject({
+      version: 2,
+      backfill: {
+        fromDate: "2025-01-03",
+        untilDate: "2026-01-03",
+        streams: {
+          daily_sleep: {
+            nextDate: "2025-04-03",
+            done: false,
+          },
+        },
+        lastError: {
+          stream: "daily_sleep",
+          nextDate: "2025-04-03",
+          chunkEndDate: "2025-07-02",
+          message: "synthetic rate limit",
+          at: now,
+        },
+      },
+    });
+    expect(warnings.get("backfill")).toMatchObject({
+      key: "backfill",
+      message: "Oura backfill paused at daily_sleep 2025-04-03: synthetic rate limit",
+      details: {
+        provider: "oura",
+        stream: "daily_sleep",
+        nextDate: "2025-04-03",
+        chunkEndDate: "2025-07-02",
+      },
+    });
+
+    failSecondBackfillChunk = false;
+    await syncOnce(context, { fetchImpl, now });
+
+    expect(requests[4].searchParams.get("start_date")).toBe("2025-04-03");
+    expect(syncState).toMatchObject({
+      backfill: {
+        streams: {
+          daily_sleep: {
+            nextDate: "2026-01-03",
+            done: true,
+          },
+        },
+        done: true,
+      },
+    });
+    expect(warnings.has("backfill")).toBe(false);
+  });
+
+  test("oura heartrate sync emits 15 minute batch events", async () => {
+    const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(ouraUrl) as {
+      syncOnce(context: unknown, deps?: unknown): Promise<void>;
+    };
+
+    let syncState: unknown;
+    const events: any[] = [];
+    const requests: URL[] = [];
+    const context = {
+      auth: {
+        type: "oauth2",
+        async getToken() {
+          return "oura-token";
+        },
+      },
+      guard: {
+        async writeEvents(batch: any[]) {
+          const start = events.length;
+          events.push(...batch);
+          return { ids: batch.map((_, index) => `event-${start + index}`) };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      config: {
+        lookbackDays: 1,
+        backfillYears: 0,
+        streams: ["heartrate"],
+      },
+      signal: new AbortController().signal,
+    };
+
+    const fetchImpl = async (url: string) => {
+      requests.push(new URL(url));
+      return new Response(JSON.stringify({
+        data: [
+          { timestamp: "2026-01-03T11:01:00+00:00", bpm: 60, source: "awake" },
+          { timestamp: "2026-01-03T11:14:00+00:00", bpm: 66, source: "awake" },
+          { timestamp: "2026-01-03T11:16:00+00:00", bpm: 72, source: "workout" },
+        ],
+        next_token: null,
+      }), { status: 200 });
+    };
+
+    const now = Date.UTC(2026, 0, 3, 12);
+    await syncOnce(context, { fetchImpl, now });
+
+    expect(requests[0].searchParams.get("start_datetime")).toBe("2026-01-02T12:00:00.000Z");
+    expect(requests[0].searchParams.get("end_datetime")).toBe("2026-01-03T12:00:00.000Z");
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "oura.heartrate.batch",
+      externalId: expect.stringMatching(/^heartrate:2026-01-03T11:00:00\.000Z:[a-f0-9]{16}$/),
+      startedAt: Date.UTC(2026, 0, 3, 11),
+      endedAt: Date.UTC(2026, 0, 3, 11, 15),
+      payload: {
+        provider: "oura",
+        stream: "heartrate",
+        bucketMs: 15 * 60 * 1000,
+        sampleCount: 2,
+        sourceCounts: { awake: 2 },
+        minBpm: 60,
+        maxBpm: 66,
+        avgBpm: 63,
+      },
+    });
+    expect(events[0].payload.samples).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      type: "oura.heartrate.batch",
+      startedAt: Date.UTC(2026, 0, 3, 11, 15),
+      payload: {
+        sampleCount: 1,
+        sourceCounts: { workout: 1 },
+        minBpm: 72,
+        maxBpm: 72,
+        avgBpm: 72,
+      },
+    });
+    expect(syncState).toEqual({
+      version: 2,
+      incremental: {
+        streams: {
+          heartrate: {
+            lastSyncedDateTime: "2026-01-03T12:00:00.000Z",
+            lastSyncedAt: now,
+          },
+        },
+      },
+      backfill: undefined,
+    });
+  });
+
+  test("oura ring configuration sync is throttled by state", async () => {
+    const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(ouraUrl) as {
+      syncOnce(context: unknown, deps?: unknown): Promise<void>;
+    };
+
+    let syncState: unknown;
+    const events: any[] = [];
+    const requests: URL[] = [];
+    const context = {
+      auth: {
+        type: "oauth2",
+        async getToken() {
+          return "oura-token";
+        },
+      },
+      guard: {
+        async writeEvents(batch: any[]) {
+          const start = events.length;
+          events.push(...batch);
+          return { ids: batch.map((_, index) => `event-${start + index}`) };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      config: {
+        backfillYears: 0,
+        streams: ["ring_configuration"],
+      },
+      signal: new AbortController().signal,
+    };
+
+    const fetchImpl = async (url: string) => {
+      requests.push(new URL(url));
+      return new Response(JSON.stringify({
+        data: [{
+          id: "ring-1",
+          set_up_at: "2025-01-01T00:00:00Z",
+          hardware_type: "gen4",
+          firmware_version: "3.0.0",
+        }],
+        next_token: null,
+      }), { status: 200 });
+    };
+
+    const firstRun = Date.UTC(2026, 0, 3, 12);
+    await syncOnce(context, { fetchImpl, now: firstRun });
+    expect(requests).toHaveLength(1);
+    expect(events).toHaveLength(1);
+    expect(syncState).toEqual({
+      version: 2,
+      incremental: {
+        streams: {
+          ring_configuration: {
+            lastSyncedAt: firstRun,
+          },
+        },
+      },
+      backfill: undefined,
+    });
+
+    await syncOnce(context, { fetchImpl, now: firstRun + 6 * 60 * 60 * 1000 });
+    expect(requests).toHaveLength(1);
+    expect(events).toHaveLength(1);
+
+    await syncOnce(context, { fetchImpl, now: firstRun + 31 * 24 * 60 * 60 * 1000 });
+    expect(requests).toHaveLength(2);
+    expect(events).toHaveLength(2);
   });
 
   test("installs connectors as workspace folders, registers them, and removes the folder", async () => {
@@ -2181,6 +2625,56 @@ auth:
     // process boundary must not degrade it to null.
     expect(payload.configType).toBe("object");
     expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ pid: payload.pid });
+  });
+
+  test("workspace package connectors can report warnings over runner RPC", async () => {
+    const dir = join(workspace, "connectors", "warning-rpc");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "connector.yaml"),
+      `id: warning-rpc
+name: Warning RPC
+entry: ./index.mjs
+runtime:
+  mode: manual
+integrations:
+  mode: singleton
+platforms:
+  darwin: {}
+auth:
+  type: none
+`,
+    );
+    writeFileSync(
+      join(dir, "index.mjs"),
+      `export default {
+  async run({ warnings }) {
+    await warnings.set({ key: "stale", message: "old warning" });
+    await warnings.clear("stale");
+    await warnings.set({
+      key: "backfill",
+      message: "Backfill paused from child",
+      details: { stream: "daily_sleep" },
+    });
+  },
+};
+`,
+    );
+
+    await supervisor.registerDirectory(dir);
+    const integration = supervisor.ensureFirstIntegration("warning-rpc");
+    await supervisor.approveCurrentPackage("warning-rpc");
+    await supervisor.run(integration.id);
+
+    const stored = supervisor.getIntegration(integration.id);
+    expect(stored?.status).toBe("idle");
+    expect(stored?.lastError).toBeUndefined();
+    expect(stored?.warnings).toHaveLength(1);
+    expect(stored?.warnings?.[0]).toMatchObject({
+      key: "backfill",
+      message: "Backfill paused from child",
+      details: { stream: "daily_sleep" },
+    });
   });
 
   test("force-kills runner processes that ignore abort", async () => {

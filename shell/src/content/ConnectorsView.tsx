@@ -450,6 +450,13 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
         </div>
       )}
 
+      {c.warnings?.map((warning) => (
+        <div key={warning.key} className={styles.warningBanner}>
+          <span className={styles.errorGlyph}>▲</span>
+          {warning.message}
+        </div>
+      ))}
+
       {showSetup && c.setupPending.includes("integration_key") && (
         <form
           className={styles.inlineForm}

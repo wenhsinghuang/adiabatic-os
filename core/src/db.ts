@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS connector_integrations (
   requirements_status JSON,
   auth_ref      TEXT,
   last_error    TEXT,
+  warnings      JSON,
   last_run_at   INTEGER,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL

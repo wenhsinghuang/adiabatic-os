@@ -31,6 +31,8 @@ export interface RunnerCapabilities {
   stateGet(): Promise<unknown>;
   stateSet(value: unknown): Promise<void>;
   authGetToken(): Promise<string>;
+  warningSet(value: unknown): Promise<void>;
+  warningClear(key: unknown): Promise<void>;
 }
 
 export interface RunnerRunOptions {
@@ -103,6 +105,10 @@ export class InProcessRunnerSession implements RunnerSession {
       state: {
         get: () => caps.stateGet(),
         set: (value) => caps.stateSet(value),
+      },
+      warnings: {
+        set: (warning) => caps.warningSet(warning),
+        clear: (key) => caps.warningClear(key),
       },
       auth: caps.authType === "none"
         ? { type: "none" }
@@ -394,6 +400,12 @@ export class ProcessRunnerSession implements RunnerSession {
           break;
         case "authGetToken":
           value = await caps.authGetToken();
+          break;
+        case "warningSet":
+          value = await caps.warningSet(params);
+          break;
+        case "warningClear":
+          value = await caps.warningClear(params);
           break;
         default:
           throw new Error(`Unknown connector capability: ${method}`);

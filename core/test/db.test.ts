@@ -100,6 +100,7 @@ describe("DB", () => {
     expect(names).toContain("requirements_status");
     expect(names).toContain("auth_ref");
     expect(names).toContain("last_error");
+    expect(names).toContain("warnings");
     expect(names).toContain("last_run_at");
     expect(names).toContain("created_at");
     expect(names).toContain("updated_at");

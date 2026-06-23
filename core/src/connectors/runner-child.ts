@@ -101,6 +101,10 @@ async function handleMessage(msg: HostToRunnerMessage): Promise<void> {
             get: () => rpc("stateGet"),
             set: (value) => rpc<void>("stateSet", value),
           },
+          warnings: {
+            set: (warning) => rpc<void>("warningSet", warning),
+            clear: (key) => rpc<void>("warningClear", key),
+          },
           auth: msg.authType === "none"
             ? { type: "none" }
             : {

@@ -637,6 +637,17 @@
   padding: 6px 10px;
 }
 
+.warningBanner {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--c-amber);
+  background: var(--c-amber-dim);
+  border-radius: 3px;
+  padding: 6px 10px;
+}
+
 .retryNote {
   margin-left: auto;
   flex-shrink: 0;

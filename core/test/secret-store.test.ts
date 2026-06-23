@@ -278,6 +278,7 @@ function integration(authRef: string): ConnectorIntegration {
     requirementsStatus: undefined,
     authRef,
     lastError: undefined,
+    warnings: undefined,
     lastRunAt: undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
