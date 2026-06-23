@@ -421,7 +421,7 @@ platforms:
   android: {}
   cloud: {}
 auth:
-  type: oauth2
+  type: oauth2-public
   authorizationEndpoint: https://accounts.google.com/o/oauth2/v2/auth
   tokenEndpoint: https://oauth2.googleapis.com/token
   clientId: calendar-client-id
@@ -735,7 +735,10 @@ Auth is system-managed. Connectors declare standardized credential or account re
 ```text
 none
 apiKey
-oauth2
+oauth2-public
+oauth2-byo-public
+oauth2-byo-confidential
+oauth2-hosted
 ```
 
 Secret material belongs to the unified auth/secrets module, not to `connectors/<connector_id>/` and not to connector-owned files.
@@ -755,7 +758,7 @@ auth:
 
 ```yaml
 auth:
-  type: oauth2
+  type: oauth2-public
   authorizationEndpoint: https://accounts.google.com/o/oauth2/v2/auth
   tokenEndpoint: https://oauth2.googleapis.com/token
   clientId: calendar-client-id
@@ -763,9 +766,38 @@ auth:
     - https://www.googleapis.com/auth/calendar.readonly
 ```
 
-The OAuth2 manifest config is a subset of standard OAuth/OIDC client metadata (standard field names, camelCased to the manifest convention). `clientId` (the OAuth app's public, non-secret client identifier) is required and lives in the manifest like every other field. The auth broker is a generic Authorization Code executor that consumes this metadata; there is no provider registry, and v1 is PKCE-only (S256 always-on, not a manifest field). See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
+```yaml
+auth:
+  type: oauth2-byo-public
+  authorizationEndpoint: https://provider.example/oauth/authorize
+  tokenEndpoint: https://provider.example/oauth/token
+  scope:
+    - read
+```
 
-Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer.
+```yaml
+auth:
+  type: oauth2-byo-confidential
+  authorizationEndpoint: https://cloud.ouraring.com/oauth/authorize
+  tokenEndpoint: https://api.ouraring.com/oauth/token
+  tokenEndpointAuthMethod: client_secret_post
+  scope:
+    - daily
+    - heartrate
+```
+
+```yaml
+auth:
+  type: oauth2-hosted
+  connectEndpoint: https://auth.adiabatic.com/connect/oura
+  scope:
+    - daily
+    - heartrate
+```
+
+The OAuth manifest type selects the setup/exchange flow. Direct OAuth flows use standard OAuth/OIDC field meanings (`authorizationEndpoint`, `tokenEndpoint`, `clientId`, `scope`, `tokenEndpointAuthMethod`) with PKCE always on. `oauth2-hosted` is the official hosted OAuth contract for shared confidential apps; provider OAuth metadata lives in the hosted auth service, not the local manifest. See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
+
+Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer. All OAuth manifest types normalize to the same runtime handle: `context.auth.type === "oauth2"` plus `getToken()`.
 
 ```ts
 type ConnectorAuthHandle =

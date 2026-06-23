@@ -90,7 +90,7 @@ platforms:
       - macos-accessibility
   cloud: {}
 auth:
-  type: oauth2
+  type: oauth2-public
   authorizationEndpoint: https://accounts.google.com/o/oauth2/v2/auth
   tokenEndpoint: https://oauth2.googleapis.com/token
   clientId: calendar-client-id
@@ -111,7 +111,7 @@ auth:
         cloud: { requirements: [] },
       },
       auth: {
-        type: "oauth2",
+        type: "oauth2-public",
         authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
         tokenEndpoint: "https://oauth2.googleapis.com/token",
         clientId: "calendar-client-id",
@@ -155,36 +155,6 @@ auth:
       validateConnectorManifest({ ...base, integrations: { mode: "many" as any } })
     ).toThrow("invalid integrations mode");
     expect(() =>
-      validateConnectorManifest({ ...base, auth: { type: "oauth2", tokenEndpoint: "https://x/token" } as any })
-    ).toThrow("requires authorizationEndpoint");
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: { type: "oauth2", authorizationEndpoint: {}, tokenEndpoint: "https://x/token" } as any,
-      })
-    ).toThrow("requires authorizationEndpoint");
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: { type: "oauth2", authorizationEndpoint: "http://x/auth", tokenEndpoint: "https://x/token" } as any,
-      })
-    ).toThrow("must be https");
-    // clientId is optional (BYO): an oauth2 manifest without it is valid.
-    expect(
-      validateConnectorManifest({
-        ...base,
-        auth: { type: "oauth2", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token" },
-      }).auth,
-    ).toMatchObject({ type: "oauth2" });
-    // but a present clientId must be a non-empty string.
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: { type: "oauth2", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token", clientId: "" } as any,
-      })
-    ).toThrow("clientId must be a non-empty string");
-    // confidential (client_secret_*) implies BYO: clientId + a secret method is rejected.
-    expect(() =>
       validateConnectorManifest({
         ...base,
         auth: {
@@ -192,27 +162,144 @@ auth:
           authorizationEndpoint: "https://x/auth",
           tokenEndpoint: "https://x/token",
           clientId: "cid",
-          tokenEndpointAuthMethod: "client_secret_post",
-        },
+        } as any,
       })
-    ).toThrow("requires a BYO client");
-    // BYO + confidential (no clientId) is valid.
+    ).toThrow("legacy oauth2 auth");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2-public", tokenEndpoint: "https://x/token", clientId: "cid" } as any,
+      })
+    ).toThrow("requires authorizationEndpoint");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2-public", authorizationEndpoint: {}, tokenEndpoint: "https://x/token", clientId: "cid" } as any,
+      })
+    ).toThrow("requires authorizationEndpoint");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2-public", authorizationEndpoint: "http://x/auth", tokenEndpoint: "https://x/token", clientId: "cid" } as any,
+      })
+    ).toThrow("must be https");
     expect(
       validateConnectorManifest({
         ...base,
         auth: {
-          type: "oauth2",
+          type: "oauth2-public",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          clientId: "cid",
+        },
+      }).auth,
+    ).toMatchObject({ type: "oauth2-public", clientId: "cid" });
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: { type: "oauth2-public", authorizationEndpoint: "https://x/auth", tokenEndpoint: "https://x/token", clientId: "" } as any,
+      })
+    ).toThrow("requires clientId");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-public",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          clientId: "cid",
+          tokenEndpointAuthMethod: "client_secret_post",
+        },
+      })
+    ).toThrow("forbids tokenEndpointAuthMethod");
+    expect(
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-byo-public",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+        },
+      }).auth,
+    ).toMatchObject({ type: "oauth2-byo-public" });
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-byo-public",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          clientId: "cid",
+        } as any,
+      })
+    ).toThrow("forbids clientId");
+    expect(
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-byo-confidential",
           authorizationEndpoint: "https://x/auth",
           tokenEndpoint: "https://x/token",
           tokenEndpointAuthMethod: "client_secret_post",
         },
       }).auth,
-    ).toMatchObject({ tokenEndpointAuthMethod: "client_secret_post" });
+    ).toMatchObject({ type: "oauth2-byo-confidential", tokenEndpointAuthMethod: "client_secret_post" });
     expect(() =>
       validateConnectorManifest({
         ...base,
         auth: {
-          type: "oauth2",
+          type: "oauth2-byo-confidential",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+          tokenEndpointAuthMethod: "client_secret_post",
+          clientId: "cid",
+        } as any,
+      })
+    ).toThrow("forbids clientId");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-byo-confidential",
+          authorizationEndpoint: "https://x/auth",
+          tokenEndpoint: "https://x/token",
+        } as any,
+      })
+    ).toThrow("tokenEndpointAuthMethod must be client_secret_basic or client_secret_post");
+    expect(
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-hosted",
+          connectEndpoint: "https://auth.adiabatic.com/connect/demo",
+          scope: ["read"],
+        },
+      }).auth,
+    ).toMatchObject({ type: "oauth2-hosted", connectEndpoint: "https://auth.adiabatic.com/connect/demo" });
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-hosted",
+          connectEndpoint: "http://auth.adiabatic.com/connect/demo",
+        } as any,
+      })
+    ).toThrow("connectEndpoint must be https");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-hosted",
+          connectEndpoint: "https://auth.adiabatic.com/connect/demo",
+          authorizationEndpoint: "https://x/auth",
+        } as any,
+      })
+    ).toThrow("forbids authorizationEndpoint");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-public",
           authorizationEndpoint: "https://x/auth",
           tokenEndpoint: "https://x/token",
           clientId: "cid",
@@ -224,14 +311,13 @@ auth:
       validateConnectorManifest({
         ...base,
         auth: {
-          type: "oauth2",
+          type: "oauth2-byo-confidential",
           authorizationEndpoint: "https://x/auth",
           tokenEndpoint: "https://x/token",
-          clientId: "cid",
           tokenEndpointAuthMethod: "client_secret_jwt" as any,
         },
       })
-    ).toThrow("tokenEndpointAuthMethod is invalid");
+    ).toThrow("tokenEndpointAuthMethod must be client_secret_basic or client_secret_post");
     expect(() =>
       validateConnectorManifest({ ...base, auth: { type: "localPermission" } as any })
     ).toThrow("invalid auth type");
@@ -1807,7 +1893,7 @@ auth:
         runtime: { mode: "poll" },
         integrations: { mode: "singleton" },
         auth: {
-          type: "oauth2",
+          type: "oauth2-public",
           authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
           tokenEndpoint: "https://oauth2.googleapis.com/token",
           clientId: "feed-client-id",
@@ -1846,7 +1932,7 @@ auth:
         runtime: { mode: "poll" },
         integrations: { mode: "singleton" },
         auth: {
-          type: "oauth2",
+          type: "oauth2-public",
           authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
           tokenEndpoint: "https://oauth2.googleapis.com/token",
           clientId: "feed-client-id",
@@ -1869,6 +1955,96 @@ auth:
     expect(connected.authRef).toBe(`connector-integration:${integration.id}:auth`);
     expect(connected.setupStatus).toBe("ready");
     expect(await supervisor.getAuthManager().hasToken(connected.authRef!)).toBe(true);
+  });
+
+  test("OAuth manifest flows normalize to the runtime oauth2 handle", async () => {
+    const seenAuthTypes: string[] = [];
+    supervisor = new ConnectorSupervisor({
+      systemDb,
+      guard: new Guard({ db: dataDb, source: "system:test" }),
+      host: { workspacePath: workspace },
+      platform: "darwin",
+      authManager: new ConnectorAuthManager(secrets, {
+        fetchImpl: async () => new Response(JSON.stringify({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          expires_in: 3600,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      }),
+    });
+
+    const manifests: Array<{
+      manifest: ConnectorManifest;
+      input?: { clientId?: string; clientSecret?: string };
+    }> = [
+      {
+        manifest: {
+          id: "oauth-public",
+          name: "OAuth Public",
+          entry: "./index.ts",
+          runtime: { mode: "poll" },
+          integrations: { mode: "singleton" },
+          auth: {
+            type: "oauth2-public",
+            authorizationEndpoint: "https://provider.example/oauth/authorize",
+            tokenEndpoint: "https://provider.example/oauth/token",
+            clientId: "public-client",
+          },
+        },
+      },
+      {
+        manifest: {
+          id: "oauth-byo-public",
+          name: "OAuth BYO Public",
+          entry: "./index.ts",
+          runtime: { mode: "poll" },
+          integrations: { mode: "singleton" },
+          auth: {
+            type: "oauth2-byo-public",
+            authorizationEndpoint: "https://provider.example/oauth/authorize",
+            tokenEndpoint: "https://provider.example/oauth/token",
+          },
+        },
+        input: { clientId: "byo-public-client" },
+      },
+      {
+        manifest: {
+          id: "oauth-byo-confidential",
+          name: "OAuth BYO Confidential",
+          entry: "./index.ts",
+          runtime: { mode: "poll" },
+          integrations: { mode: "singleton" },
+          auth: {
+            type: "oauth2-byo-confidential",
+            authorizationEndpoint: "https://provider.example/oauth/authorize",
+            tokenEndpoint: "https://provider.example/oauth/token",
+            tokenEndpointAuthMethod: "client_secret_post",
+          },
+        },
+        input: { clientId: "byo-confidential-client", clientSecret: "byo-secret" },
+      },
+    ];
+
+    for (const { manifest, input } of manifests) {
+      supervisor.register(manifest, {
+        async run({ auth }) {
+          seenAuthTypes.push(auth.type);
+        },
+      });
+      const integration = supervisor.ensureIntegration({ connectorId: manifest.id });
+      const started = supervisor.startOAuthIntegration(integration.id, {
+        redirectUri: "http://127.0.0.1:32123/oauth/callback",
+        ...input,
+      });
+      const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+      await supervisor.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" }));
+      await supervisor.run(integration.id);
+    }
+
+    expect(seenAuthTypes).toEqual(["oauth2", "oauth2", "oauth2"]);
   });
 
   test("emits D0 audit events for connector approve and remove", async () => {

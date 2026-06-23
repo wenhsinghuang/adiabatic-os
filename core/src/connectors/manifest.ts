@@ -24,10 +24,15 @@ const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
   "android",
   "cloud",
 ]);
-const AUTH_TYPES = new Set(["none", "apiKey", "oauth2"]);
+const OAUTH_AUTH_TYPES = new Set([
+  "oauth2-public",
+  "oauth2-byo-public",
+  "oauth2-byo-confidential",
+  "oauth2-hosted",
+]);
+const AUTH_TYPES = new Set(["none", "apiKey", ...OAUTH_AUTH_TYPES]);
 const CONFIG_FIELD_TYPES = new Set<ConnectorConfigFieldType>(["string", "number", "boolean"]);
 const OAUTH_TOKEN_ENDPOINT_AUTH_METHODS = new Set([
-  "none",
   "client_secret_basic",
   "client_secret_post",
 ]);
@@ -167,52 +172,101 @@ export async function loadConnectorManifest(connectorDir: string): Promise<Conne
 }
 
 function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
+  const rawAuth = auth as ConnectorAuthSpec & Record<string, unknown>;
+  if (rawAuth.type === "oauth2") {
+    throw new Error(
+      `Connector ${connectorId} uses legacy oauth2 auth; use oauth2-public, oauth2-byo-public, oauth2-byo-confidential, or oauth2-hosted`,
+    );
+  }
   if (!AUTH_TYPES.has(auth.type)) {
     throw new Error(`Connector ${connectorId} has invalid auth type: ${(auth as { type?: string }).type}`);
   }
-  if (auth.type === "oauth2") {
-    // YAML/JSON is untyped at parse time, so validate shapes at runtime. The
-    // broker is a generic executor consuming standard OAuth client metadata;
-    // endpoints are required https URLs (an http token endpoint would send
-    // tokens in cleartext).
-    for (const field of ["authorizationEndpoint", "tokenEndpoint"] as const) {
-      const value = auth[field];
-      if (typeof value !== "string" || !value) {
-        throw new Error(`Connector ${connectorId} oauth2 auth requires ${field} (https URL)`);
-      }
-      let url: URL;
-      try {
-        url = new URL(value);
-      } catch {
-        throw new Error(`Connector ${connectorId} oauth2 ${field} is not a valid URL: ${value}`);
-      }
-      if (url.protocol !== "https:") {
-        throw new Error(`Connector ${connectorId} oauth2 ${field} must be https: ${value}`);
-      }
+  if (!OAUTH_AUTH_TYPES.has(auth.type)) {
+    return;
+  }
+
+  validateOAuthScope(connectorId, rawAuth);
+
+  if (auth.type === "oauth2-hosted") {
+    validateHttpsAuthField(connectorId, rawAuth, "connectEndpoint", auth.type);
+    forbidAuthFields(connectorId, rawAuth, auth.type, [
+      "authorizationEndpoint",
+      "tokenEndpoint",
+      "clientId",
+      "tokenEndpointAuthMethod",
+    ]);
+    return;
+  }
+
+  validateHttpsAuthField(connectorId, rawAuth, "authorizationEndpoint", auth.type);
+  validateHttpsAuthField(connectorId, rawAuth, "tokenEndpoint", auth.type);
+
+  if (auth.type === "oauth2-public") {
+    validateRequiredStringAuthField(connectorId, rawAuth, "clientId", auth.type);
+    forbidAuthFields(connectorId, rawAuth, auth.type, ["tokenEndpointAuthMethod", "connectEndpoint"]);
+  } else if (auth.type === "oauth2-byo-public") {
+    forbidAuthFields(connectorId, rawAuth, auth.type, [
+      "clientId",
+      "tokenEndpointAuthMethod",
+      "connectEndpoint",
+    ]);
+  } else if (auth.type === "oauth2-byo-confidential") {
+    forbidAuthFields(connectorId, rawAuth, auth.type, ["clientId", "connectEndpoint"]);
+    if (!OAUTH_TOKEN_ENDPOINT_AUTH_METHODS.has(rawAuth.tokenEndpointAuthMethod as string)) {
+      throw new Error(
+        `Connector ${connectorId} ${auth.type} tokenEndpointAuthMethod must be client_secret_basic or client_secret_post`,
+      );
     }
-    // clientId is the OAuth app's public client identifier. It is optional:
-    // omitting it means BYO (the user supplies their own app's clientId at
-    // connect). When present it must be a non-empty string.
-    if (auth.clientId !== undefined && (typeof auth.clientId !== "string" || !auth.clientId)) {
-      throw new Error(`Connector ${connectorId} oauth2 clientId must be a non-empty string when set`);
-    }
-    if (auth.scope !== undefined &&
-      (!Array.isArray(auth.scope) || auth.scope.some((s) => typeof s !== "string"))) {
-      throw new Error(`Connector ${connectorId} oauth2 scope must be an array of strings`);
-    }
-    if (auth.tokenEndpointAuthMethod !== undefined &&
-      !OAUTH_TOKEN_ENDPOINT_AUTH_METHODS.has(auth.tokenEndpointAuthMethod)) {
-      throw new Error(`Connector ${connectorId} oauth2 tokenEndpointAuthMethod is invalid: ${auth.tokenEndpointAuthMethod}`);
-    }
-    // A confidential method (client_secret_*) means the core attaches a
-    // client_secret, so the secret — and therefore the client — is the user's:
-    // it must be BYO (no manifest clientId). An author/shared confidential
-    // client cannot ship its secret and is the relay case (a different config),
-    // so clientId + client_secret_* is contradictory.
-    if (auth.clientId
-      && auth.tokenEndpointAuthMethod
-      && auth.tokenEndpointAuthMethod !== "none") {
-      throw new Error(`Connector ${connectorId} oauth2 ${auth.tokenEndpointAuthMethod} requires a BYO client; omit clientId (a shared confidential client needs the hosted relay)`);
+  }
+}
+
+function validateOAuthScope(connectorId: string, auth: Record<string, unknown>): void {
+  if (auth.scope !== undefined &&
+    (!Array.isArray(auth.scope) || auth.scope.some((s) => typeof s !== "string"))) {
+    throw new Error(`Connector ${connectorId} ${auth.type} scope must be an array of strings`);
+  }
+}
+
+function validateRequiredStringAuthField(
+  connectorId: string,
+  auth: Record<string, unknown>,
+  field: string,
+  authType: string,
+): void {
+  const value = auth[field];
+  if (typeof value !== "string" || !value) {
+    throw new Error(`Connector ${connectorId} ${authType} auth requires ${field}`);
+  }
+}
+
+function validateHttpsAuthField(
+  connectorId: string,
+  auth: Record<string, unknown>,
+  field: string,
+  authType: string,
+): void {
+  validateRequiredStringAuthField(connectorId, auth, field, authType);
+  const value = auth[field] as string;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Connector ${connectorId} ${authType} ${field} is not a valid URL: ${value}`);
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(`Connector ${connectorId} ${authType} ${field} must be https: ${value}`);
+  }
+}
+
+function forbidAuthFields(
+  connectorId: string,
+  auth: Record<string, unknown>,
+  authType: string,
+  fields: string[],
+): void {
+  for (const field of fields) {
+    if (auth[field] !== undefined) {
+      throw new Error(`Connector ${connectorId} ${authType} auth forbids ${field}`);
     }
   }
 }

@@ -6,7 +6,17 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import type { ConnectorAuthHandle, ConnectorAuthSpec, ConnectorIntegration } from "./types";
+import {
+  isDirectOAuthAuthSpec,
+  isOAuthAuthSpec,
+  runtimeAuthType,
+  type ConnectorAuthHandle,
+  type ConnectorAuthSpec,
+  type ConnectorIntegration,
+  type ConnectorOAuthAuthSpec,
+  type ConnectorOAuthDirectAuthSpec,
+  type OAuthTokenEndpointAuthMethod,
+} from "./types";
 
 export type AuthCredentialStatus = "active" | "expired" | "revoked" | "refresh_failed";
 export type OAuthAttemptStatus = "pending" | "connected" | "failed" | "expired";
@@ -58,7 +68,7 @@ type SecretPayload =
       tokenType?: string;
       clientSecret?: string;
       // Effective clientId (manifest or BYO user-supplied), persisted so refresh
-      // works for BYO connectors whose manifest carries no clientId.
+      // can run without re-prompting the user.
       clientId?: string;
     };
 
@@ -78,9 +88,10 @@ interface OAuthAttempt {
   id: string;
   integrationId: string;
   authRef: string;
-  auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>;
+  auth: ConnectorOAuthDirectAuthSpec;
   ownerType: string;
   ownerId: string;
+  clientId: string;
   codeVerifier: string;
   state: string;
   redirectUri: string;
@@ -317,22 +328,13 @@ export class ConnectorAuthManager {
 
   startOAuth(
     integration: ConnectorIntegration,
-    auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>,
+    auth: ConnectorOAuthAuthSpec,
     input: { redirectUri: string; clientSecret?: string; clientId?: string },
   ): OAuthStartResult {
-    const method = auth.tokenEndpointAuthMethod ?? "none";
-    const clientSecret = input.clientSecret?.trim();
-    if (method !== "none" && !clientSecret) {
-      throw new Error(`Connector ${integration.connectorId} OAuth requires a client secret`);
+    if (!isDirectOAuthAuthSpec(auth)) {
+      throw hostedOAuthUnavailable(integration.connectorId);
     }
-    // clientId comes from the manifest (author client) or the user (BYO). Bake
-    // the resolved value into the attempt's auth so every downstream step
-    // (authorize URL, code/refresh exchange) reads one effective clientId.
-    const clientId = auth.clientId ?? input.clientId?.trim();
-    if (!clientId) {
-      throw new Error(`Connector ${integration.connectorId} OAuth requires a client id`);
-    }
-    const effectiveAuth = { ...auth, clientId };
+    const resolved = resolveOAuthConnectInput(integration.connectorId, auth, input);
     const codeVerifier = base64url(randomBytes(32));
     const state = base64url(randomBytes(32));
     const attemptId = base64url(randomBytes(16));
@@ -342,13 +344,14 @@ export class ConnectorAuthManager {
       id: attemptId,
       integrationId: integration.id,
       authRef,
-      auth: effectiveAuth,
+      auth,
       ownerType: "connector",
       ownerId: integration.id,
+      clientId: resolved.clientId,
       codeVerifier,
       state,
       redirectUri: input.redirectUri,
-      clientSecret,
+      clientSecret: resolved.clientSecret,
       expiresAt,
       status: "pending",
     };
@@ -357,7 +360,7 @@ export class ConnectorAuthManager {
 
     const url = new URL(auth.authorizationEndpoint);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("client_id", resolved.clientId);
     url.searchParams.set("redirect_uri", input.redirectUri);
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", pkceChallenge(codeVerifier));
@@ -467,14 +470,19 @@ export class ConnectorAuthManager {
     }
 
     return {
-      type: auth.type,
+      type: runtimeAuthType(auth),
       getToken: async () => {
         const payload = await this.readPayload(authRef);
         if (!payload) {
           throw new Error(`Connector integration ${integration.id} is missing credentials`);
         }
-        if (payload.kind === "apiKey") return payload.value;
-        if (auth.type !== "oauth2") {
+        if (auth.type === "apiKey") {
+          if (payload.kind !== "apiKey") {
+            throw new Error(`Connector integration ${integration.id} credential kind mismatch`);
+          }
+          return payload.value;
+        }
+        if (!isOAuthAuthSpec(auth) || payload.kind !== "oauth2") {
           throw new Error(`Connector integration ${integration.id} credential kind mismatch`);
         }
         return this.oauthAccessToken(authRef, auth, payload);
@@ -484,11 +492,17 @@ export class ConnectorAuthManager {
 
   private async oauthAccessToken(
     authRef: string,
-    auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>,
+    auth: ConnectorOAuthAuthSpec,
     payload: Extract<SecretPayload, { kind: "oauth2" }>,
   ): Promise<string> {
     if (!payload.expiresAt || payload.expiresAt - Date.now() > this.refreshSkewMs) {
       return payload.accessToken;
+    }
+    if (!isDirectOAuthAuthSpec(auth)) {
+      this.credentialStore?.setStatus(authRef, "refresh_failed", {
+        refresh_error: "hosted OAuth is not available in this build",
+      });
+      throw hostedOAuthUnavailable();
     }
     const existing = this.refreshFlights.get(authRef);
     if (existing) return existing;
@@ -500,7 +514,7 @@ export class ConnectorAuthManager {
 
   private async refreshOAuthToken(
     authRef: string,
-    auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>,
+    auth: ConnectorOAuthDirectAuthSpec,
     payload: Extract<SecretPayload, { kind: "oauth2" }>,
   ): Promise<string> {
     if (!payload.refreshToken) {
@@ -543,41 +557,38 @@ export class ConnectorAuthManager {
     body.set("grant_type", "authorization_code");
     body.set("code", code);
     body.set("redirect_uri", attempt.redirectUri);
-    // startOAuth guarantees the attempt's auth carries a resolved clientId.
-    body.set("client_id", attempt.auth.clientId ?? "");
+    body.set("client_id", attempt.clientId);
     body.set("code_verifier", attempt.codeVerifier);
-    return this.fetchToken(attempt.auth, body, attempt.clientSecret);
+    return this.fetchToken(attempt.auth, body, attempt.clientId, attempt.clientSecret);
   }
 
   private async exchangeRefresh(
-    auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>,
+    auth: ConnectorOAuthDirectAuthSpec,
     payload: Extract<SecretPayload, { kind: "oauth2" }>,
   ): Promise<TokenResponse> {
-    // BYO connectors carry no clientId in the manifest; use the one persisted at
-    // connect. Falls back to the manifest clientId for author clients.
-    const clientId = payload.clientId ?? auth.clientId;
+    const clientId = payload.clientId ?? (auth.type === "oauth2-public" ? auth.clientId : undefined);
     if (!clientId) throw new Error("OAuth refresh requires a client id");
-    const effectiveAuth = { ...auth, clientId };
     const body = new URLSearchParams();
     body.set("grant_type", "refresh_token");
     body.set("refresh_token", payload.refreshToken!);
     body.set("client_id", clientId);
-    return this.fetchToken(effectiveAuth, body, payload.clientSecret);
+    return this.fetchToken(auth, body, clientId, payload.clientSecret);
   }
 
   private async fetchToken(
-    auth: Extract<ConnectorAuthSpec, { type: "oauth2" }>,
+    auth: ConnectorOAuthDirectAuthSpec,
     body: URLSearchParams,
+    clientId: string,
     clientSecret?: string,
   ): Promise<TokenResponse> {
     const headers: Record<string, string> = {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
     };
-    const method = auth.tokenEndpointAuthMethod ?? "none";
+    const method = tokenEndpointAuthMethod(auth);
     if (method === "client_secret_basic") {
       if (!clientSecret) throw new Error("OAuth client secret is required");
-      headers.Authorization = `Basic ${Buffer.from(`${auth.clientId}:${clientSecret}`).toString("base64")}`;
+      headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
     } else if (method === "client_secret_post") {
       if (!clientSecret) throw new Error("OAuth client secret is required");
       body.set("client_secret", clientSecret);
@@ -604,7 +615,7 @@ export class ConnectorAuthManager {
       expiresAt: tokenExpiresAt(token),
       tokenType: token.token_type,
       clientSecret: attempt.clientSecret,
-      clientId: attempt.auth.clientId,
+      clientId: attempt.clientId,
     };
     await this.writePayload(attempt.authRef, payload);
     this.credentialStore?.upsert({
@@ -637,6 +648,44 @@ export class ConnectorAuthManager {
   private async writePayload(ref: string, payload: SecretPayload): Promise<void> {
     await this.secrets.set(ref, JSON.stringify(payload));
   }
+}
+
+function resolveOAuthConnectInput(
+  connectorId: string,
+  auth: ConnectorOAuthDirectAuthSpec,
+  input: { clientSecret?: string; clientId?: string },
+): { clientId: string; clientSecret?: string } {
+  if (auth.type === "oauth2-public") {
+    return { clientId: auth.clientId };
+  }
+
+  const clientId = input.clientId?.trim();
+  if (!clientId) {
+    throw new Error(`Connector ${connectorId} OAuth requires a client id`);
+  }
+  if (auth.type === "oauth2-byo-public") {
+    return { clientId };
+  }
+
+  const clientSecret = input.clientSecret?.trim();
+  if (!clientSecret) {
+    throw new Error(`Connector ${connectorId} OAuth requires a client secret`);
+  }
+  return { clientId, clientSecret };
+}
+
+function tokenEndpointAuthMethod(
+  auth: ConnectorOAuthDirectAuthSpec,
+): "none" | OAuthTokenEndpointAuthMethod {
+  return auth.type === "oauth2-byo-confidential" ? auth.tokenEndpointAuthMethod : "none";
+}
+
+function hostedOAuthUnavailable(connectorId?: string): Error {
+  return new Error(
+    connectorId
+      ? `Connector ${connectorId} hosted OAuth is not available in this build`
+      : "Hosted OAuth is not available in this build",
+  );
 }
 
 interface CredentialRow {

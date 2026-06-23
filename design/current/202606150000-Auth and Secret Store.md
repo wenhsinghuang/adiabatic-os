@@ -30,10 +30,10 @@ The runtime handle is read-only and minimal: it yields a credential, it cannot m
 
 ### Where the auth.type boundary is
 
-**`auth.type` is the boundary of the *mechanism*, not of its parameters.** A variant becomes its own type only when it cannot be expressed as standard configuration without inventing our own term or flow. Two rules follow:
+**`auth.type` is the boundary of the system-managed auth flow.** A connector manifest should not require a reader to infer who owns the OAuth app or where the client secret lives from missing fields. If the broker asks for different user input, runs a different exchange path, or delegates to hosted infrastructure, that is a real type boundary. Two rules follow:
 
-- **Lean on the domain standard; do not invent vocabulary.** The OAuth2 manifest config is a subset of standard OAuth/OIDC client metadata — the standard fields `authorization_endpoint`, `token_endpoint`, `scope`, `client_id`, `token_endpoint_auth_method` — spelled in the connector manifest's camelCase convention (`authorizationEndpoint`, `tokenEndpoint`, `scope`, `clientId`, `tokenEndpointAuthMethod`). The broker is a generic executor that consumes standard OAuth client metadata, not a bespoke schema. PKCE (`code_challenge_method=S256`, RFC 7636) is always-on broker behavior, not a manifest field.
-- **Let the standard's own boundaries be ours.** If a variation maps to standard config, it stays one type; if the standard itself defines a separate flow (a different OAuth grant), or the mechanism cannot be expressed in standard config at all, that is a real type boundary.
+- **Use standard OAuth fields inside direct OAuth flows.** `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `scope`, and `tokenEndpointAuthMethod` keep the OAuth/OIDC meanings, spelled in the connector manifest's camelCase convention. PKCE (`code_challenge_method=S256`, RFC 7636) is always-on broker behavior, not a manifest field.
+- **Name Adiabatic deployment models explicitly.** BYO and hosted OAuth are product contracts, not OAuth metadata. They must be visible in `auth.type`, not implied by whether `clientId` is omitted or whether a secret method is present.
 
 Worked examples:
 
@@ -41,10 +41,13 @@ Worked examples:
 |---|---|---|
 | `none` | no-credential mechanism | — |
 | `apiKey` | a static user-supplied secret | Bearer / Basic / `x-api-key` are just header formats the connector applies — zero invented config |
-| `oauth2` | the standard Authorization Code grant | PKCE-public / user-confidential / relay differ only in standard client metadata (`token_endpoint`, `token_endpoint_auth_method`) — the engine runs one config-driven flow, blind to which variant (see OAuth2 section) |
+| `oauth2-public` | direct Authorization Code + PKCE using an author-provided public client id | no secret; connector code still receives a generic `oauth2` runtime handle |
+| `oauth2-byo-public` | direct Authorization Code + PKCE using the user's own public OAuth app | user supplies `clientId` at connect |
+| `oauth2-byo-confidential` | direct Authorization Code + PKCE using the user's own confidential OAuth app | user supplies `clientId` + `clientSecret`; the manifest declares how the core sends that secret |
+| `oauth2-hosted` | official hosted OAuth ceremony for shared confidential apps | not a local direct OAuth flow; hosted service owns provider metadata and secret handling |
 | `hmac` (future) | a key+secret that *signs* each request | not expressible as "attach a header" — earns a type when a connector needs it |
 
-The criterion reproduces exactly `none / apiKey / oauth2` (and `hmac` later), no more: the engine stays one generic executor per mechanism, and we add a type only when forced to invent.
+The runtime connector handle remains smaller than the manifest contract: all OAuth manifest flows yield `context.auth.type === "oauth2"` plus `getToken()`. The manifest type selects setup/exchange behavior; connector code only consumes the resulting token.
 
 ### Who receives credentials
 
@@ -109,21 +112,56 @@ v1 supports the Authorization Code flow with PKCE. The flow is local and has no 
 
 The v1 redirect URI is derived from the workspace's persisted core port: `http://127.0.0.1:<corePort>/oauth/callback`. The broker uses exactly that value in the authorization request, and the setup UI shows it to users setting up custom OAuth apps because providers require the redirect URI to be pre-registered. The callback stays outside `/api/*`, but still enforces the localhost host restriction and live `state` validation. If the user explicitly rotates the core port later, existing OAuth tokens may continue to refresh, but exact-match providers require updating the registered redirect URI before the next reconnect/re-authorization.
 
-The manifest OAuth config is the standard OAuth/OIDC fields — `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `scope`, `tokenEndpointAuthMethod` — spelled in the manifest's camelCase convention. `clientId` (the OAuth app's public, non-secret client identifier) is **optional**: present means the author ships a registered public client (PKCE-only locally); omitted means **BYO** — the user registers their own app and supplies the `clientId` at connect, persisted with the credential, never in the manifest. PKCE (`code_challenge_method=S256`) is always-on broker behavior, not a manifest field. `scope` is given as an array for YAML ergonomics and joined to the standard space-delimited string at the broker boundary. `tokenEndpointAuthMethod` defaults to `none` (public client). The broker is one config-driven Authorization Code executor: it assembles the request from this config and is blind to which "variant" results. PKCE-public, user-confidential (a user-supplied `client_secret`, `tokenEndpointAuthMethod: client_secret_*`), and relay are points in that config space, not engine branches:
+The manifest uses explicit OAuth auth flow types. Direct OAuth flows share the local loopback + PKCE executor, but their manifest contracts differ because ownership of the OAuth app and client secret differs. `scope` is an array for YAML ergonomics and is joined to the standard space-delimited string at the broker boundary.
 
-| variant | `client_id` source | `token_endpoint` | accompanies the code | `token_endpoint_auth_method` |
-|---|---|---|---|---|
-| PKCE-public | author manifest **or** BYO | provider | `code_verifier` | `none` |
-| user-confidential | **BYO only** | provider | `client_secret` (+ optional verifier) | `client_secret_basic` / `client_secret_post` |
-| relay (future) | author manifest | the relay | a header core already holds | (relay attaches the secret; see note) |
+```yaml
+auth:
+  type: oauth2-public
+  authorizationEndpoint: https://provider.example/oauth/authorize
+  tokenEndpoint: https://provider.example/oauth/token
+  clientId: author-public-client-id
+  scope:
+    - read
+```
 
-The only genuinely external differences are infra (the relay must exist and be operated) and trust/blast-radius (who holds the secret) — both enforced by policy and deployment, never by the engine. The relay is designed to keep the loopback redirect and relay only the token exchange, so it stays a config point rather than a different flow.
+`oauth2-public` is for providers that support distributable public clients. The author ships the public `clientId`; the core opens the provider authorization endpoint, receives the local loopback callback, and exchanges the code directly with the provider using PKCE and no client secret.
 
-> Note: `token_endpoint_auth_method` (and its values `none` / `client_secret_*`) is standard OAuth/OIDC, describing how *the core* authenticates to the token endpoint. The relay case is **not** a standard `token_endpoint_auth_method` value: the core sends no OAuth `client_secret` (the relay attaches it), and the core↔relay auth is our own capability header, outside this field's vocabulary. The relay's exact representation (a relay marker + a `tokenEndpoint` pointing at the relay, rather than overloading `none`) is left to the relay's own design.
+```yaml
+auth:
+  type: oauth2-byo-public
+  authorizationEndpoint: https://provider.example/oauth/authorize
+  tokenEndpoint: https://provider.example/oauth/token
+  scope:
+    - read
+```
 
-- **`clientId` lives in the manifest only for author/public clients** — official or custom — exactly like the endpoints and scope. The catalog carries only `id`/`hash`/`version` for trust and is **not a config source**, so there is no catalog fallback. **BYO connectors omit `clientId`**: the user registers their own app and enters its `clientId` at connect (stored with the credential), which is also how a confidential client supplies its `client_secret`. Custom connectors are additionally gated by the human approve flow.
-- **A shared `client_secret` is never bundled into a connector.** A connector manifest may declare that a confidential client is needed, but never carries the secret value.
-- **Confidential clients** split by where the secret comes from. A *user-supplied* `client_secret` is per-user and in scope for v1; because the core itself attaches it, **it is always BYO** — a `client_secret_*` manifest must omit `clientId` (the broker rejects `clientId` + `client_secret_*` as contradictory). A *shared* `client_secret` cannot be distributed to user machines honestly and is the relay case (the `tokenEndpoint` becomes the relay; the core sends no `client_secret`) — a separate future hosted-cloud line, not a connector concern.
+`oauth2-byo-public` is for user-owned public OAuth apps. The manifest intentionally has no `clientId`; the user enters their own app's client id during connect, and the core persists it with the credential so refresh does not require re-entry.
+
+```yaml
+auth:
+  type: oauth2-byo-confidential
+  authorizationEndpoint: https://cloud.ouraring.com/oauth/authorize
+  tokenEndpoint: https://api.ouraring.com/oauth/token
+  tokenEndpointAuthMethod: client_secret_post
+  scope:
+    - daily
+    - heartrate
+```
+
+`oauth2-byo-confidential` is for user-owned confidential OAuth apps. The user enters `clientId` and `clientSecret` during connect. The manifest declares the standard `token_endpoint_auth_method` the core must use: `client_secret_post` or `client_secret_basic`. A manifest `clientId` is forbidden here because it would imply a shared author-owned confidential app whose secret cannot be shipped locally.
+
+```yaml
+auth:
+  type: oauth2-hosted
+  connectEndpoint: https://auth.adiabatic.com/connect/oura
+  scope:
+    - daily
+    - heartrate
+```
+
+`oauth2-hosted` is the official hosted OAuth path for shared confidential apps. The hosted auth service owns the provider client id, client secret, provider token endpoint, redirect URI, provider review/compliance, and the browser OAuth ceremony. The local manifest does not carry provider OAuth metadata. This contract deliberately does **not** include the R1 token-exchange relay model; there is no local authorize + loopback + remote token-only relay mode.
+
+Hosted token custody is intended to stay local-first: the hosted ceremony can return a token bundle to the local core for storage in `SecretStore`. The actual credential handoff protocol is deferred until the official auth service is designed. In the current local build, `oauth2-hosted` validates as a manifest type but cannot be connected yet.
 
 Adiabatic's own "Sign in with Google" (used by the future `google_account` keyslot) is the app's own public/installed OAuth client (PKCE + loopback); it is unrelated to the connector shared-secret rule.
 
@@ -180,11 +218,11 @@ Auth lifecycle does **not** produce D0 events. Credential connect, rotate, revok
 
 There is no artificial build-effort phasing: the whole local auth module is built together. What is deferred is deferred only because it depends on something that does not exist yet, not because the code is large.
 
-**Build now — the complete local auth module:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + the **OAuth2 PKCE engine** + user-supplied confidential client secret support (`client_secret_basic` / `client_secret_post`) + loopback callback. This is one coherent thing, built together.
+**Build now — the complete local auth module:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + direct **OAuth2 PKCE** flows (`oauth2-public`, `oauth2-byo-public`, `oauth2-byo-confidential`) + user-supplied confidential client secret support (`client_secret_basic` / `client_secret_post`) + loopback callback. This is one coherent thing, built together.
 
 **Deferred only by an external dependency** (not by build effort, and not by verification):
 
-- **Shared-secret confidential OAuth** — needs the hosted relay (infra that does not exist yet; the "Hosted relay / edge" line in the roadmap).
+- **Hosted OAuth for shared-secret confidential apps** — needs the official auth service and credential handoff protocol. The manifest contract is `oauth2-hosted`, but local connect is stubbed until that service exists.
 - **`google_account` / `icloud` / `trusted_device` keyslots** — need the `devices` registry / multi-device sync. Additive, zero re-encryption.
 
 The `SecretStore` backend is swappable: an in-memory backend for tests, and a durable backend for production where Electron main supplies the `vault_key` (from the OS keychain) at boot and core encrypts to the system DB. Standalone core with no Electron host takes the `vault_key` from an env var or an ephemeral key — deliberately minimal, with no encrypted-file fallback.

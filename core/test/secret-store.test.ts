@@ -81,7 +81,7 @@ describe("Secret store and OAuth broker", () => {
       },
     );
     const auth = {
-      type: "oauth2" as const,
+      type: "oauth2-public" as const,
       authorizationEndpoint: "https://provider.example/authorize",
       tokenEndpoint: "https://provider.example/token",
       clientId: "client-id",
@@ -126,7 +126,7 @@ describe("Secret store and OAuth broker", () => {
       },
     );
     const auth = {
-      type: "oauth2" as const,
+      type: "oauth2-public" as const,
       authorizationEndpoint: "https://provider.example/authorize",
       tokenEndpoint: "https://provider.example/token",
       clientId: "client-id",
@@ -142,7 +142,7 @@ describe("Secret store and OAuth broker", () => {
     expect(calls).toBe(2);
   });
 
-  test("BYO oauth: user-supplied clientId flows through start, exchange, and refresh", async () => {
+  test("BYO public oauth: user-supplied clientId flows through start, exchange, and refresh", async () => {
     const seen: string[] = [];
     const manager = new ConnectorAuthManager(
       new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
@@ -158,9 +158,8 @@ describe("Secret store and OAuth broker", () => {
         },
       },
     );
-    // Manifest carries NO clientId — BYO. The user supplies it at connect.
     const auth = {
-      type: "oauth2" as const,
+      type: "oauth2-byo-public" as const,
       authorizationEndpoint: "https://provider.example/authorize",
       tokenEndpoint: "https://provider.example/token",
     };
@@ -179,6 +178,86 @@ describe("Secret store and OAuth broker", () => {
     const token = await manager.createHandle(auth, integration("byo-ref")).getToken();
     expect(token).toBe("byo-access-2");
     expect(seen.some((b) => b.includes("refresh_token") && b.includes("client_id=byo-client"))).toBe(true);
+  });
+
+  test("BYO confidential oauth posts user client secret for code exchange and refresh", async () => {
+    const seen: string[] = [];
+    const manager = new ConnectorAuthManager(
+      new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
+      {
+        credentialStore: new AuthCredentialStore(opened.systemDb),
+        fetchImpl: async (_url, init) => {
+          const body = String(init?.body);
+          seen.push(body);
+          if (body.includes("authorization_code")) {
+            return jsonResponse({ access_token: "old", refresh_token: "refresh", expires_in: -1 });
+          }
+          return jsonResponse({ access_token: "new", expires_in: 3600 });
+        },
+      },
+    );
+    const auth = {
+      type: "oauth2-byo-confidential" as const,
+      authorizationEndpoint: "https://provider.example/authorize",
+      tokenEndpoint: "https://provider.example/token",
+      tokenEndpointAuthMethod: "client_secret_post" as const,
+    };
+    const started = manager.startOAuth(integration("confidential-ref"), auth, {
+      redirectUri: "http://127.0.0.1:32123/oauth/callback",
+      clientId: "byo-client",
+      clientSecret: "byo-secret",
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await manager.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" }));
+    expect(seen.some((b) => b.includes("authorization_code") && b.includes("client_secret=byo-secret"))).toBe(true);
+
+    await expect(manager.createHandle(auth, integration("confidential-ref")).getToken()).resolves.toBe("new");
+    expect(seen.some((b) => b.includes("refresh_token") && b.includes("client_secret=byo-secret"))).toBe(true);
+  });
+
+  test("BYO confidential oauth supports client_secret_basic", async () => {
+    const authHeaders: string[] = [];
+    const manager = new ConnectorAuthManager(
+      new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
+      {
+        credentialStore: new AuthCredentialStore(opened.systemDb),
+        fetchImpl: async (_url, init) => {
+          const headers = new Headers(init?.headers);
+          authHeaders.push(headers.get("authorization") ?? "");
+          expect(String(init?.body)).not.toContain("client_secret=");
+          return jsonResponse({ access_token: "basic-access", refresh_token: "basic-refresh", expires_in: 3600 });
+        },
+      },
+    );
+    const auth = {
+      type: "oauth2-byo-confidential" as const,
+      authorizationEndpoint: "https://provider.example/authorize",
+      tokenEndpoint: "https://provider.example/token",
+      tokenEndpointAuthMethod: "client_secret_basic" as const,
+    };
+    const started = manager.startOAuth(integration("basic-ref"), auth, {
+      redirectUri: "http://127.0.0.1:32123/oauth/callback",
+      clientId: "byo-client",
+      clientSecret: "byo-secret",
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await manager.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" }));
+
+    expect(authHeaders).toEqual([
+      `Basic ${Buffer.from("byo-client:byo-secret").toString("base64")}`,
+    ]);
+  });
+
+  test("hosted oauth validates but is not startable in this build", () => {
+    const manager = new ConnectorAuthManager();
+    expect(() =>
+      manager.startOAuth(integration("hosted-ref"), {
+        type: "oauth2-hosted",
+        connectEndpoint: "https://auth.adiabatic.com/connect/demo",
+      }, {
+        redirectUri: "http://127.0.0.1:32123/oauth/callback",
+      })
+    ).toThrow("hosted OAuth is not available in this build");
   });
 });
 

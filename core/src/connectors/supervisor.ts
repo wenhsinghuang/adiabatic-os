@@ -26,6 +26,11 @@ import {
   type UpdateIntegrationInput,
 } from "./state";
 import { validateConnectorSchedule } from "./schedule";
+import {
+  isDirectOAuthAuthSpec,
+  isOAuthAuthSpec,
+  runtimeAuthType,
+} from "./types";
 import type {
   ConnectorConfigField,
   ConnectorDefinition,
@@ -249,7 +254,7 @@ export class ConnectorSupervisor {
     if (auth.type === "none") {
       throw new Error(`Connector ${existing.connectorId} does not require auth`);
     }
-    if (auth.type === "oauth2") {
+    if (isOAuthAuthSpec(auth)) {
       throw new Error(`Connector ${existing.connectorId} uses oauth2; use the browser connect flow`);
     }
     if (!token || !token.trim()) {
@@ -273,7 +278,7 @@ export class ConnectorSupervisor {
     }
     const registration = this.requireRegistration(existing.connectorId);
     const auth = registration.manifest.auth ?? { type: "none" };
-    if (auth.type !== "oauth2") {
+    if (!isOAuthAuthSpec(auth)) {
       throw new Error(`Connector ${existing.connectorId} does not use oauth2`);
     }
     if (!isPlatformSupported(registration.manifest, this.platform)) {
@@ -447,8 +452,9 @@ export class ConnectorSupervisor {
     supported: boolean;
     packageTrust: ConnectorPackageTrust["status"];
     authType: string;
-    authTokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
     authNeedsClientId?: boolean;
+    authNeedsClientSecret?: boolean;
+    authHostedDisabled?: boolean;
     authStatus?: string;
     authAttention?: "refresh_failed" | "redirect_uri_changed";
     authReady: boolean;
@@ -465,21 +471,19 @@ export class ConnectorSupervisor {
       const activeRequirements = registration
         ? activePlatformRequirements(registration.manifest, this.platform)
         : [];
-      const authType = (registration?.manifest.auth ?? { type: "none" }).type;
-      const authTokenEndpointAuthMethod = registration?.manifest.auth?.type === "oauth2"
-        ? registration.manifest.auth.tokenEndpointAuthMethod ?? "none"
-        : undefined;
-      // BYO client: the manifest carries no clientId, so the user supplies it at
-      // connect. The shell shows a clientId field when this is true.
-      const authNeedsClientId = registration?.manifest.auth?.type === "oauth2"
-        && !registration.manifest.auth.clientId;
+      const authSpec = registration?.manifest.auth ?? { type: "none" };
+      const authType = authSpec.type;
+      const authNeedsClientId = authSpec.type === "oauth2-byo-public"
+        || authSpec.type === "oauth2-byo-confidential";
+      const authNeedsClientSecret = authSpec.type === "oauth2-byo-confidential";
+      const authHostedDisabled = authSpec.type === "oauth2-hosted";
       const credential = integration.authRef ? this.authManager.credential(integration.authRef) : undefined;
       const storedRedirectUri = typeof credential?.metadata?.redirect_uri === "string"
         ? credential.metadata.redirect_uri
         : undefined;
       const authAttention = credential?.status === "refresh_failed"
         ? "refresh_failed"
-        : authType === "oauth2"
+        : isDirectOAuthAuthSpec(authSpec)
           && storedRedirectUri
           && this.oauthRedirectUri
           && storedRedirectUri !== this.oauthRedirectUri
@@ -509,8 +513,9 @@ export class ConnectorSupervisor {
         supported: registration ? isPlatformSupported(registration.manifest, this.platform) : false,
         packageTrust: registration?.trust.status ?? "missing",
         authType,
-        authTokenEndpointAuthMethod,
         authNeedsClientId,
+        authNeedsClientSecret,
+        authHostedDisabled,
         authStatus: credential?.status,
         authAttention,
         authReady,
@@ -902,7 +907,7 @@ export class ConnectorSupervisor {
     const authSpec = registration.manifest.auth ?? { type: "none" };
     const authHandle = this.authManager.createHandle(authSpec, integration);
     return {
-      authType: authSpec.type,
+      authType: runtimeAuthType(authSpec),
       writeEvent: (event) => boundGuard.writeEvent(event as Parameters<typeof boundGuard.writeEvent>[0]),
       writeEvents: (events) => boundGuard.writeEvents(events as Parameters<typeof boundGuard.writeEvents>[0]),
       stateGet: () => stateHandle.get(),

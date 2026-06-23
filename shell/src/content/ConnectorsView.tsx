@@ -498,14 +498,14 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
               {busy[c.id] === "connect" ? "connecting…" : "Connect"}
             </button>
           </form>
-        ) : c.authType === "oauth2" ? (
+        ) : c.authHostedDisabled ? (
+          <div className={styles.oauthNote}>Hosted OAuth is not available in this build.</div>
+        ) : c.authType.startsWith("oauth2-") ? (
           <form
             className={styles.oauthBox}
             onSubmit={(event) => {
               event.preventDefault();
-              const requiresSecret = c.authTokenEndpointAuthMethod
-                && c.authTokenEndpointAuthMethod !== "none";
-              if (requiresSecret && !clientSecretInput.trim()) return;
+              if (c.authNeedsClientSecret && !clientSecretInput.trim()) return;
               if (c.authNeedsClientId && !clientIdInput.trim()) return;
               onAct(c.id, "oauth", async () => {
                 const started = await startConnectorOAuth(c.id, {
@@ -533,7 +533,7 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
                 onChange={(event) => setClientIdInput(event.target.value)}
               />
             )}
-            {c.authTokenEndpointAuthMethod && c.authTokenEndpointAuthMethod !== "none" && (
+            {c.authNeedsClientSecret && (
               <input
                 className={styles.inlineInput}
                 type="password"
@@ -546,7 +546,7 @@ function IntegrationRow({ connector: c, trusted, interactive, busy, onAct }: Int
               className={styles.primaryBtn}
               disabled={
                 cardBusy
-                || Boolean(c.authTokenEndpointAuthMethod && c.authTokenEndpointAuthMethod !== "none" && !clientSecretInput.trim())
+                || Boolean(c.authNeedsClientSecret && !clientSecretInput.trim())
                 || Boolean(c.authNeedsClientId && !clientIdInput.trim())
               }
             >

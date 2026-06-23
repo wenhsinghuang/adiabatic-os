@@ -13,34 +13,80 @@ export type ConnectorPlatform =
   | "android"
   | "cloud";
 
+export type OAuthTokenEndpointAuthMethod = "client_secret_basic" | "client_secret_post";
+
+export type ConnectorOAuthPublicAuthSpec = {
+  type: "oauth2-public";
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  scope?: string[];
+};
+
+export type ConnectorOAuthByoPublicAuthSpec = {
+  type: "oauth2-byo-public";
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  scope?: string[];
+};
+
+export type ConnectorOAuthByoConfidentialAuthSpec = {
+  type: "oauth2-byo-confidential";
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  tokenEndpointAuthMethod: OAuthTokenEndpointAuthMethod;
+  scope?: string[];
+};
+
+export type ConnectorOAuthHostedAuthSpec = {
+  type: "oauth2-hosted";
+  connectEndpoint: string;
+  scope?: string[];
+};
+
+export type ConnectorOAuthDirectAuthSpec =
+  | ConnectorOAuthPublicAuthSpec
+  | ConnectorOAuthByoPublicAuthSpec
+  | ConnectorOAuthByoConfidentialAuthSpec;
+
+export type ConnectorOAuthAuthSpec =
+  | ConnectorOAuthDirectAuthSpec
+  | ConnectorOAuthHostedAuthSpec;
+
+export type ConnectorRuntimeAuthType = "none" | "apiKey" | "oauth2";
+
 export type ConnectorAuthSpec =
   | { type: "none" }
   | { type: "apiKey"; label?: string }
-  | {
-      // OAuth2 config is a subset of standard OAuth/OIDC client metadata, with
-      // the standard fields spelled in this manifest's camelCase convention.
-      // The broker is a generic Authorization Code executor; there is no
-      // provider registry. PKCE (S256) is always-on broker behavior, not a
-      // manifest field. `scope` is an array for YAML ergonomics, joined to the
-      // standard space-delimited string at the broker boundary.
-      // `tokenEndpointAuthMethod` defaults to "none" (public client + PKCE).
-      // A client_secret_* value means the core attaches a user-supplied
-      // client_secret, so it implies BYO (see below); the secret never appears
-      // in the manifest. A shared confidential client is the relay case, a
-      // different config, not client_secret_*.
-      //
-      // `clientId` (the OAuth app's public, non-secret client identifier) is
-      // OPTIONAL: present means the author ships a registered public client
-      // (PKCE-only here); omitted means BYO — the user registers their own app
-      // and supplies the clientId at connect, stored with the credential.
-      // Invariant: client_secret_* requires BYO, so clientId must be absent.
-      type: "oauth2";
-      authorizationEndpoint: string;
-      tokenEndpoint: string;
-      clientId?: string;
-      scope?: string[];
-      tokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
-    };
+  | ConnectorOAuthAuthSpec;
+
+export function isOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthAuthSpec {
+  return auth.type === "oauth2-public"
+    || auth.type === "oauth2-byo-public"
+    || auth.type === "oauth2-byo-confidential"
+    || auth.type === "oauth2-hosted";
+}
+
+export function isDirectOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthDirectAuthSpec {
+  return auth.type === "oauth2-public"
+    || auth.type === "oauth2-byo-public"
+    || auth.type === "oauth2-byo-confidential";
+}
+
+export function isHostedOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthHostedAuthSpec {
+  return auth.type === "oauth2-hosted";
+}
+
+export function isDirectOAuthAuthType(type: string): boolean {
+  return type === "oauth2-public"
+    || type === "oauth2-byo-public"
+    || type === "oauth2-byo-confidential";
+}
+
+export function runtimeAuthType(auth: ConnectorAuthSpec): ConnectorRuntimeAuthType {
+  if (auth.type === "none" || auth.type === "apiKey") return auth.type;
+  return "oauth2";
+}
 
 export interface ConnectorRuntimeSpec {
   mode: ConnectorRuntimeMode;

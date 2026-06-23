@@ -20,11 +20,12 @@ import type {
   ConnectorHostContext,
   ConnectorRequirementContext,
   ConnectorRequirementStatus,
+  ConnectorRuntimeAuthType,
 } from "./types";
 import type { HostToRunnerMessage, RunnerToHostMessage } from "./runner-protocol";
 
 export interface RunnerCapabilities {
-  authType: string;
+  authType: ConnectorRuntimeAuthType;
   writeEvent(event: unknown): Promise<unknown>;
   writeEvents(events: unknown): Promise<unknown>;
   stateGet(): Promise<unknown>;

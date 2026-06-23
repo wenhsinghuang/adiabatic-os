@@ -13,6 +13,7 @@ import {
   ConnectorSupervisor,
   currentConnectorPlatform,
   installConnectorFromSource,
+  isDirectOAuthAuthType,
   isPlatformSupported,
   listAvailableBuiltIns,
   registerWorkspaceConnectors,
@@ -466,7 +467,7 @@ const server = Bun.serve({
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
         const connectors = (await connectorSupervisor.list()).map((connector) => ({
           ...connector,
-          oauthRedirectUri: connector.authType === "oauth2" ? oauthRedirectUri : undefined,
+          oauthRedirectUri: isDirectOAuthAuthType(connector.authType) ? oauthRedirectUri : undefined,
         }));
         return json({ connectors });
       }

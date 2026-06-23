@@ -5,7 +5,7 @@
 // verified by the host before any spawn, and all writes come back through the
 // host-side capability broker where Guard injects source provenance.
 
-import type { ConnectorRequirementContext, ConnectorRequirementStatus } from "./types";
+import type { ConnectorRequirementContext, ConnectorRequirementStatus, ConnectorRuntimeAuthType } from "./types";
 
 export type HostToRunnerMessage =
   | { type: "load"; entryPath: string; contentHash: string }
@@ -18,7 +18,7 @@ export type HostToRunnerMessage =
     // so the child can preserve undefined semantics identical to in-process.
     configSet: boolean;
     host: { workspacePath: string };
-    authType: string;
+    authType: ConnectorRuntimeAuthType;
   }
   | { type: "abort" }
   | { type: "rpc-result"; id: number; ok: boolean; value?: unknown; error?: string };

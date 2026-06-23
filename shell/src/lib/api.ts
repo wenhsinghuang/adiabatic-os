@@ -225,6 +225,14 @@ export type ConnectorRequirementState =
   | "error"
   | "unknown";
 
+export type ConnectorAuthType =
+  | "none"
+  | "apiKey"
+  | "oauth2-public"
+  | "oauth2-byo-public"
+  | "oauth2-byo-confidential"
+  | "oauth2-hosted";
+
 export interface ConnectorRequirementView {
   id: string;
   status: ConnectorRequirementState;
@@ -251,9 +259,10 @@ export interface ConnectorIntegrationView {
   status: "setup" | "idle" | "running" | "error" | "disabled";
   setupStatus: "setup" | "ready";
   packageTrust: ConnectorTrust;
-  authType: "none" | "apiKey" | "oauth2";
-  authTokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
+  authType: ConnectorAuthType;
   authNeedsClientId?: boolean;
+  authNeedsClientSecret?: boolean;
+  authHostedDisabled?: boolean;
   authStatus?: string;
   authAttention?: "refresh_failed" | "redirect_uri_changed";
   authReady: boolean;
@@ -286,7 +295,7 @@ export interface AvailableConnectorView {
   name: string;
   mode: "watch" | "poll" | "manual";
   integrationsMode: "singleton" | "multiple";
-  authType: "none" | "apiKey" | "oauth2";
+  authType: ConnectorAuthType;
   supported: boolean;
   installed: boolean;
 }
