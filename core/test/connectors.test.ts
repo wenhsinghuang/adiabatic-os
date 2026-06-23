@@ -1660,7 +1660,11 @@ auth:
       .rejects.toThrow("Connector already installed: app-commits");
   });
 
-  function writeBuiltIn(builtinsDir: string, id: string): string {
+  function writeBuiltIn(
+    builtinsDir: string,
+    id: string,
+    integrationsMode: "singleton" | "multiple" = "singleton",
+  ): string {
     const dir = join(builtinsDir, id);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -1671,7 +1675,7 @@ entry: ./index.mjs
 runtime:
   mode: manual
 integrations:
-  mode: singleton
+  mode: ${integrationsMode}
 platforms:
   darwin: {}
 auth:
@@ -1786,6 +1790,39 @@ auth:
       { type: "connector.installed", n: 2 },
       { type: "connector.removed", n: 1 },
     ]);
+  });
+
+  test("reinstall does not add an empty setup integration when one already exists", async () => {
+    const guard = new Guard({ db: dataDb, source: "system:test" });
+    const builtins = join(workspace, "builtins");
+    writeBuiltIn(builtins, "seed", "multiple");
+    const installOnce = () =>
+      installConnectorFromSource({
+        sourceDir: join(builtins, "seed"),
+        workspacePath: workspace,
+        connectorId: "seed",
+        guard,
+      });
+
+    await installOnce();
+    await supervisor.registerDirectory(join(workspace, "connectors", "seed"));
+    const setup = supervisor.ensureFirstIntegration("seed");
+    const work = supervisor.updateIntegration(setup.id, {
+      integrationKey: "work",
+      setupStatus: "ready",
+    });
+
+    expect(await removeInstalledConnector(workspace, "seed")).toBe(true);
+    expect(await supervisor.unregister("seed")).toBe(true);
+
+    await installOnce();
+    await supervisor.registerDirectory(join(workspace, "connectors", "seed"));
+    const ensured = supervisor.ensureFirstIntegration("seed");
+
+    const rows = (await supervisor.list()).filter((row) => row.connectorId === "seed");
+    expect(ensured.id).toBe(work.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].integrationKey).toBe("work");
   });
 
   test("loads connector runtime from directory entry", async () => {

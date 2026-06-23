@@ -424,6 +424,9 @@ export class ConnectorSupervisor {
 
   ensureFirstIntegration(connectorId: string): ConnectorIntegration {
     const registration = this.requireRegistration(connectorId);
+    const existing = this.store.firstForConnector(connectorId);
+    if (existing) return existing;
+
     if (!isPlatformSupported(registration.manifest, this.platform)) {
       // Keep a visible, non-runnable row so the UI can show the connector as
       // unsupported on this device. supported=false blocks scheduling and runs.

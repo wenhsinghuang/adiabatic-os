@@ -205,6 +205,19 @@ export class ConnectorIntegrationStore {
     return row ? rowToIntegration<TConfig, TState>(row) : undefined;
   }
 
+  firstForConnector<TConfig = unknown, TState = unknown>(
+    connectorId: string,
+  ): ConnectorIntegration<TConfig, TState> | undefined {
+    validateConnectorId(connectorId);
+    const row = this.systemDb.prepare(
+      `SELECT * FROM connector_integrations
+       WHERE connector_id = ?
+       ORDER BY created_at
+       LIMIT 1`
+    ).get(connectorId) as IntegrationRow | null;
+    return row ? rowToIntegration<TConfig, TState>(row) : undefined;
+  }
+
   delete(id: string): boolean {
     const result = this.systemDb.prepare("DELETE FROM connector_integrations WHERE id = ?").run(id);
     return result.changes > 0;
