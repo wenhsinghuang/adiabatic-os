@@ -15,7 +15,7 @@ D0 is the substrate's permanent history, not an operations log. Keeping a hard f
 Everything else stays in **control-plane current state** (`system.db`), never D0. Two anti-slip tests catch the rest:
 
 - *Would this still matter if the connector/app stopped running tomorrow?* `connector.approved` would (you once trusted that code); `app.commit` would (the capability itself changed); `auth.refresh_failed` would not (it was just the runtime state at the time).
-- *Is this primarily for UI status, debugging, retry, setup, or health display?* If yes, it is not D0. This excludes **auth** (connect/refresh/revoke/fail), **requirements/provisioning**, **scheduler/run status**, `last_error`, `next_run`, `enabled/disabled`, and integration config.
+- *Is this primarily for UI status, debugging, retry, setup, or health display?* If yes, it is not D0. This excludes **auth** (connect/refresh/revoke/fail), **requirements/provisioning**, **scheduler/run status**, connector `warnings`, `last_error`, `next_run`, `enabled/disabled`, and integration config.
 
 So **auth credential lifecycle does not produce D0 events.** Auth is provisioning that lets a connector run (the setup evaluator already treats it as a *requirement*, alongside OS permissions) — not a substrate fact, not an executable artifact, not a code-trust decision. Credential metadata and status live in `system.db` as control-plane state.
 

@@ -32,7 +32,7 @@ System / core
   ConnectorHost        supervisor, launcher, capability issuer
   Connector registry   workspace connector discovery and package trust status
   Connector runner     process execution boundary for one connector integration
-  Capability broker    host-side proxy for guard, state, auth, and source authority
+  Capability broker    host-side proxy for guard, state, warnings, auth, and source authority
   Trigger runtime      decides when poll/manual runs happen
   Shell                integration UI and auth UX
   Secret store         credentials, via unified auth/secrets module
@@ -543,7 +543,7 @@ WorkspaceConnectorRegistry
 
 ConnectorIntegrationStore
   read/write .adiabatic DB connector_integrations
-  owns config, state, auth_ref, schedule, status, and timestamps
+  owns config, state, warnings, auth_ref, schedule, status, and timestamps
 
 ConnectorSupervisor
   public orchestration API
@@ -566,7 +566,7 @@ ConnectorScheduler
   stops watch connectors on core down
 ```
 
-`ConnectorRunner` is a separate process runner: every workspace package connector executes in a spawned Bun child with an IPC capability broker. The child has no database handle, no Guard, and no secrets — `guard.writeEvent`, `state.get/set`, and `auth.getToken` are RPC calls served by the host, where source injection and validation happen. Requirement `check`/`request` handlers also execute in the child. Abort is cooperative first (AbortSignal in the child), then enforced: a runner that ignores abort is force-killed after a grace period. This is not a sandbox claim. The process boundary exists for connector lifecycle, crash isolation, cancellation, and future runner backend flexibility. Trust still comes from official hash/signature verification or human-approved custom hashes, verified by the host before any spawn. Manually registered in-memory definitions (tests, embedding) run in-process with identical semantics.
+`ConnectorRunner` is a separate process runner: every workspace package connector executes in a spawned Bun child with an IPC capability broker. The child has no database handle, no Guard, and no secrets — `guard.writeEvent`, `state.get/set`, `warnings.set/clear`, and `auth.getToken` are RPC calls served by the host, where source injection, validation, and system-state writes happen. Requirement `check`/`request` handlers also execute in the child. Abort is cooperative first (AbortSignal in the child), then enforced: a runner that ignores abort is force-killed after a grace period. This is not a sandbox claim. The process boundary exists for connector lifecycle, crash isolation, cancellation, and future runner backend flexibility. Trust still comes from official hash/signature verification or human-approved custom hashes, verified by the host before any spawn. Manually registered in-memory definitions (tests, embedding) run in-process with identical semantics.
 
 ```text
 poll/manual
@@ -590,7 +590,7 @@ The capability broker is the host-side authority layer between a connector runne
 Connector code still sees:
 
 ```ts
-run({ guard, auth, state, config, host, signal })
+run({ guard, auth, state, warnings, config, host, signal })
 ```
 
 But inside a runner process these handles are IPC proxies:
@@ -611,6 +611,12 @@ connector code
     -> scoped integration state
 
 connector code
+  warnings.set/clear(...)
+    -> IPC
+    -> host capability broker
+    -> scoped integration warning state
+
+connector code
   auth.getToken()
     -> IPC
     -> host capability broker
@@ -623,6 +629,7 @@ The broker owns:
 
 - D0 write validation and source injection
 - integration-scoped state access
+- integration-scoped warning access
 - auth token access and refresh
 - trust/run gate enforcement for active runs
 - cancellation and run status reporting
@@ -635,7 +642,7 @@ Connector code should expose one run entrypoint.
 
 ```ts
 export default defineConnector({
-  async run({ guard, auth, state, config, host, signal }) {
+  async run({ guard, auth, state, warnings, config, host, signal }) {
     // Capture, fetch, redact, normalize.
     await guard.writeEvent({
       type: "source.event",
@@ -645,6 +652,7 @@ export default defineConnector({
     });
 
     await state.set({ cursor: "next" });
+    await warnings.clear("backfill");
   },
 });
 ```
@@ -658,6 +666,7 @@ type ConnectorRunContext<TConfig, TState> = {
   guard: BoundConnectorGuard;
   auth: ConnectorAuthHandle;
   state: ConnectorStateHandle<TState>;
+  warnings: ConnectorWarningsHandle;
   config: TConfig;
   host: ConnectorHostContext;
   signal: AbortSignal;
@@ -673,13 +682,14 @@ The connector author should only need to understand:
 - `guard.writeEvent(...)`
 - `auth` as a capability handle
 - `state` as private checkpoint storage
+- `warnings` as keyed non-fatal status for shell-visible integration attention
 - `config` as the integration's settings (plus any one-off run override); package defaults live in the connector's own code
 - `host` as stable host-owned runtime context
 - `signal` for cancellation
 
 They should not need to understand host internals, `withSource()`, app identity, DB handles, scheduler internals, or shell auth UX.
 
-Do not expose integration identity in the connector context by default. The host already scopes `guard`, `auth`, `state`, and `config` to the current integration. Most connector code should not care whether it is running for `work`, `personal`, or a singleton runtime instance.
+Do not expose integration identity in the connector context by default. The host already scopes `guard`, `auth`, `state`, `warnings`, and `config` to the current integration. Most connector code should not care whether it is running for `work`, `personal`, or a singleton runtime instance.
 
 ## Bound Guard
 
@@ -849,6 +859,29 @@ State is not product data, not D0, and not secret storage. It is runtime bookkee
 
 Persisted state belongs in `.adiabatic/system.db`, in a system-owned integration table, not in connector YAML or the workspace connector folder. It is scoped per integration. Connector runtime state is workspace-owned control-plane data; connector-produced D0 events still go through Guard into `.adiabatic/data.db`.
 
+## Warnings
+
+Warnings are non-fatal connector diagnostics that should be visible in shell UI without turning the integration into a failed run.
+
+```ts
+type ConnectorWarningsHandle = {
+  set(warning: ConnectorWarningInput): Promise<void>;
+  clear(key: string): Promise<void>;
+};
+
+type ConnectorWarningInput = {
+  key: string;
+  message: string;
+  details?: JsonValue;
+};
+```
+
+Warnings are keyed current state, not an append log. `set()` upserts by key: repeated writes update `message`, `details`, and `lastSeenAt` while preserving the original `firstSeenAt`. `clear()` removes that key and is a no-op if the key is absent. Successful runs do not automatically clear warnings; the connector must clear the warning when the condition is resolved.
+
+Use warnings for recoverable or secondary work that should not mask the primary sync path, for example: historical backfill paused after a provider rate-limit while the six-hour incremental sync still succeeds. Do not use warnings for hard run failures; throw from `run()` so the supervisor records `status = error` and `last_error`.
+
+Warnings are control-plane state in `connector_integrations.warnings`. They are not product data, not D0 events, and not a replacement for `state` cursors. D0 must not receive operational warning events such as `oura.backfill.error`; those belong in system DB current state.
+
 ## Platform Requirements
 
 Platform compatibility and platform-coupled setup requirements belong together in the manifest.
@@ -964,7 +997,7 @@ connectors/<connector_id>/connector.yaml
 .adiabatic/system.db connector_integrations table
   id / connector_id / integration_key / enabled / status
   config / sync_state / auth_ref / schedule_cron
-  last_error / last_run_at / next_run_at
+  last_error / warnings / last_run_at / next_run_at
 
 .adiabatic/system.db connector_custom_approvals table
   connector_id / approved_hash / approved_at
@@ -1135,7 +1168,7 @@ The target system-owned runtime state is persisted in `connector_integrations`:
 ```text
 id / connector_id / integration_key / enabled / status / setup_status
 trust_status / package_hash / schedule_cron / next_run_at / config
-sync_state / requirements_status / auth_ref / last_error / last_run_at
+sync_state / requirements_status / auth_ref / last_error / warnings / last_run_at
 created_at / updated_at
 ```
 
