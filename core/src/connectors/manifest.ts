@@ -26,16 +26,11 @@ const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
 ]);
 const OAUTH_AUTH_TYPES = new Set([
   "oauth2-public",
-  "oauth2-byo-public",
-  "oauth2-byo-confidential",
   "oauth2-hosted",
 ]);
 const AUTH_TYPES = new Set(["none", "apiKey", ...OAUTH_AUTH_TYPES]);
 const CONFIG_FIELD_TYPES = new Set<ConnectorConfigFieldType>(["string", "number", "boolean"]);
-const OAUTH_TOKEN_ENDPOINT_AUTH_METHODS = new Set([
-  "client_secret_basic",
-  "client_secret_post",
-]);
+const REMOVED_OAUTH_AUTH_TYPES = new Set(["oauth2-byo-public", "oauth2-byo-confidential"]);
 
 export function validateConnectorId(id: string): void {
   if (!CONNECTOR_ID_PATTERN.test(id)) {
@@ -175,7 +170,12 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
   const rawAuth = auth as ConnectorAuthSpec & Record<string, unknown>;
   if (rawAuth.type === "oauth2") {
     throw new Error(
-      `Connector ${connectorId} uses legacy oauth2 auth; use oauth2-public, oauth2-byo-public, oauth2-byo-confidential, or oauth2-hosted`,
+      `Connector ${connectorId} uses legacy oauth2 auth; use oauth2-public or oauth2-hosted`,
+    );
+  }
+  if (REMOVED_OAUTH_AUTH_TYPES.has(rawAuth.type as string)) {
+    throw new Error(
+      `Connector ${connectorId} uses removed ${rawAuth.type} auth; use oauth2-public or oauth2-hosted`,
     );
   }
   if (!AUTH_TYPES.has(auth.type)) {
@@ -204,19 +204,6 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
   if (auth.type === "oauth2-public") {
     validateRequiredStringAuthField(connectorId, rawAuth, "clientId", auth.type);
     forbidAuthFields(connectorId, rawAuth, auth.type, ["tokenEndpointAuthMethod", "connectEndpoint"]);
-  } else if (auth.type === "oauth2-byo-public") {
-    forbidAuthFields(connectorId, rawAuth, auth.type, [
-      "clientId",
-      "tokenEndpointAuthMethod",
-      "connectEndpoint",
-    ]);
-  } else if (auth.type === "oauth2-byo-confidential") {
-    forbidAuthFields(connectorId, rawAuth, auth.type, ["clientId", "connectEndpoint"]);
-    if (!OAUTH_TOKEN_ENDPOINT_AUTH_METHODS.has(rawAuth.tokenEndpointAuthMethod as string)) {
-      throw new Error(
-        `Connector ${connectorId} ${auth.type} tokenEndpointAuthMethod must be client_secret_basic or client_secret_post`,
-      );
-    }
   }
 }
 

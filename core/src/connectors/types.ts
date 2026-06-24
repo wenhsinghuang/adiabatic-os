@@ -13,28 +13,11 @@ export type ConnectorPlatform =
   | "android"
   | "cloud";
 
-export type OAuthTokenEndpointAuthMethod = "client_secret_basic" | "client_secret_post";
-
 export type ConnectorOAuthPublicAuthSpec = {
   type: "oauth2-public";
   authorizationEndpoint: string;
   tokenEndpoint: string;
   clientId: string;
-  scope?: string[];
-};
-
-export type ConnectorOAuthByoPublicAuthSpec = {
-  type: "oauth2-byo-public";
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
-  scope?: string[];
-};
-
-export type ConnectorOAuthByoConfidentialAuthSpec = {
-  type: "oauth2-byo-confidential";
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
-  tokenEndpointAuthMethod: OAuthTokenEndpointAuthMethod;
   scope?: string[];
 };
 
@@ -44,10 +27,7 @@ export type ConnectorOAuthHostedAuthSpec = {
   scope?: string[];
 };
 
-export type ConnectorOAuthDirectAuthSpec =
-  | ConnectorOAuthPublicAuthSpec
-  | ConnectorOAuthByoPublicAuthSpec
-  | ConnectorOAuthByoConfidentialAuthSpec;
+export type ConnectorOAuthDirectAuthSpec = ConnectorOAuthPublicAuthSpec;
 
 export type ConnectorOAuthAuthSpec =
   | ConnectorOAuthDirectAuthSpec
@@ -62,15 +42,11 @@ export type ConnectorAuthSpec =
 
 export function isOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthAuthSpec {
   return auth.type === "oauth2-public"
-    || auth.type === "oauth2-byo-public"
-    || auth.type === "oauth2-byo-confidential"
     || auth.type === "oauth2-hosted";
 }
 
 export function isDirectOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthDirectAuthSpec {
-  return auth.type === "oauth2-public"
-    || auth.type === "oauth2-byo-public"
-    || auth.type === "oauth2-byo-confidential";
+  return auth.type === "oauth2-public";
 }
 
 export function isHostedOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthHostedAuthSpec {
@@ -78,9 +54,7 @@ export function isHostedOAuthAuthSpec(auth: ConnectorAuthSpec): auth is Connecto
 }
 
 export function isDirectOAuthAuthType(type: string): boolean {
-  return type === "oauth2-public"
-    || type === "oauth2-byo-public"
-    || type === "oauth2-byo-confidential";
+  return type === "oauth2-public";
 }
 
 export function runtimeAuthType(auth: ConnectorAuthSpec): ConnectorRuntimeAuthType {

@@ -271,7 +271,7 @@ export class ConnectorSupervisor {
 
   startOAuthIntegration(
     instanceId: string,
-    input: { redirectUri: string; clientSecret?: string; clientId?: string },
+    input: { redirectUri: string },
   ): OAuthStartResult {
     const existing = this.store.get(instanceId);
     if (!existing) {
@@ -456,8 +456,6 @@ export class ConnectorSupervisor {
     supported: boolean;
     packageTrust: ConnectorPackageTrust["status"];
     authType: string;
-    authNeedsClientId?: boolean;
-    authNeedsClientSecret?: boolean;
     authHostedDisabled?: boolean;
     authStatus?: string;
     authAttention?: "refresh_failed" | "redirect_uri_changed";
@@ -477,9 +475,6 @@ export class ConnectorSupervisor {
         : [];
       const authSpec = registration?.manifest.auth ?? { type: "none" };
       const authType = authSpec.type;
-      const authNeedsClientId = authSpec.type === "oauth2-byo-public"
-        || authSpec.type === "oauth2-byo-confidential";
-      const authNeedsClientSecret = authSpec.type === "oauth2-byo-confidential";
       const authHostedDisabled = authSpec.type === "oauth2-hosted";
       const credential = integration.authRef ? this.authManager.credential(integration.authRef) : undefined;
       const storedRedirectUri = typeof credential?.metadata?.redirect_uri === "string"
@@ -517,8 +512,6 @@ export class ConnectorSupervisor {
         supported: registration ? isPlatformSupported(registration.manifest, this.platform) : false,
         packageTrust: registration?.trust.status ?? "missing",
         authType,
-        authNeedsClientId,
-        authNeedsClientSecret,
         authHostedDisabled,
         authStatus: credential?.status,
         authAttention,

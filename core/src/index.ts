@@ -50,7 +50,7 @@ const authSecrets: AuthSecrets = {
 };
 const corePort = Number(process.env.PORT) || 3000;
 const coreHost = process.env.HOST || "127.0.0.1";
-const oauthRedirectUri = `http://127.0.0.1:${corePort}/oauth/callback`;
+const oauthRedirectUri = `http://localhost:${corePort}/oauth/callback`;
 const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
   type JsonValue =
     | null
@@ -585,13 +585,10 @@ const server = Bun.serve({
       const oauthStartMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/oauth\/start$/);
       if (oauthStartMatch && method === "POST") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
-        const body = await readBody<{ clientSecret?: string; clientId?: string }>(req);
         const result = connectorSupervisor.startOAuthIntegration(
           decodeURIComponent(oauthStartMatch[1]),
           {
             redirectUri: oauthRedirectUri,
-            clientSecret: body.clientSecret,
-            clientId: body.clientId,
           },
         );
         return json(result);

@@ -229,8 +229,6 @@ export type ConnectorAuthType =
   | "none"
   | "apiKey"
   | "oauth2-public"
-  | "oauth2-byo-public"
-  | "oauth2-byo-confidential"
   | "oauth2-hosted";
 
 export interface ConnectorRequirementView {
@@ -268,8 +266,6 @@ export interface ConnectorIntegrationView {
   setupStatus: "setup" | "ready";
   packageTrust: ConnectorTrust;
   authType: ConnectorAuthType;
-  authNeedsClientId?: boolean;
-  authNeedsClientSecret?: boolean;
   authHostedDisabled?: boolean;
   authStatus?: string;
   authAttention?: "refresh_failed" | "redirect_uri_changed";
@@ -435,13 +431,9 @@ export interface OAuthAttemptResult {
   error?: string;
 }
 
-export function startConnectorOAuth(
-  integrationId: string,
-  input?: { clientSecret?: string; clientId?: string },
-): Promise<OAuthStartResult> {
+export function startConnectorOAuth(integrationId: string): Promise<OAuthStartResult> {
   return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}/oauth/start`, {
     method: "POST",
-    body: JSON.stringify({ clientSecret: input?.clientSecret, clientId: input?.clientId }),
   });
 }
 

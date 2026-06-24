@@ -457,8 +457,6 @@ function IntegrationRow({
   const state = channelState(c);
   const needs = setupNeeds(c);
   const [tokenInput, setTokenInput] = useState("");
-  const [clientSecretInput, setClientSecretInput] = useState("");
-  const [clientIdInput, setClientIdInput] = useState("");
   const [keyInput, setKeyInput] = useState("");
   const cardBusy = Boolean(busy[c.id]);
   const showSetup = trusted && interactive && c.enabled;
@@ -608,13 +606,8 @@ function IntegrationRow({
             className={styles.oauthBox}
             onSubmit={(event) => {
               event.preventDefault();
-              if (c.authNeedsClientSecret && !clientSecretInput.trim()) return;
-              if (c.authNeedsClientId && !clientIdInput.trim()) return;
               onAct(c.id, "oauth", async () => {
-                const started = await startConnectorOAuth(c.id, {
-                  clientSecret: clientSecretInput.trim() || undefined,
-                  clientId: clientIdInput.trim() || undefined,
-                });
+                const started = await startConnectorOAuth(c.id);
                 await openAuthorizationUrl(started.authorizationUrl);
                 onTrackOAuthAttempt(c.id, started.attemptId);
               });
@@ -628,32 +621,7 @@ function IntegrationRow({
             {pendingOAuthAttempt && (
               <div className={styles.oauthNote}>authorization pending in browser</div>
             )}
-            {c.authNeedsClientId && (
-              <input
-                className={styles.inlineInput}
-                type="text"
-                placeholder="OAuth client ID (your registered app)"
-                value={clientIdInput}
-                onChange={(event) => setClientIdInput(event.target.value)}
-              />
-            )}
-            {c.authNeedsClientSecret && (
-              <input
-                className={styles.inlineInput}
-                type="password"
-                placeholder="OAuth client secret"
-                value={clientSecretInput}
-                onChange={(event) => setClientSecretInput(event.target.value)}
-              />
-            )}
-            <button
-              className={styles.primaryBtn}
-              disabled={
-                cardBusy
-                || Boolean(c.authNeedsClientSecret && !clientSecretInput.trim())
-                || Boolean(c.authNeedsClientId && !clientIdInput.trim())
-              }
-            >
+            <button className={styles.primaryBtn} disabled={cardBusy}>
               {busy[c.id] === "oauth"
                 ? "opening…"
                 : pendingOAuthAttempt

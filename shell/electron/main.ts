@@ -14,7 +14,7 @@ const TEMPLATE = join(__dirname, "..", "..", "template");
 const CORE_ENTRY = join(__dirname, "..", "..", "core", "src", "index.ts");
 const PTY_HELPER = join(__dirname, "..", "..", "core", "src", "pty-helper.cjs");
 const CORE_PORT_MIN = 32100;
-const CORE_PORT_MAX = 32999;
+const CORE_PORT_MAX = 32102;
 const CORE_TOKEN = randomBytes(32).toString("base64url");
 const BRIDGE_TOKEN = randomBytes(32).toString("base64url");
 
@@ -149,7 +149,7 @@ async function ensureWorkspaceRuntimeSettings(opts?: { rotatePort?: boolean }): 
     settings.vaultId = randomBytes(16).toString("base64url");
   }
 
-  if (opts?.rotatePort || !settings.corePort) {
+  if (opts?.rotatePort || !settings.corePort || !isSupportedCorePort(settings.corePort)) {
     settings.corePort = await chooseAvailableCorePort(settings.corePort);
   } else if (!(await isPortAvailable(settings.corePort))) {
     corePort = settings.corePort;
@@ -165,14 +165,15 @@ async function ensureWorkspaceRuntimeSettings(opts?: { rotatePort?: boolean }): 
 }
 
 async function chooseAvailableCorePort(exclude?: number): Promise<number> {
-  const span = CORE_PORT_MAX - CORE_PORT_MIN + 1;
-  const start = CORE_PORT_MIN + Math.floor(Math.random() * span);
-  for (let i = 0; i < span; i++) {
-    const port = CORE_PORT_MIN + ((start - CORE_PORT_MIN + i) % span);
+  for (let port = CORE_PORT_MIN; port <= CORE_PORT_MAX; port++) {
     if (port === exclude) continue;
     if (await isPortAvailable(port)) return port;
   }
   throw new Error(`No free core port found in ${CORE_PORT_MIN}-${CORE_PORT_MAX}`);
+}
+
+function isSupportedCorePort(port: number): boolean {
+  return port >= CORE_PORT_MIN && port <= CORE_PORT_MAX;
 }
 
 function isPortAvailable(port: number): Promise<boolean> {

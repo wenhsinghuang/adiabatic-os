@@ -32,8 +32,8 @@ The runtime handle is read-only and minimal: it yields a credential, it cannot m
 
 **`auth.type` is the boundary of the system-managed auth flow.** A connector manifest should not require a reader to infer who owns the OAuth app or where the client secret lives from missing fields. If the broker asks for different user input, runs a different exchange path, or delegates to hosted infrastructure, that is a real type boundary. Two rules follow:
 
-- **Use standard OAuth fields inside direct OAuth flows.** `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `scope`, and `tokenEndpointAuthMethod` keep the OAuth/OIDC meanings, spelled in the connector manifest's camelCase convention. PKCE (`code_challenge_method=S256`, RFC 7636) is always-on broker behavior, not a manifest field.
-- **Name Adiabatic deployment models explicitly.** BYO and hosted OAuth are product contracts, not OAuth metadata. They must be visible in `auth.type`, not implied by whether `clientId` is omitted or whether a secret method is present.
+- **Use standard OAuth fields inside direct OAuth flows.** `authorizationEndpoint`, `tokenEndpoint`, `clientId`, and `scope` keep the OAuth/OIDC meanings, spelled in the connector manifest's camelCase convention. PKCE (`code_challenge_method=S256`, RFC 7636) is always-on broker behavior, not a manifest field.
+- **Name Adiabatic deployment models explicitly.** Direct public OAuth and hosted OAuth are product contracts, not OAuth metadata. They must be visible in `auth.type`, not implied by missing fields or provider-specific options.
 
 Worked examples:
 
@@ -42,9 +42,7 @@ Worked examples:
 | `none` | no-credential mechanism | — |
 | `apiKey` | a static user-supplied secret | Bearer / Basic / `x-api-key` are just header formats the connector applies — zero invented config |
 | `oauth2-public` | direct Authorization Code + PKCE using an author-provided public client id | no secret; connector code still receives a generic `oauth2` runtime handle |
-| `oauth2-byo-public` | direct Authorization Code + PKCE using the user's own public OAuth app | user supplies `clientId` at connect |
-| `oauth2-byo-confidential` | direct Authorization Code + PKCE using the user's own confidential OAuth app | user supplies `clientId` + `clientSecret`; the manifest declares how the core sends that secret |
-| `oauth2-hosted` | official hosted OAuth ceremony for shared confidential apps | not a local direct OAuth flow; hosted service owns provider metadata and secret handling |
+| `oauth2-hosted` | official hosted OAuth ceremony for confidential or provider-specific OAuth | hosted service owns provider metadata, secret handling, refresh behavior, and provider quirks |
 | `hmac` (future) | a key+secret that *signs* each request | not expressible as "attach a header" — earns a type when a connector needs it |
 
 The runtime connector handle remains smaller than the manifest contract: all OAuth manifest flows yield `context.auth.type === "oauth2"` plus `getToken()`. The manifest type selects setup/exchange behavior; connector code only consumes the resulting token.
@@ -106,13 +104,21 @@ Because keyslots coexist, custody need not be a single global decision — multi
 
 **Forgetting the key.** By design there is no backdoor — any path that recovers without the key *is* a custodian. If the key is truly lost the encrypted secrets are unrecoverable, but the cost is bounded to re-onboarding replaceable credentials, not data loss (only credential values sit under the `vault_key`; integrations, config, and D0 do not). The recovery code is also re-viewable on any already-unlocked device, so loss requires every device gone *and* the code never saved.
 
-## OAuth2 — Authorization Code + PKCE
+## OAuth2 — Direct Public and Hosted
 
-v1 supports the Authorization Code flow with PKCE. The flow is local and has no intermediary: the broker opens the provider authorization URL, receives the redirect on a loopback callback (core `/oauth/callback`, unauthenticated, `state` as CSRF protection), and exchanges the code directly with the provider. The token never transits a third party.
+v1 supports one direct OAuth flow: Authorization Code with PKCE for author-owned public clients. The flow is local and has no intermediary: the broker opens the provider authorization URL, receives the redirect on a loopback callback (core `/oauth/callback`, unauthenticated, `state` as CSRF protection), and exchanges the code directly with the provider. The token never transits a third party.
 
-The v1 redirect URI is derived from the workspace's persisted core port: `http://127.0.0.1:<corePort>/oauth/callback`. The broker uses exactly that value in the authorization request, and the setup UI shows it to users setting up custom OAuth apps because providers require the redirect URI to be pre-registered. The callback stays outside `/api/*`, but still enforces the localhost host restriction and live `state` validation. If the user explicitly rotates the core port later, existing OAuth tokens may continue to refresh, but exact-match providers require updating the registered redirect URI before the next reconnect/re-authorization.
+The direct OAuth receiver contract is deliberately narrow. Adiabatic supports exactly these loopback callback URLs:
 
-The manifest uses explicit OAuth auth flow types. Direct OAuth flows share the local loopback + PKCE executor, but their manifest contracts differ because ownership of the OAuth app and client secret differs. `scope` is an array for YAML ergonomics and is joined to the standard space-delimited string at the broker boundary.
+```text
+http://localhost:32100/oauth/callback
+http://localhost:32101/oauth/callback
+http://localhost:32102/oauth/callback
+```
+
+The workspace core port is chosen from that set and persisted in `.adiabatic/settings.json`. Authors using `oauth2-public` must whitelist all three URLs in the provider app. Providers that cannot accept this receiver profile are not supported by direct OAuth and should use `oauth2-hosted`. The callback stays outside `/api/*`, but still enforces the localhost host restriction and live `state` validation. If the user explicitly rotates the core port later, existing OAuth tokens may continue to refresh, but exact-match providers require updating the registered redirect URI before the next reconnect/re-authorization.
+
+`scope` is an array for YAML ergonomics and is joined to the standard space-delimited string at the broker boundary.
 
 ```yaml
 auth:
@@ -128,30 +134,6 @@ auth:
 
 ```yaml
 auth:
-  type: oauth2-byo-public
-  authorizationEndpoint: https://provider.example/oauth/authorize
-  tokenEndpoint: https://provider.example/oauth/token
-  scope:
-    - read
-```
-
-`oauth2-byo-public` is for user-owned public OAuth apps. The manifest intentionally has no `clientId`; the user enters their own app's client id during connect, and the core persists it with the credential so refresh does not require re-entry.
-
-```yaml
-auth:
-  type: oauth2-byo-confidential
-  authorizationEndpoint: https://cloud.ouraring.com/oauth/authorize
-  tokenEndpoint: https://api.ouraring.com/oauth/token
-  tokenEndpointAuthMethod: client_secret_post
-  scope:
-    - daily
-    - heartrate
-```
-
-`oauth2-byo-confidential` is for user-owned confidential OAuth apps. The user enters `clientId` and `clientSecret` during connect. The manifest declares the standard `token_endpoint_auth_method` the core must use: `client_secret_post` or `client_secret_basic`. A manifest `clientId` is forbidden here because it would imply a shared author-owned confidential app whose secret cannot be shipped locally.
-
-```yaml
-auth:
   type: oauth2-hosted
   connectEndpoint: https://auth.adiabatic.com/connect/oura
   scope:
@@ -159,13 +141,13 @@ auth:
     - heartrate
 ```
 
-`oauth2-hosted` is the official hosted OAuth path for shared confidential apps. The hosted auth service owns the provider client id, client secret, provider token endpoint, redirect URI, provider review/compliance, and the browser OAuth ceremony. The local manifest does not carry provider OAuth metadata. This contract deliberately does **not** include the R1 token-exchange relay model; there is no local authorize + loopback + remote token-only relay mode.
+`oauth2-hosted` is the official hosted OAuth path for confidential apps and provider-specific OAuth. The hosted auth service owns the provider client id, client secret, provider token endpoint, redirect URI, provider review/compliance, refresh token custody, refresh behavior, and the browser OAuth ceremony. The local manifest does not carry provider OAuth metadata. This contract deliberately does **not** include the R1 token-exchange relay model; there is no local authorize + loopback + remote token-only relay mode.
 
-Hosted token custody is intended to stay local-first: the hosted ceremony can return a token bundle to the local core for storage in `SecretStore`. The actual credential handoff protocol is deferred until the official auth service is designed. In the current local build, `oauth2-hosted` validates as a manifest type but cannot be connected yet.
+The local auth module still brokers runtime access. For `oauth2-hosted`, `ConnectorAuthManager` stores the hosted credential binding and may cache short-lived access tokens encrypted in `SecretStore`. The hosted service remains the durable owner of provider refresh tokens. `getToken()` returns a valid access token from the local cache when possible; when the cache is missing or expired, the auth module will call the hosted auth service to obtain a fresh access token and update the encrypted cache. The actual hosted credential/token API is deferred until the official auth service is designed. In the current local build, `oauth2-hosted` validates as a manifest type but cannot be connected yet.
 
 Adiabatic's own "Sign in with Google" (used by the future `google_account` keyslot) is the app's own public/installed OAuth client (PKCE + loopback); it is unrelated to the connector shared-secret rule.
 
-The OAuth2 secret blob holds the access token, the refresh token, and the expiry together; `auth_credentials.expires_at` duplicates the expiry in clear so the scheduler can decide to refresh without decrypting. `getToken()` is the lazy-refresh point. Refresh-token rotation makes a refresh non-idempotent, so two concurrent `getToken()` calls near expiry could each spend the refresh token and invalidate the other — the broker **must single-flight refresh per credential** (one in-flight refresh, other callers await its result).
+For direct `oauth2-public`, the OAuth2 secret blob holds the access token, refresh token, and expiry together; `auth_credentials.expires_at` duplicates the expiry in clear so the scheduler can decide to refresh without decrypting. For `oauth2-hosted`, the blob holds the hosted binding plus the encrypted short-lived access-token cache, not the provider refresh token. `getToken()` is the lazy-refresh point. Any refresh path must single-flight per credential (one in-flight refresh, other callers await its result).
 
 ### Loopback callback and the capability gate
 
@@ -218,7 +200,7 @@ Auth lifecycle does **not** produce D0 events. Credential connect, rotate, revok
 
 There is no artificial build-effort phasing: the whole local auth module is built together. What is deferred is deferred only because it depends on something that does not exist yet, not because the code is large.
 
-**Build now — the complete local auth module:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + direct **OAuth2 PKCE** flows (`oauth2-public`, `oauth2-byo-public`, `oauth2-byo-confidential`) + user-supplied confidential client secret support (`client_secret_basic` / `client_secret_post`) + loopback callback. This is one coherent thing, built together.
+**Build now — the complete local auth module:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + direct **OAuth2 public-client PKCE** (`oauth2-public`) + loopback callback. This is one coherent thing, built together.
 
 **Deferred only by an external dependency** (not by build effort, and not by verification):
 

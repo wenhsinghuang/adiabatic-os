@@ -212,16 +212,6 @@ auth:
         },
       })
     ).toThrow("forbids tokenEndpointAuthMethod");
-    expect(
-      validateConnectorManifest({
-        ...base,
-        auth: {
-          type: "oauth2-byo-public",
-          authorizationEndpoint: "https://x/auth",
-          tokenEndpoint: "https://x/token",
-        },
-      }).auth,
-    ).toMatchObject({ type: "oauth2-byo-public" });
     expect(() =>
       validateConnectorManifest({
         ...base,
@@ -229,21 +219,9 @@ auth:
           type: "oauth2-byo-public",
           authorizationEndpoint: "https://x/auth",
           tokenEndpoint: "https://x/token",
-          clientId: "cid",
         } as any,
       })
-    ).toThrow("forbids clientId");
-    expect(
-      validateConnectorManifest({
-        ...base,
-        auth: {
-          type: "oauth2-byo-confidential",
-          authorizationEndpoint: "https://x/auth",
-          tokenEndpoint: "https://x/token",
-          tokenEndpointAuthMethod: "client_secret_post",
-        },
-      }).auth,
-    ).toMatchObject({ type: "oauth2-byo-confidential", tokenEndpointAuthMethod: "client_secret_post" });
+    ).toThrow("removed oauth2-byo-public auth");
     expect(() =>
       validateConnectorManifest({
         ...base,
@@ -252,20 +230,9 @@ auth:
           authorizationEndpoint: "https://x/auth",
           tokenEndpoint: "https://x/token",
           tokenEndpointAuthMethod: "client_secret_post",
-          clientId: "cid",
         } as any,
       })
-    ).toThrow("forbids clientId");
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: {
-          type: "oauth2-byo-confidential",
-          authorizationEndpoint: "https://x/auth",
-          tokenEndpoint: "https://x/token",
-        } as any,
-      })
-    ).toThrow("tokenEndpointAuthMethod must be client_secret_basic or client_secret_post");
+    ).toThrow("removed oauth2-byo-confidential auth");
     expect(
       validateConnectorManifest({
         ...base,
@@ -299,6 +266,16 @@ auth:
       validateConnectorManifest({
         ...base,
         auth: {
+          type: "oauth2-hosted",
+          connectEndpoint: "https://auth.adiabatic.com/connect/demo",
+          tokenEndpointAuthMethod: "client_secret_post",
+        } as any,
+      })
+    ).toThrow("forbids tokenEndpointAuthMethod");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
           type: "oauth2-public",
           authorizationEndpoint: "https://x/auth",
           tokenEndpoint: "https://x/token",
@@ -307,17 +284,6 @@ auth:
         },
       })
     ).toThrow("scope must be an array of strings");
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: {
-          type: "oauth2-byo-confidential",
-          authorizationEndpoint: "https://x/auth",
-          tokenEndpoint: "https://x/token",
-          tokenEndpointAuthMethod: "client_secret_jwt" as any,
-        },
-      })
-    ).toThrow("tokenEndpointAuthMethod must be client_secret_basic or client_secret_post");
     expect(() =>
       validateConnectorManifest({ ...base, auth: { type: "localPermission" } as any })
     ).toThrow("invalid auth type");
@@ -2426,7 +2392,7 @@ auth:
     expect(supervisor.getIntegration(integration.id)?.authRef).toBeUndefined();
 
     const started = supervisor.startOAuthIntegration(integration.id, {
-      redirectUri: "http://127.0.0.1:32123/oauth/callback",
+      redirectUri: "http://localhost:32123/oauth/callback",
     });
     const state = new URL(started.authorizationUrl).searchParams.get("state")!;
     await expect(supervisor.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" })))
@@ -2459,7 +2425,7 @@ auth:
 
     const manifests: Array<{
       manifest: ConnectorManifest;
-      input?: { clientId?: string; clientSecret?: string };
+      connect: (integrationId: string) => Promise<void>;
     }> = [
       {
         manifest: {
@@ -2475,57 +2441,50 @@ auth:
             clientId: "public-client",
           },
         },
+        connect: async (integrationId) => {
+          const started = supervisor.startOAuthIntegration(integrationId, {
+            redirectUri: "http://localhost:32123/oauth/callback",
+          });
+          const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+          await supervisor.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" }));
+        },
       },
       {
         manifest: {
-          id: "oauth-byo-public",
-          name: "OAuth BYO Public",
+          id: "oauth-hosted",
+          name: "OAuth Hosted",
           entry: "./index.ts",
           runtime: { mode: "poll" },
           integrations: { mode: "singleton" },
           auth: {
-            type: "oauth2-byo-public",
-            authorizationEndpoint: "https://provider.example/oauth/authorize",
-            tokenEndpoint: "https://provider.example/oauth/token",
+            type: "oauth2-hosted",
+            connectEndpoint: "https://auth.adiabatic.com/connect/demo",
           },
         },
-        input: { clientId: "byo-public-client" },
-      },
-      {
-        manifest: {
-          id: "oauth-byo-confidential",
-          name: "OAuth BYO Confidential",
-          entry: "./index.ts",
-          runtime: { mode: "poll" },
-          integrations: { mode: "singleton" },
-          auth: {
-            type: "oauth2-byo-confidential",
-            authorizationEndpoint: "https://provider.example/oauth/authorize",
-            tokenEndpoint: "https://provider.example/oauth/token",
-            tokenEndpointAuthMethod: "client_secret_post",
-          },
+        connect: async (integrationId) => {
+          const authRef = `hosted:${integrationId}`;
+          await secrets.set(authRef, JSON.stringify({
+            kind: "oauth2",
+            accessToken: "hosted-access-token",
+            expiresAt: Date.now() + 3600_000,
+          }));
+          await supervisor.connectIntegration(integrationId, { authRef });
         },
-        input: { clientId: "byo-confidential-client", clientSecret: "byo-secret" },
       },
     ];
 
-    for (const { manifest, input } of manifests) {
+    for (const { manifest, connect } of manifests) {
       supervisor.register(manifest, {
         async run({ auth }) {
           seenAuthTypes.push(auth.type);
         },
       });
       const integration = supervisor.ensureIntegration({ connectorId: manifest.id });
-      const started = supervisor.startOAuthIntegration(integration.id, {
-        redirectUri: "http://127.0.0.1:32123/oauth/callback",
-        ...input,
-      });
-      const state = new URL(started.authorizationUrl).searchParams.get("state")!;
-      await supervisor.completeOAuthCallback(new URLSearchParams({ state, code: "code-1" }));
+      await connect(integration.id);
       await supervisor.run(integration.id);
     }
 
-    expect(seenAuthTypes).toEqual(["oauth2", "oauth2", "oauth2"]);
+    expect(seenAuthTypes).toEqual(["oauth2", "oauth2"]);
   });
 
   test("emits D0 audit events for connector approve and remove", async () => {

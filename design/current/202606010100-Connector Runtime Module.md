@@ -746,8 +746,6 @@ Auth is system-managed. Connectors declare standardized credential or account re
 none
 apiKey
 oauth2-public
-oauth2-byo-public
-oauth2-byo-confidential
 oauth2-hosted
 ```
 
@@ -778,26 +776,6 @@ auth:
 
 ```yaml
 auth:
-  type: oauth2-byo-public
-  authorizationEndpoint: https://provider.example/oauth/authorize
-  tokenEndpoint: https://provider.example/oauth/token
-  scope:
-    - read
-```
-
-```yaml
-auth:
-  type: oauth2-byo-confidential
-  authorizationEndpoint: https://cloud.ouraring.com/oauth/authorize
-  tokenEndpoint: https://api.ouraring.com/oauth/token
-  tokenEndpointAuthMethod: client_secret_post
-  scope:
-    - daily
-    - heartrate
-```
-
-```yaml
-auth:
   type: oauth2-hosted
   connectEndpoint: https://auth.adiabatic.com/connect/oura
   scope:
@@ -805,7 +783,7 @@ auth:
     - heartrate
 ```
 
-The OAuth manifest type selects the setup/exchange flow. Direct OAuth flows use standard OAuth/OIDC field meanings (`authorizationEndpoint`, `tokenEndpoint`, `clientId`, `scope`, `tokenEndpointAuthMethod`) with PKCE always on. `oauth2-hosted` is the official hosted OAuth contract for shared confidential apps; provider OAuth metadata lives in the hosted auth service, not the local manifest. See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
+The OAuth manifest type selects the setup/exchange flow. `oauth2-public` is the only direct OAuth flow: author-owned public client, local loopback receiver, and PKCE always on. `oauth2-hosted` is the official hosted OAuth contract for confidential or provider-specific OAuth; provider OAuth metadata, client secrets, refresh-token custody, and provider quirks live in the hosted auth service, not the local manifest. See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
 
 Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer. All OAuth manifest types normalize to the same runtime handle: `context.auth.type === "oauth2"` plus `getToken()`.
 
