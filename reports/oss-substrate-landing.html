@@ -3,21 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Adiabatic OS - Timeline for Self-Evolving Tools</title>
+    <title>Lamarck - Personal Systems That Evolve From Use</title>
     <style>
       :root {
-        --ink: #151512;
-        --ink-soft: #24231d;
-        --paper: #f6f0e2;
-        --paper-hot: #fff8e8;
-        --line: #d7cab6;
-        --muted: #70685b;
-        --green: #b6ff5a;
-        --blue: #4aa3b5;
-        --rust: #d75d32;
-        --yellow: #e9b84f;
-        --rose: #c94e62;
-        --radius: 8px;
+        --ink: #111111;
+        --ink-soft: #242424;
+        --paper: #f4f1e9;
+        --paper-hot: #fffdf6;
+        --line: #151515;
+        --muted: #68645d;
+        --green: #ff4b24;
+        --blue: #2d6f7f;
+        --rust: #ff4b24;
+        --yellow: #f2c14e;
+        --rose: #a83f4a;
+        --radius: 3px;
       }
 
       * {
@@ -33,8 +33,8 @@
         margin: 0;
         color: var(--ink);
         background:
-          linear-gradient(90deg, rgba(21, 21, 18, 0.045) 1px, transparent 1px) 0 0 / 36px 36px,
-          linear-gradient(0deg, rgba(21, 21, 18, 0.035) 1px, transparent 1px) 0 0 / 36px 36px,
+          linear-gradient(90deg, rgba(17, 17, 17, 0.07) 1px, transparent 1px) 0 0 / 34px 34px,
+          linear-gradient(0deg, rgba(17, 17, 17, 0.045) 1px, transparent 1px) 0 0 / 34px 34px,
           var(--paper);
         font-family: "Avenir Next", Optima, Candara, "Segoe UI", sans-serif;
         line-height: 1.42;
@@ -56,7 +56,7 @@
         gap: 24px;
         padding: 14px 34px;
         color: var(--paper-hot);
-        background: rgba(21, 21, 18, 0.94);
+        background: rgba(17, 17, 17, 0.96);
         border-bottom: 1px solid rgba(255, 248, 232, 0.14);
         backdrop-filter: blur(14px);
       }
@@ -76,7 +76,7 @@
         height: 30px;
         color: var(--ink);
         background: var(--green);
-        border-radius: 6px;
+        border-radius: 2px;
         font-family: "Berkeley Mono", "SFMono-Regular", ui-monospace, monospace;
         font-size: 13px;
       }
@@ -105,12 +105,11 @@
         overflow: hidden;
         color: var(--paper-hot);
         background:
-          linear-gradient(90deg, rgba(255, 248, 232, 0.05) 1px, transparent 1px) 0 0 / 42px 42px,
-          linear-gradient(0deg, rgba(255, 248, 232, 0.045) 1px, transparent 1px) 0 0 / 42px 42px,
-          radial-gradient(circle at 74% 22%, rgba(182, 255, 90, 0.13), transparent 23rem),
-          radial-gradient(circle at 14% 78%, rgba(74, 163, 181, 0.11), transparent 24rem),
+          linear-gradient(90deg, rgba(255, 253, 246, 0.055) 1px, transparent 1px) 0 0 / 44px 44px,
+          linear-gradient(0deg, rgba(255, 253, 246, 0.045) 1px, transparent 1px) 0 0 / 44px 44px,
+          linear-gradient(105deg, rgba(255, 75, 36, 0.22), transparent 38%),
           var(--ink);
-        border-bottom: 7px solid var(--rust);
+        border-bottom: 10px solid var(--rust);
       }
 
       .hero-scene {
@@ -134,8 +133,8 @@
         bottom: 42px;
         left: 0;
         height: 2px;
-        background: linear-gradient(90deg, transparent, rgba(182, 255, 90, 0.92), transparent);
-        box-shadow: 0 0 34px rgba(182, 255, 90, 0.24);
+        background: linear-gradient(90deg, transparent, rgba(255, 75, 36, 0.96), transparent);
+        box-shadow: none;
       }
 
       .timeline-event {
@@ -156,8 +155,8 @@
         content: "";
         background: var(--green);
         border: 2px solid var(--ink);
-        border-radius: 50%;
-        box-shadow: 0 0 0 6px rgba(182, 255, 90, 0.12);
+        border-radius: 2px;
+        box-shadow: 0 0 0 6px rgba(255, 75, 36, 0.1);
       }
 
       .timeline-event b {
@@ -180,8 +179,8 @@
         color: rgba(255, 248, 232, 0.78);
         background: rgba(255, 248, 232, 0.06);
         border: 1px solid rgba(255, 248, 232, 0.15);
-        border-radius: var(--radius);
-        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
+        border-radius: 2px;
+        box-shadow: 10px 10px 0 rgba(255, 75, 36, 0.18);
       }
 
       .capability::after {
@@ -256,16 +255,16 @@
 
       h1 {
         margin-bottom: 18px;
-        font-size: 92px;
-        line-height: 0.9;
+        font-size: 104px;
+        line-height: 0.84;
       }
 
       .hero-lede {
         max-width: 650px;
         margin-bottom: 28px;
         color: rgba(255, 248, 232, 0.86);
-        font-size: 30px;
-        line-height: 1.08;
+        font-size: 34px;
+        line-height: 1;
       }
 
       .hero-sub {
@@ -649,7 +648,7 @@
         height: 2px;
         content: "";
         background: linear-gradient(90deg, transparent, var(--green), transparent);
-        box-shadow: 0 0 26px rgba(182, 255, 90, 0.2);
+        box-shadow: 0 0 26px rgba(255, 75, 36, 0.2);
       }
 
       .flow-dot {
@@ -659,7 +658,7 @@
         height: 14px;
         border-radius: 50%;
         background: var(--green);
-        box-shadow: 0 0 0 7px rgba(182, 255, 90, 0.12);
+        box-shadow: 0 0 0 7px rgba(255, 75, 36, 0.12);
       }
 
       .flow-dot:nth-child(1) {
@@ -822,13 +821,13 @@
         height: 2px;
         content: "";
         background: var(--green);
-        box-shadow: 0 0 20px rgba(182, 255, 90, 0.28);
+        box-shadow: 0 0 20px rgba(255, 75, 36, 0.28);
       }
 
       .arch-node.guard,
       .arch-node.events {
-        border-color: rgba(182, 255, 90, 0.58);
-        background: rgba(182, 255, 90, 0.08);
+        border-color: rgba(255, 75, 36, 0.58);
+        background: rgba(255, 75, 36, 0.08);
       }
 
       .arch-tag {
@@ -1207,9 +1206,9 @@
   </head>
   <body>
     <nav class="nav" aria-label="Primary navigation">
-      <a class="brand" href="#top" aria-label="Adiabatic OS home">
-        <span class="mark">A0</span>
-        <span>Adiabatic OS</span>
+      <a class="brand" href="#top" aria-label="Lamarck home">
+        <span class="mark">L0</span>
+        <span>Lamarck</span>
       </a>
       <div class="nav-links">
         <a href="#shift">Difference</a>
@@ -1235,11 +1234,11 @@
       </div>
 
       <div class="hero-content">
-        <p class="eyebrow">For people building their own systems</p>
-        <h1>Adiabatic OS</h1>
+        <p class="eyebrow">Your personal system evolves from use.</p>
+        <h1>Lamarck</h1>
         <p class="hero-lede">Your life already leaves a trail. Make it compound.</p>
         <p class="hero-sub">
-          Stop starting over. Keep the history your personal system can evolve from.
+          Keep the history your work creates. Let AI turn it into reviews, dashboards, and apps you own.
         </p>
         <div class="actions">
           <a class="button primary" href="#works">See the loop</a>
@@ -1332,7 +1331,7 @@
           <p class="tight-lede">The technical promise: apps can change without moving the history underneath them.</p>
 
           <div class="arch-board">
-            <div class="arch-flow" aria-label="Adiabatic OS module diagram">
+            <div class="arch-flow" aria-label="Lamarck module diagram">
               <article class="arch-node">
                 <span class="arch-tag">capture</span>
                 <h3>Connectors</h3>
@@ -1434,13 +1433,13 @@
           <div>
             <p class="kicker">Own it</p>
             <h2>Own the substrate. Own the data. Own the capability.</h2>
-            <pre class="install"><code>$ git clone adiabatic-os
+            <pre class="install"><code>$ git clone lamarck
 $ npm install
 $ npm run dev
 
-$ adiabatic connect github
-$ adiabatic connect calendar
-$ adiabatic events tail</code></pre>
+$ lamarck connect github
+$ lamarck connect calendar
+$ lamarck events tail</code></pre>
           </div>
           <ul class="promise-list">
             <li><strong>Self-contained by default.</strong> Substrate, data, and generated apps live together.</li>
@@ -1454,7 +1453,7 @@ $ adiabatic events tail</code></pre>
 
     <footer>
       <div class="footer-inner">
-        <span>Adiabatic OS</span>
+        <span>Lamarck</span>
         <span>Not memory for an agent. Memory for the person who owns the system.</span>
       </div>
     </footer>

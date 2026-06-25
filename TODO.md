@@ -21,8 +21,24 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Catalogued in [D0 System Event Catalog](design/current/202606110000-D0%20System%20Event%20Catalog.md).
   - Archive button wired in AppsPanel (per-app, confirm + refresh). Restore deferred — re-add `POST /api/apps/:id/restore` + `app.restored` + a button when needed.
 
+- [ ] built identity (clerk + google login)
+
+- [ ] api.lamarck.ai & auth.lamarck.ai framework & infra
+  - AWS lambda + DDB
+
 - [ ] Built first few important connectors
   - Includes the first real OAuth connector, which doubles as the OAuth engine's end-to-end verification.
+    P0:
+    1. AX based watcher (including AFK)
+    2. Claude / Codex app watcher (Codex / Claude local transcript)
+    3. oura
+    4. telegram bot
+    5. github
+    P1:
+    1. browser-extension
+    2. ios app
+    3. calendar
+    4. Notion/Obsidian import
 
 - [ ] Cold-start my personal system
   - Cold start is apps/data built on the substrate, not substrate itself.
@@ -65,7 +81,7 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 
 - [ ] Connector production
   - Status: v0.1 local substrate exists — manifest/framework, `connectors/<id>/` install/remove, explicit bundled catalog install, Source Console/Catalog UI, hash trust gate, runner isolation, scheduler, and `app-commits` package.
-  - End-to-end verify `app-commits`: install from catalog -> approve package -> scheduler run -> D0 `app.commit` events.
+  - Done: `app-commits` verified end-to-end (install → approve → watch run → `app.commit` in D0). Payload finalized: `{ appId, commitSha, authorName, authorEmail, message }` (full message, no derivable fields).
   - built-in: Terminal connector, after capture/privacy policy is explicit.
   - Official trust catalog: generate hashes from `template/connectors/`, publish signed/R2 catalog, load/cache at runtime, and auto-classify matching packages as `official`.
   - Update/reinstall flow: detect newer bundled/official package hashes, preserve runtime state, never overwrite edited packages silently.
@@ -107,5 +123,4 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Requirements selected from `manifest.platforms[device.platform]`
   - Scheduler runs only integrations assigned to the current device
   - Until then: runtime target is the implicit current host; do not add the table/column early
-
 
