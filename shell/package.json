@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "electron/main.ts",
+  "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && npm run build:electron",
+    "build:electron": "node ../scripts/build-electron-main.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "electron": "electron ."
+    "electron": "npm run build:electron && electron .",
+    "electron:dev": "npm run build:electron && NODE_ENV=development electron ."
   },
   "dependencies": {
     "@mdxeditor/editor": "^4.0.0",
