@@ -2,6 +2,7 @@
 node_modules/
 dist/
 dist-electron/
+cdk.out/
 /.adiabatic/
 **/.adiabatic/*
 !**/.adiabatic/.gitkeep

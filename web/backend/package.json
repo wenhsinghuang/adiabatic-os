@@ -1,0 +1,25 @@
+{
+  "name": "@lamarck/web-backend",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "lamarck-web": "bin/lamarck-web.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "synth:dev": "cdk synth LamarckDevStack",
+    "synth:prod": "cdk synth LamarckProdStack"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.215.0",
+    "constructs": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "aws-cdk": "2.1033.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.3"
+  }
+}

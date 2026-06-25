@@ -1,0 +1,86 @@
+name: Deploy Web Prod
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_ACCOUNT_ID: "747034604100"
+      AWS_REGION: us-west-2
+      AWS_DEPLOY_ROLE_ARN: arn:aws:iam::747034604100:role/LamarckCdkDeployRole
+      CFN_EXEC_ROLE_ARN: arn:aws:iam::747034604100:role/cdk-hnb659fds-cfn-exec-role-747034604100-us-west-2
+      DOPPLER_PROJECT: lamarck
+      DOPPLER_CONFIG: prod
+      SECRET_ID: lamarck/prod/app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v2
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync Doppler secrets to AWS Secrets Manager
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_PROD }}
+        run: |
+          set -euo pipefail
+          if ! aws secretsmanager describe-secret --secret-id "$SECRET_ID" >/dev/null 2>&1; then
+            aws secretsmanager create-secret \
+              --name "$SECRET_ID" \
+              --secret-string "{}" \
+              --tags Key=Service,Value=Lamarck Key=Stage,Value=prod >/dev/null
+          fi
+          doppler secrets download --no-file --format json \
+            --config "$DOPPLER_CONFIG" --project "$DOPPLER_PROJECT" \
+            | aws secretsmanager put-secret-value \
+                --secret-id "$SECRET_ID" \
+                --secret-string file:///dev/stdin >/dev/null
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend
+        run: npm --workspace @lamarck/web-backend run build
+
+      - name: Deploy CDK stack
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ env.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: |
+          npm --workspace @lamarck/web-backend exec -- cdk deploy LamarckProdStack \
+            --require-approval=never \
+            --outputs-file web/backend/cdk-outputs.json \
+            --cloudformation-execution-role-arn "$CFN_EXEC_ROLE_ARN"
+
+      - name: Show stack outputs
+        if: always()
+        run: |
+          echo "## Lamarck Prod Web Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f web/backend/cdk-outputs.json ]; then
+            cat web/backend/cdk-outputs.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "{}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

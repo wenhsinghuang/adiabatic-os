@@ -7,11 +7,9 @@ Planned layout:
 
 ```text
 web/
-  auth/      auth.lamarck.ai login and managed-provider connect flows
-  api/       api.lamarck.ai provider proxy and capability-token APIs
+  backend/   CDK app and Lambda handlers for auth.lamarck.ai / api.lamarck.ai
   packages/  shared web/backend packages, config, and provider contracts
 ```
 
 The desktop source currently lives under `desktop/`. The hosted services are not
-implemented in this repo yet; this folder only establishes the repository
-boundary.
+production-ready yet; `backend/` currently provides the deployable skeleton.

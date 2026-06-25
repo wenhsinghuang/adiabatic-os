@@ -7,7 +7,8 @@
   },
   "workspaces": [
     "desktop/core",
-    "desktop/shell"
+    "desktop/shell",
+    "web/backend"
   ],
   "devDependencies": {
     "@playwright/test": "^1.58.2",

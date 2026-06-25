@@ -1,0 +1,45 @@
+# Lamarck Web Backend
+
+Deployable skeleton for Lamarck-hosted services:
+
+- `auth.lamarck.ai`: login and managed-provider connect flows
+- `api.lamarck.ai`: Lamarck provider proxy and capability-token APIs
+
+The current handlers are intentional stubs. They establish deployable AWS shape
+without implementing provider OAuth handoff, provider token vaulting, or proxy
+business logic yet.
+
+## AWS Shape
+
+- `Lamarck{Dev,Prod}Stack`
+- HTTP API for auth routes
+- HTTP API for provider API routes
+- Lambda handler for auth routes
+- Lambda handler for provider API routes
+- DynamoDB table for managed provider connections
+- DynamoDB table for OAuth/connect state
+- Secrets Manager bundle: `lamarck/{stage}/app`
+
+The Lambda runtime reads only the AWS secret name. Doppler remains the source of
+truth; CI syncs the Doppler config into Secrets Manager before each CDK deploy.
+
+## Useful Commands
+
+```bash
+npm install
+npm --workspace @lamarck/web-backend run build
+npm --workspace @lamarck/web-backend run synth:dev
+npm --workspace @lamarck/web-backend run synth:prod
+```
+
+## Required CI Secrets
+
+Set these on the `wenhsinghuang/adiabatic-os` GitHub repository:
+
+```text
+DOPPLER_TOKEN_DEV
+DOPPLER_TOKEN_PROD
+```
+
+The workflows assume Doppler project `lamarck` and configs `dev` / `prod`. If the
+Doppler project uses another name, update `DOPPLER_PROJECT` in the workflow env.
