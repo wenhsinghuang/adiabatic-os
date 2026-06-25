@@ -233,31 +233,58 @@ auth:
         } as any,
       })
     ).toThrow("removed oauth2-byo-confidential auth");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "oauth2-hosted",
+        } as any,
+      })
+    ).toThrow("removed oauth2-hosted auth");
     expect(
       validateConnectorManifest({
         ...base,
         auth: {
-          type: "oauth2-hosted",
-          connectEndpoint: "https://auth.adiabatic.com/connect/demo",
-          scope: ["read"],
+          type: "managedProvider",
+          providerId: "oura",
         },
       }).auth,
-    ).toMatchObject({ type: "oauth2-hosted", connectEndpoint: "https://auth.adiabatic.com/connect/demo" });
+    ).toMatchObject({ type: "managedProvider", providerId: "oura" });
     expect(() =>
       validateConnectorManifest({
         ...base,
         auth: {
-          type: "oauth2-hosted",
-          connectEndpoint: "http://auth.adiabatic.com/connect/demo",
+          type: "managedProvider",
+          providerId: "",
         } as any,
       })
-    ).toThrow("connectEndpoint must be https");
+    ).toThrow("requires a valid providerId");
     expect(() =>
       validateConnectorManifest({
         ...base,
         auth: {
-          type: "oauth2-hosted",
-          connectEndpoint: "https://auth.adiabatic.com/connect/demo",
+          type: "managedProvider",
+          providerId: "oura",
+          connectEndpoint: "https://auth.lamarck.ai/connect/oura",
+        } as any,
+      })
+    ).toThrow("forbids connectEndpoint");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "managedProvider",
+          providerId: "oura",
+          scope: ["daily"],
+        } as any,
+      })
+    ).toThrow("forbids scope");
+    expect(() =>
+      validateConnectorManifest({
+        ...base,
+        auth: {
+          type: "managedProvider",
+          providerId: "oura",
           authorizationEndpoint: "https://x/auth",
         } as any,
       })
@@ -266,8 +293,8 @@ auth:
       validateConnectorManifest({
         ...base,
         auth: {
-          type: "oauth2-hosted",
-          connectEndpoint: "https://auth.adiabatic.com/connect/demo",
+          type: "managedProvider",
+          providerId: "oura",
           tokenEndpointAuthMethod: "client_secret_post",
         } as any,
       })
@@ -2331,7 +2358,7 @@ auth:
     expect(placeholder?.setupStatus).toBe("setup");
   });
 
-  test("rejects oauth2 token connect because oauth uses the browser flow", async () => {
+  test("rejects browser auth token connect because it uses the browser flow", async () => {
     supervisor.register(
       {
         id: "oauth-feed",
@@ -2351,7 +2378,7 @@ auth:
     const integration = supervisor.ensureIntegration({ connectorId: "oauth-feed" });
     await expect(
       supervisor.connectIntegrationWithToken(integration.id, "tok")
-    ).rejects.toThrow("oauth2");
+    ).rejects.toThrow("browser auth");
   });
 
   test("oauth callback binds auth_ref to first-connect setup rows", async () => {
@@ -2404,8 +2431,9 @@ auth:
     expect(await supervisor.getAuthManager().hasToken(connected.authRef!)).toBe(true);
   });
 
-  test("OAuth manifest flows normalize to the runtime oauth2 handle", async () => {
+  test("browser auth manifest flows expose the intended runtime handles", async () => {
     const seenAuthTypes: string[] = [];
+    const seenTokens: string[] = [];
     supervisor = new ConnectorSupervisor({
       systemDb,
       guard: new Guard({ db: dataDb, source: "system:test" }),
@@ -2451,21 +2479,22 @@ auth:
       },
       {
         manifest: {
-          id: "oauth-hosted",
-          name: "OAuth Hosted",
+          id: "managed-oura",
+          name: "Managed Oura",
           entry: "./index.ts",
           runtime: { mode: "poll" },
           integrations: { mode: "singleton" },
           auth: {
-            type: "oauth2-hosted",
-            connectEndpoint: "https://auth.adiabatic.com/connect/demo",
+            type: "managedProvider",
+            providerId: "oura",
           },
         },
         connect: async (integrationId) => {
-          const authRef = `hosted:${integrationId}`;
+          const authRef = `managed:${integrationId}`;
           await secrets.set(authRef, JSON.stringify({
-            kind: "oauth2",
-            accessToken: "hosted-access-token",
+            kind: "managedProvider",
+            providerId: "oura",
+            accessToken: "lamarck-capability-token",
             expiresAt: Date.now() + 3600_000,
           }));
           await supervisor.connectIntegration(integrationId, { authRef });
@@ -2477,6 +2506,9 @@ auth:
       supervisor.register(manifest, {
         async run({ auth }) {
           seenAuthTypes.push(auth.type);
+          if (auth.type !== "none") {
+            seenTokens.push(await auth.getToken());
+          }
         },
       });
       const integration = supervisor.ensureIntegration({ connectorId: manifest.id });
@@ -2484,7 +2516,8 @@ auth:
       await supervisor.run(integration.id);
     }
 
-    expect(seenAuthTypes).toEqual(["oauth2", "oauth2"]);
+    expect(seenAuthTypes).toEqual(["oauth2", "managedProvider"]);
+    expect(seenTokens).toEqual(["access-token", "lamarck-capability-token"]);
   });
 
   test("emits D0 audit events for connector approve and remove", async () => {

@@ -7,18 +7,19 @@ import {
   timingSafeEqual,
 } from "crypto";
 import {
-  isDirectOAuthAuthSpec,
   isOAuthAuthSpec,
   runtimeAuthType,
   type ConnectorAuthHandle,
   type ConnectorAuthSpec,
   type ConnectorIntegration,
+  type ConnectorManagedProviderAuthSpec,
   type ConnectorOAuthAuthSpec,
   type ConnectorOAuthDirectAuthSpec,
 } from "./types";
 
 export type AuthCredentialStatus = "active" | "expired" | "revoked" | "refresh_failed";
 export type OAuthAttemptStatus = "pending" | "connected" | "failed" | "expired";
+export type AuthCredentialKind = "apiKey" | "oauth2" | "managedProvider";
 
 export interface ConnectorSecretStore {
   get(ref: string): Promise<string | undefined>;
@@ -29,7 +30,7 @@ export interface ConnectorSecretStore {
 
 export interface AuthCredentialRecord {
   id: string;
-  kind: "apiKey" | "oauth2";
+  kind: AuthCredentialKind;
   ownerType: string;
   ownerId: string;
   scopes: string[] | undefined;
@@ -45,7 +46,7 @@ export interface AuthCredentialRecord {
 export interface OAuthStartResult {
   authorizationUrl: string;
   attemptId: string;
-  redirectUri: string;
+  redirectUri?: string;
   expiresAt: number;
 }
 
@@ -65,11 +66,17 @@ type SecretPayload =
       refreshToken?: string;
       expiresAt?: number;
       tokenType?: string;
+    }
+  | {
+      kind: "managedProvider";
+      providerId: string;
+      accessToken: string;
+      expiresAt?: number;
     };
 
 interface CredentialUpsertInput {
   id: string;
-  kind: "apiKey" | "oauth2";
+  kind: AuthCredentialKind;
   ownerType: string;
   ownerId: string;
   scopes?: string[];
@@ -90,6 +97,17 @@ interface OAuthAttempt {
   codeVerifier: string;
   state: string;
   redirectUri: string;
+  expiresAt: number;
+  status: OAuthAttemptStatus;
+  credentialId?: string;
+  error?: string;
+}
+
+interface ManagedProviderAttempt {
+  id: string;
+  integrationId: string;
+  authRef: string;
+  providerId: string;
   expiresAt: number;
   status: OAuthAttemptStatus;
   credentialId?: string;
@@ -270,6 +288,7 @@ export class ConnectorAuthManager {
   private attemptTtlMs: number;
   private attemptsById = new Map<string, OAuthAttempt>();
   private attemptsByState = new Map<string, OAuthAttempt>();
+  private managedAttemptsById = new Map<string, ManagedProviderAttempt>();
   private refreshFlights = new Map<string, Promise<string>>();
 
   constructor(
@@ -325,9 +344,6 @@ export class ConnectorAuthManager {
     auth: ConnectorOAuthAuthSpec,
     input: { redirectUri: string },
   ): OAuthStartResult {
-    if (!isDirectOAuthAuthSpec(auth)) {
-      throw hostedOAuthUnavailable(integration.connectorId);
-    }
     const codeVerifier = base64url(randomBytes(32));
     const state = base64url(randomBytes(32));
     const attemptId = base64url(randomBytes(16));
@@ -369,15 +385,64 @@ export class ConnectorAuthManager {
     };
   }
 
+  startManagedProvider(
+    integration: ConnectorIntegration,
+    auth: ConnectorManagedProviderAuthSpec,
+    input: { authOrigin: string },
+  ): OAuthStartResult {
+    const attemptId = base64url(randomBytes(16));
+    const expiresAt = Date.now() + this.attemptTtlMs;
+    const authRef = integration.authRef ?? `connector-integration:${integration.id}:auth`;
+    const attempt: ManagedProviderAttempt = {
+      id: attemptId,
+      integrationId: integration.id,
+      authRef,
+      providerId: auth.providerId,
+      expiresAt,
+      status: "pending",
+    };
+    this.managedAttemptsById.set(attemptId, attempt);
+
+    const url = new URL(`/connect/${encodeURIComponent(auth.providerId)}`, normalizeOrigin(input.authOrigin));
+    url.searchParams.set("attempt", attemptId);
+
+    return {
+      authorizationUrl: url.toString(),
+      attemptId,
+      expiresAt,
+    };
+  }
+
   getOAuthAttempt(integrationId: string, attemptId: string): OAuthAttemptView {
     const attempt = this.attemptsById.get(attemptId);
-    if (!attempt || attempt.integrationId !== integrationId) {
-      return { status: "failed", error: "OAuth attempt not found" };
+    if (!attempt) {
+      return this.getManagedProviderAttempt(integrationId, attemptId);
+    }
+    if (attempt.integrationId !== integrationId) {
+      return { status: "failed", error: "Auth attempt not found" };
     }
     if (attempt.status === "pending" && Date.now() > attempt.expiresAt) {
       attempt.status = "expired";
       attempt.error = "OAuth attempt expired";
       this.attemptsByState.delete(attempt.state);
+    }
+    return {
+      status: attempt.status,
+      integrationId: attempt.integrationId,
+      authRef: attempt.authRef,
+      credentialId: attempt.credentialId,
+      error: attempt.error,
+    };
+  }
+
+  private getManagedProviderAttempt(integrationId: string, attemptId: string): OAuthAttemptView {
+    const attempt = this.managedAttemptsById.get(attemptId);
+    if (!attempt || attempt.integrationId !== integrationId) {
+      return { status: "failed", error: "Auth attempt not found" };
+    }
+    if (attempt.status === "pending" && Date.now() > attempt.expiresAt) {
+      attempt.status = "expired";
+      attempt.error = "Managed provider auth attempt expired";
     }
     return {
       status: attempt.status,
@@ -474,6 +539,12 @@ export class ConnectorAuthManager {
           }
           return payload.value;
         }
+        if (auth.type === "managedProvider") {
+          if (payload.kind !== "managedProvider") {
+            throw new Error(`Connector integration ${integration.id} credential kind mismatch`);
+          }
+          return this.managedProviderAccessToken(authRef, auth, payload);
+        }
         if (!isOAuthAuthSpec(auth) || payload.kind !== "oauth2") {
           throw new Error(`Connector integration ${integration.id} credential kind mismatch`);
         }
@@ -490,18 +561,29 @@ export class ConnectorAuthManager {
     if (!payload.expiresAt || payload.expiresAt - Date.now() > this.refreshSkewMs) {
       return payload.accessToken;
     }
-    if (!isDirectOAuthAuthSpec(auth)) {
-      this.credentialStore?.setStatus(authRef, "refresh_failed", {
-        refresh_error: "hosted OAuth is not available in this build",
-      });
-      throw hostedOAuthUnavailable();
-    }
     const existing = this.refreshFlights.get(authRef);
     if (existing) return existing;
     const flight = this.refreshOAuthToken(authRef, auth, payload)
       .finally(() => this.refreshFlights.delete(authRef));
     this.refreshFlights.set(authRef, flight);
     return flight;
+  }
+
+  private async managedProviderAccessToken(
+    authRef: string,
+    auth: ConnectorManagedProviderAuthSpec,
+    payload: Extract<SecretPayload, { kind: "managedProvider" }>,
+  ): Promise<string> {
+    if (payload.providerId !== auth.providerId) {
+      throw new Error(`Managed provider credential is for ${payload.providerId}, not ${auth.providerId}`);
+    }
+    if (!payload.expiresAt || payload.expiresAt - Date.now() > this.refreshSkewMs) {
+      return payload.accessToken;
+    }
+    this.credentialStore?.setStatus(authRef, "refresh_failed", {
+      refresh_error: "managed provider token refresh is not implemented in this build",
+    });
+    throw managedProviderUnavailable();
   }
 
   private async refreshOAuthToken(
@@ -616,7 +698,9 @@ export class ConnectorAuthManager {
     if (!raw) return undefined;
     try {
       const parsed = JSON.parse(raw) as SecretPayload;
-      if (parsed.kind === "apiKey" || parsed.kind === "oauth2") return parsed;
+      if (parsed.kind === "apiKey" || parsed.kind === "oauth2" || parsed.kind === "managedProvider") {
+        return parsed;
+      }
     } catch {
       return { kind: "apiKey", value: raw };
     }
@@ -628,17 +712,25 @@ export class ConnectorAuthManager {
   }
 }
 
-function hostedOAuthUnavailable(connectorId?: string): Error {
+function managedProviderUnavailable(connectorId?: string): Error {
   return new Error(
     connectorId
-      ? `Connector ${connectorId} hosted OAuth is not available in this build`
-      : "Hosted OAuth is not available in this build",
+      ? `Connector ${connectorId} managed provider auth is not available in this build`
+      : "Managed provider auth is not available in this build",
   );
+}
+
+function normalizeOrigin(origin: string): string {
+  const url = new URL(origin);
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 interface CredentialRow {
   id: string;
-  kind: "apiKey" | "oauth2";
+  kind: AuthCredentialKind;
   owner_type: string;
   owner_id: string;
   scopes_json: string | null;

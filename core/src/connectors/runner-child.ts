@@ -108,7 +108,7 @@ async function handleMessage(msg: HostToRunnerMessage): Promise<void> {
           auth: msg.authType === "none"
             ? { type: "none" }
             : {
-              type: msg.authType as "apiKey" | "oauth2",
+              type: msg.authType as "apiKey" | "oauth2" | "managedProvider",
               getToken: () => rpc<string>("authGetToken"),
             },
           config: msg.configSet ? msg.config : undefined,

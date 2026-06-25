@@ -15,16 +15,16 @@ A secret is invisible plumbing, not a product. Connectors use credentials to mak
 `auth.type` selects a fixed protocol flow. The connector manifest declares the non-secret configuration the flow needs; the broker executes the flow; connector code only ever receives a handle.
 
 ```
-auth.type:  none | apiKey | oauth2
+auth.type:  none | apiKey | oauth2-public | managedProvider
 ```
 
 ```
 AuthHandle =
   | { type: "none" }
-  | { type: "apiKey" | "oauth2"; getToken(): Promise<string> }
+  | { type: "apiKey" | "oauth2" | "managedProvider"; getToken(): Promise<string> }
 ```
 
-The runtime handle is read-only and minimal: it yields a credential, it cannot manage one. `getToken()` returns the raw secret and the caller applies its own header — `apiKey` as the connector requires (`Bearer` / `Basic` / `x-api-key`), `oauth2` as `Bearer <token>`. The broker never builds the header (matching the current `getToken()`-only runtime handle). Lifecycle actions — `connect` / `disconnect` / `rotate` — are a **separate management surface** for the shell/supervisor, never on the runtime handle: revoking a user's credential is not something connector code may invoke.
+The runtime handle is read-only and minimal: it yields a credential, it cannot manage one. `getToken()` returns the secret or capability and the caller applies its own header — `apiKey` as the connector requires (`Bearer` / `Basic` / `x-api-key`), `oauth2` as `Bearer <provider access token>`, and `managedProvider` as `Bearer <Lamarck capability token>` for `api.lamarck.ai`. The broker never builds the header (matching the current `getToken()`-only runtime handle). Lifecycle actions — `connect` / `disconnect` / `rotate` — are a **separate management surface** for the shell/supervisor, never on the runtime handle: revoking a user's credential is not something connector code may invoke.
 
 `auth.type` chooses the flow; manifest metadata makes the flow runnable; the broker runs it; connector code does not participate in the flow.
 
@@ -33,7 +33,7 @@ The runtime handle is read-only and minimal: it yields a credential, it cannot m
 **`auth.type` is the boundary of the system-managed auth flow.** A connector manifest should not require a reader to infer who owns the OAuth app or where the client secret lives from missing fields. If the broker asks for different user input, runs a different exchange path, or delegates to hosted infrastructure, that is a real type boundary. Two rules follow:
 
 - **Use standard OAuth fields inside direct OAuth flows.** `authorizationEndpoint`, `tokenEndpoint`, `clientId`, and `scope` keep the OAuth/OIDC meanings, spelled in the connector manifest's camelCase convention. PKCE (`code_challenge_method=S256`, RFC 7636) is always-on broker behavior, not a manifest field.
-- **Name Adiabatic deployment models explicitly.** Direct public OAuth and hosted OAuth are product contracts, not OAuth metadata. They must be visible in `auth.type`, not implied by missing fields or provider-specific options.
+- **Name Lamarck deployment models explicitly.** Direct public OAuth and managed providers are product contracts, not OAuth metadata. They must be visible in `auth.type`, not implied by missing fields or provider-specific options.
 
 Worked examples:
 
@@ -42,10 +42,10 @@ Worked examples:
 | `none` | no-credential mechanism | — |
 | `apiKey` | a static user-supplied secret | Bearer / Basic / `x-api-key` are just header formats the connector applies — zero invented config |
 | `oauth2-public` | direct Authorization Code + PKCE using an author-provided public client id | no secret; connector code still receives a generic `oauth2` runtime handle |
-| `oauth2-hosted` | official hosted OAuth ceremony for confidential or provider-specific OAuth | hosted service owns provider metadata, secret handling, refresh behavior, and provider quirks |
+| `managedProvider` | official Lamarck-managed provider access | hosted service owns provider OAuth, provider tokens, API proxying, policy enforcement, and provider quirks |
 | `hmac` (future) | a key+secret that *signs* each request | not expressible as "attach a header" — earns a type when a connector needs it |
 
-The runtime connector handle remains smaller than the manifest contract: all OAuth manifest flows yield `context.auth.type === "oauth2"` plus `getToken()`. The manifest type selects setup/exchange behavior; connector code only consumes the resulting token.
+The runtime connector handle remains smaller than the manifest contract. `oauth2-public` yields `context.auth.type === "oauth2"` plus a provider access token. `managedProvider` yields `context.auth.type === "managedProvider"` plus a Lamarck capability token for Lamarck's provider API. The manifest type selects setup/exchange behavior; connector code only consumes the resulting credential.
 
 ### Who receives credentials
 
@@ -104,7 +104,7 @@ Because keyslots coexist, custody need not be a single global decision — multi
 
 **Forgetting the key.** By design there is no backdoor — any path that recovers without the key *is* a custodian. If the key is truly lost the encrypted secrets are unrecoverable, but the cost is bounded to re-onboarding replaceable credentials, not data loss (only credential values sit under the `vault_key`; integrations, config, and D0 do not). The recovery code is also re-viewable on any already-unlocked device, so loss requires every device gone *and* the code never saved.
 
-## OAuth2 — Direct Public and Hosted
+## OAuth2 Public and Managed Providers
 
 v1 supports one direct OAuth flow: Authorization Code with PKCE for author-owned public clients. The flow is local and has no intermediary: the broker opens the provider authorization URL, receives the redirect on a loopback callback (core `/oauth/callback`, unauthenticated, `state` as CSRF protection), and exchanges the code directly with the provider. The token never transits a third party.
 
@@ -116,7 +116,7 @@ http://localhost:32101/oauth/callback
 http://localhost:32102/oauth/callback
 ```
 
-The workspace core port is chosen from that set and persisted in `.adiabatic/settings.json`. Authors using `oauth2-public` must whitelist all three URLs in the provider app. Providers that cannot accept this receiver profile are not supported by direct OAuth and should use `oauth2-hosted`. The callback stays outside `/api/*`, but still enforces the localhost host restriction and live `state` validation. If the user explicitly rotates the core port later, existing OAuth tokens may continue to refresh, but exact-match providers require updating the registered redirect URI before the next reconnect/re-authorization.
+The workspace core port is chosen from that set and persisted in `.adiabatic/settings.json`. Authors using `oauth2-public` must whitelist all three URLs in the provider app. Providers that cannot accept this receiver profile are not supported by direct OAuth and should use `managedProvider`. The callback stays outside `/api/*`, but still enforces the localhost host restriction and live `state` validation. If the user explicitly rotates the core port later, existing OAuth tokens may continue to refresh, but exact-match providers require updating the registered redirect URI before the next reconnect/re-authorization.
 
 `scope` is an array for YAML ergonomics and is joined to the standard space-delimited string at the broker boundary.
 
@@ -134,20 +134,19 @@ auth:
 
 ```yaml
 auth:
-  type: oauth2-hosted
-  connectEndpoint: https://auth.adiabatic.com/connect/oura
-  scope:
-    - daily
-    - heartrate
+  type: managedProvider
+  providerId: oura
 ```
 
-`oauth2-hosted` is the official hosted OAuth path for confidential apps and provider-specific OAuth. The hosted auth service owns the provider client id, client secret, provider token endpoint, redirect URI, provider review/compliance, refresh token custody, refresh behavior, and the browser OAuth ceremony. The local manifest does not carry provider OAuth metadata. This contract deliberately does **not** include the R1 token-exchange relay model; there is no local authorize + loopback + remote token-only relay mode.
+`managedProvider` is the official Lamarck-managed path for confidential apps and provider-specific OAuth. The hosted service owns the provider client id, client secret, provider token endpoint, redirect URI, provider review/compliance, refresh-token custody, refresh behavior, browser OAuth ceremony, and provider API proxy. The local manifest does not carry provider OAuth metadata or hosted URLs. The core resolves `providerId` through Lamarck system configuration: `auth.lamarck.ai` owns login/provider OAuth, and `api.lamarck.ai` owns provider data APIs.
 
-The local auth module still brokers runtime access. For `oauth2-hosted`, `ConnectorAuthManager` stores the hosted credential binding and may cache short-lived access tokens encrypted in `SecretStore`. The hosted service remains the durable owner of provider refresh tokens. `getToken()` returns a valid access token from the local cache when possible; when the cache is missing or expired, the auth module will call the hosted auth service to obtain a fresh access token and update the encrypted cache. The actual hosted credential/token API is deferred until the official auth service is designed. In the current local build, `oauth2-hosted` validates as a manifest type but cannot be connected yet.
+Provider access tokens issued to Lamarck-managed OAuth clients must not be handed to local connector code. Local connectors may be user-authored or modified by the end user. Once a provider access token enters local runtime, Lamarck can no longer enforce provider policy, endpoint allowlists, rate limits, data-use restrictions, or abuse controls, while provider enforcement may still be applied to Lamarck's official OAuth application. Managed providers therefore expose a Lamarck-controlled provider API/capability, not raw provider OAuth tokens.
 
-Adiabatic's own "Sign in with Google" (used by the future `google_account` keyslot) is the app's own public/installed OAuth client (PKCE + loopback); it is unrelated to the connector shared-secret rule.
+The local auth module still brokers runtime access. For `managedProvider`, `ConnectorAuthManager` stores the managed credential binding and may cache a short-lived Lamarck capability token encrypted in `SecretStore`. The hosted service remains the durable owner of provider refresh tokens and performs provider refresh server-side. `getToken()` returns a valid Lamarck capability token from the local cache when possible; when the cache is missing or expired, the auth module will call Lamarck's hosted auth service to obtain a fresh capability token and update the encrypted cache. The actual managed provider credential/token API is deferred until the hosted service is implemented.
 
-For direct `oauth2-public`, the OAuth2 secret blob holds the access token, refresh token, and expiry together; `auth_credentials.expires_at` duplicates the expiry in clear so the scheduler can decide to refresh without decrypting. For `oauth2-hosted`, the blob holds the hosted binding plus the encrypted short-lived access-token cache, not the provider refresh token. `getToken()` is the lazy-refresh point. Any refresh path must single-flight per credential (one in-flight refresh, other callers await its result).
+Adiabatic's own "Sign in with Google" (used by the future `google_account` keyslot) is the app's own public/installed OAuth client (PKCE + loopback); it is unrelated to connector provider access.
+
+For direct `oauth2-public`, the OAuth2 secret blob holds the provider access token, refresh token, and expiry together; `auth_credentials.expires_at` duplicates the expiry in clear so the scheduler can decide to refresh without decrypting. For `managedProvider`, the blob holds the managed binding plus encrypted short-lived Lamarck capability-token cache, not the provider refresh token. `getToken()` is the lazy-refresh point. Any refresh path must single-flight per credential (one in-flight refresh, other callers await its result).
 
 ### Loopback callback and the capability gate
 
@@ -204,15 +203,15 @@ There is no artificial build-effort phasing: the whole local auth module is buil
 
 **Deferred only by an external dependency** (not by build effort, and not by verification):
 
-- **Hosted OAuth for shared-secret confidential apps** — needs the official auth service and credential handoff protocol. The manifest contract is `oauth2-hosted`, but local connect is stubbed until that service exists.
+- **Managed providers for official connector OAuth** — need the Lamarck hosted auth service, provider token vault, provider API proxy, and local capability-token protocol. The manifest contract is `managedProvider`, but the real hosted service is external to the local module.
 - **`google_account` / `icloud` / `trusted_device` keyslots** — need the `devices` registry / multi-device sync. Additive, zero re-encryption.
 
 The `SecretStore` backend is swappable: an in-memory backend for tests, and a durable backend for production where Electron main supplies the `vault_key` (from the OS keychain) at boot and core encrypts to the system DB. Standalone core with no Electron host takes the `vault_key` from an env var or an ephemeral key — deliberately minimal, with no encrypted-file fallback.
 
 ## Non-Goals
 
-- Hosted OAuth relay / shared-secret confidential clients (future hosted cloud).
-- An OAuth provider registry or catalog — the broker is a generic flow executor and does not know Google, GitHub, or Oura as built-in providers.
+- Implementing the hosted managed-provider service, token vault, provider proxy, or provider registry in local core.
+- A provider registry for direct `oauth2-public` — the local broker is a generic flow executor and does not know Google, GitHub, or Oura as built-in direct providers.
 - The permission model (Guard's responsibility).
 - Being a password manager as a product.
 - Defending against a user or administrator who can inspect process memory or environment variables (inherited from Local Capability Auth).

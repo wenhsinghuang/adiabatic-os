@@ -112,7 +112,7 @@ export class InProcessRunnerSession implements RunnerSession {
       },
       auth: caps.authType === "none"
         ? { type: "none" }
-        : { type: caps.authType as "apiKey" | "oauth2", getToken: () => caps.authGetToken() },
+        : { type: caps.authType as "apiKey" | "oauth2" | "managedProvider", getToken: () => caps.authGetToken() },
       config: opts.config,
       host: opts.host,
       signal: opts.signal,

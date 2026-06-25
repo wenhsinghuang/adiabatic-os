@@ -144,16 +144,16 @@ describe("Secret store and OAuth broker", () => {
     expect(calls).toBe(2);
   });
 
-  test("hosted oauth validates but is not startable in this build", () => {
+  test("managed provider start builds the Lamarck connect URL", () => {
     const manager = new ConnectorAuthManager();
-    expect(() =>
-      manager.startOAuth(integration("hosted-ref"), {
-        type: "oauth2-hosted",
-        connectEndpoint: "https://auth.adiabatic.com/connect/demo",
-      }, {
-        redirectUri: "http://localhost:32123/oauth/callback",
-      })
-    ).toThrow("hosted OAuth is not available in this build");
+    const started = manager.startManagedProvider(integration("managed-ref"), {
+      type: "managedProvider",
+      providerId: "oura",
+    }, {
+      authOrigin: "https://auth.lamarck.ai",
+    });
+    expect(started.authorizationUrl.startsWith("https://auth.lamarck.ai/connect/oura?")).toBe(true);
+    expect(started.redirectUri).toBeUndefined();
   });
 });
 

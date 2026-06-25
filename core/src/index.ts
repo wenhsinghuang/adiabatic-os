@@ -51,6 +51,7 @@ const authSecrets: AuthSecrets = {
 const corePort = Number(process.env.PORT) || 3000;
 const coreHost = process.env.HOST || "127.0.0.1";
 const oauthRedirectUri = `http://localhost:${corePort}/oauth/callback`;
+const managedProviderAuthOrigin = process.env.LAMARCK_AUTH_ORIGIN ?? "https://auth.lamarck.ai";
 const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
   type JsonValue =
     | null
@@ -98,6 +99,7 @@ const connectorSupervisor = new ConnectorSupervisor({
   host: { workspacePath },
   authManager,
   oauthRedirectUri,
+  managedProviderAuthOrigin,
 });
 // Built-ins are bundled catalog entries; installing one is an explicit user
 // action through the same install flow as any other connector package.
@@ -582,11 +584,12 @@ const server = Bun.serve({
         return json({ integration });
       }
 
-      const oauthStartMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/oauth\/start$/);
-      if (oauthStartMatch && method === "POST") {
+      const authStartMatch = path.match(/^\/api\/connectors\/integrations\/([^/]+)\/auth\/start$/)
+        ?? path.match(/^\/api\/connectors\/integrations\/([^/]+)\/oauth\/start$/);
+      if (authStartMatch && method === "POST") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
-        const result = connectorSupervisor.startOAuthIntegration(
-          decodeURIComponent(oauthStartMatch[1]),
+        const result = connectorSupervisor.startAuthIntegration(
+          decodeURIComponent(authStartMatch[1]),
           {
             redirectUri: oauthRedirectUri,
           },
@@ -594,14 +597,16 @@ const server = Bun.serve({
         return json(result);
       }
 
-      const oauthAttemptMatch = path.match(
+      const authAttemptMatch = path.match(
+        /^\/api\/connectors\/integrations\/([^/]+)\/auth\/attempts\/([^/]+)$/,
+      ) ?? path.match(
         /^\/api\/connectors\/integrations\/([^/]+)\/oauth\/attempts\/([^/]+)$/,
       );
-      if (oauthAttemptMatch && method === "GET") {
+      if (authAttemptMatch && method === "GET") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
         const result = connectorSupervisor.getOAuthAttempt(
-          decodeURIComponent(oauthAttemptMatch[1]),
-          decodeURIComponent(oauthAttemptMatch[2]),
+          decodeURIComponent(authAttemptMatch[1]),
+          decodeURIComponent(authAttemptMatch[2]),
         );
         return json(result);
       }

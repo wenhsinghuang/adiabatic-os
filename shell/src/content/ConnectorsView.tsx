@@ -13,13 +13,13 @@ import {
   connectConnectorIntegration,
   createConnectorIntegration,
   deleteConnectorIntegration,
-  getConnectorOAuthAttempt,
+  getConnectorAuthAttempt,
   installConnector,
   removeConnector,
   requestConnectorRequirement,
   restartConnectorIntegration,
   runConnectorIntegration,
-  startConnectorOAuth,
+  startConnectorAuth,
   updateConnectorIntegration,
   type ConnectorIntegrationView,
   type ConnectorRequirementView,
@@ -36,14 +36,14 @@ import {
 import styles from "./ConnectorsView.module.css";
 
 type Act = (key: string, label: string, fn: () => Promise<unknown>) => Promise<void>;
-type OAuthPendingAttempt = { attemptId: string };
-type TrackOAuthAttempt = (integrationId: string, attemptId: string) => void;
-type DismissOAuthAttempt = (integrationId: string) => void;
+type AuthPendingAttempt = { attemptId: string };
+type TrackAuthAttempt = (integrationId: string, attemptId: string) => void;
+type DismissAuthAttempt = (integrationId: string) => void;
 
 export function ConnectorsView({ onOpenCatalog }: { onOpenCatalog?: () => void }) {
   const { connectors, available, loading, error, refresh } = useConnectors();
   const [busy, setBusy] = useState<Record<string, string>>({});
-  const [oauthPending, setOauthPending] = useState<Record<string, OAuthPendingAttempt>>({});
+  const [authPending, setAuthPending] = useState<Record<string, AuthPendingAttempt>>({});
   const [actionError, setActionError] = useState<string | null>(null);
 
   const act = useCallback<Act>(
@@ -66,16 +66,16 @@ export function ConnectorsView({ onOpenCatalog }: { onOpenCatalog?: () => void }
     [refresh],
   );
 
-  const trackOAuthAttempt = useCallback<TrackOAuthAttempt>((integrationId, attemptId) => {
-    setOauthPending((prev) => ({ ...prev, [integrationId]: { attemptId } }));
+  const trackAuthAttempt = useCallback<TrackAuthAttempt>((integrationId, attemptId) => {
+    setAuthPending((prev) => ({ ...prev, [integrationId]: { attemptId } }));
   }, []);
 
-  const dismissOAuthAttempt = useCallback<DismissOAuthAttempt>((integrationId) => {
-    setOauthPending((prev) => clearOAuthPendingAttempt(prev, integrationId));
+  const dismissAuthAttempt = useCallback<DismissAuthAttempt>((integrationId) => {
+    setAuthPending((prev) => clearAuthPendingAttempt(prev, integrationId));
   }, []);
 
   useEffect(() => {
-    const entries = Object.entries(oauthPending);
+    const entries = Object.entries(authPending);
     if (entries.length === 0) return;
 
     let stopped = false;
@@ -88,11 +88,11 @@ export function ConnectorsView({ onOpenCatalog }: { onOpenCatalog?: () => void }
         await Promise.all(
           entries.map(async ([integrationId, pending]) => {
             try {
-              const result = await getConnectorOAuthAttempt(integrationId, pending.attemptId);
+              const result = await getConnectorAuthAttempt(integrationId, pending.attemptId);
               if (stopped || result.status === "pending") return;
 
-              setOauthPending((prev) =>
-                clearOAuthPendingAttempt(prev, integrationId, pending.attemptId),
+              setAuthPending((prev) =>
+                clearAuthPendingAttempt(prev, integrationId, pending.attemptId),
               );
 
               if (result.status === "connected") {
@@ -101,11 +101,11 @@ export function ConnectorsView({ onOpenCatalog }: { onOpenCatalog?: () => void }
                 return;
               }
 
-              setActionError(result.error ?? `OAuth ${result.status}`);
+              setActionError(result.error ?? `Auth ${result.status}`);
             } catch (err) {
               if (stopped) return;
-              setOauthPending((prev) =>
-                clearOAuthPendingAttempt(prev, integrationId, pending.attemptId),
+              setAuthPending((prev) =>
+                clearAuthPendingAttempt(prev, integrationId, pending.attemptId),
               );
               setActionError(err instanceof Error ? err.message : String(err));
             }
@@ -125,7 +125,7 @@ export function ConnectorsView({ onOpenCatalog }: { onOpenCatalog?: () => void }
       stopped = true;
       window.clearInterval(interval);
     };
-  }, [oauthPending, refresh]);
+  }, [authPending, refresh]);
 
   const groups = useMemo(() => {
     const byConnector = new Map<string, ConnectorIntegrationView[]>();
@@ -216,10 +216,10 @@ export function ConnectorsView({ onOpenCatalog }: { onOpenCatalog?: () => void }
               installable={reinstallable.has(group.connectorId)}
               index={index}
               busy={busy}
-              oauthPending={oauthPending}
+              authPending={authPending}
               onAct={act}
-              onTrackOAuthAttempt={trackOAuthAttempt}
-              onDismissOAuthAttempt={dismissOAuthAttempt}
+              onTrackAuthAttempt={trackAuthAttempt}
+              onDismissAuthAttempt={dismissAuthAttempt}
             />
           ))
         )}
@@ -243,10 +243,10 @@ interface ConnectorCardProps {
   installable: boolean;
   index: number;
   busy: Record<string, string>;
-  oauthPending: Record<string, OAuthPendingAttempt>;
+  authPending: Record<string, AuthPendingAttempt>;
   onAct: Act;
-  onTrackOAuthAttempt: TrackOAuthAttempt;
-  onDismissOAuthAttempt: DismissOAuthAttempt;
+  onTrackAuthAttempt: TrackAuthAttempt;
+  onDismissAuthAttempt: DismissAuthAttempt;
 }
 
 function ConnectorCard({
@@ -255,10 +255,10 @@ function ConnectorCard({
   installable,
   index,
   busy,
-  oauthPending,
+  authPending,
   onAct,
-  onTrackOAuthAttempt,
-  onDismissOAuthAttempt,
+  onTrackAuthAttempt,
+  onDismissAuthAttempt,
 }: ConnectorCardProps) {
   const head = integrations[0];
   const aggregate = connectorAggregateState(integrations);
@@ -421,10 +421,10 @@ function ConnectorCard({
               trusted={trusted}
               interactive={interactive}
               busy={busy}
-              pendingOAuthAttempt={oauthPending[c.id]}
+              pendingAuthAttempt={authPending[c.id]}
               onAct={onAct}
-              onTrackOAuthAttempt={onTrackOAuthAttempt}
-              onDismissOAuthAttempt={onDismissOAuthAttempt}
+              onTrackAuthAttempt={onTrackAuthAttempt}
+              onDismissAuthAttempt={onDismissAuthAttempt}
             />
           ))}
         </div>
@@ -438,10 +438,10 @@ interface IntegrationRowProps {
   trusted: boolean;
   interactive: boolean;
   busy: Record<string, string>;
-  pendingOAuthAttempt?: OAuthPendingAttempt;
+  pendingAuthAttempt?: AuthPendingAttempt;
   onAct: Act;
-  onTrackOAuthAttempt: TrackOAuthAttempt;
-  onDismissOAuthAttempt: DismissOAuthAttempt;
+  onTrackAuthAttempt: TrackAuthAttempt;
+  onDismissAuthAttempt: DismissAuthAttempt;
 }
 
 function IntegrationRow({
@@ -449,10 +449,10 @@ function IntegrationRow({
   trusted,
   interactive,
   busy,
-  pendingOAuthAttempt,
+  pendingAuthAttempt,
   onAct,
-  onTrackOAuthAttempt,
-  onDismissOAuthAttempt,
+  onTrackAuthAttempt,
+  onDismissAuthAttempt,
 }: IntegrationRowProps) {
   const state = channelState(c);
   const needs = setupNeeds(c);
@@ -599,17 +599,15 @@ function IntegrationRow({
               {busy[c.id] === "connect" ? "connecting…" : "Connect"}
             </button>
           </form>
-        ) : c.authHostedDisabled ? (
-          <div className={styles.oauthNote}>Hosted OAuth is not available in this build.</div>
-        ) : c.authType.startsWith("oauth2-") ? (
+        ) : isBrowserAuthType(c.authType) ? (
           <form
             className={styles.oauthBox}
             onSubmit={(event) => {
               event.preventDefault();
-              onAct(c.id, "oauth", async () => {
-                const started = await startConnectorOAuth(c.id);
+              onAct(c.id, "auth", async () => {
+                const started = await startConnectorAuth(c.id);
                 await openAuthorizationUrl(started.authorizationUrl);
-                onTrackOAuthAttempt(c.id, started.attemptId);
+                onTrackAuthAttempt(c.id, started.attemptId);
               });
             }}
           >
@@ -618,22 +616,22 @@ function IntegrationRow({
                 redirect <span className={styles.redirectUri}>{c.oauthRedirectUri}</span>
               </div>
             )}
-            {pendingOAuthAttempt && (
+            {pendingAuthAttempt && (
               <div className={styles.oauthNote}>authorization pending in browser</div>
             )}
             <button className={styles.primaryBtn} disabled={cardBusy}>
-              {busy[c.id] === "oauth"
+              {busy[c.id] === "auth"
                 ? "opening…"
-                : pendingOAuthAttempt
+                : pendingAuthAttempt
                   ? "Try Again"
                   : "Connect Account"}
             </button>
-            {pendingOAuthAttempt && (
+            {pendingAuthAttempt && (
               <button
                 type="button"
                 className={styles.ghostBtn}
                 disabled={cardBusy}
-                onClick={() => onDismissOAuthAttempt(c.id)}
+                onClick={() => onDismissAuthAttempt(c.id)}
               >
                 Dismiss
               </button>
@@ -771,11 +769,15 @@ async function openAuthorizationUrl(url: string): Promise<void> {
   window.open(url, "_blank", "noopener");
 }
 
-function clearOAuthPendingAttempt(
-  attempts: Record<string, OAuthPendingAttempt>,
+function isBrowserAuthType(type: ConnectorIntegrationView["authType"]): boolean {
+  return type === "oauth2-public" || type === "managedProvider";
+}
+
+function clearAuthPendingAttempt(
+  attempts: Record<string, AuthPendingAttempt>,
   integrationId: string,
   attemptId?: string,
-): Record<string, OAuthPendingAttempt> {
+): Record<string, AuthPendingAttempt> {
   if (!attempts[integrationId]) return attempts;
   if (attemptId && attempts[integrationId]?.attemptId !== attemptId) return attempts;
   const next = { ...attempts };

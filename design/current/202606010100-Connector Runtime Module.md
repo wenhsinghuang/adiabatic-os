@@ -746,7 +746,7 @@ Auth is system-managed. Connectors declare standardized credential or account re
 none
 apiKey
 oauth2-public
-oauth2-hosted
+managedProvider
 ```
 
 Secret material belongs to the unified auth/secrets module, not to `connectors/<connector_id>/` and not to connector-owned files.
@@ -776,24 +776,31 @@ auth:
 
 ```yaml
 auth:
-  type: oauth2-hosted
-  connectEndpoint: https://auth.adiabatic.com/connect/oura
-  scope:
-    - daily
-    - heartrate
+  type: managedProvider
+  providerId: oura
 ```
 
-The OAuth manifest type selects the setup/exchange flow. `oauth2-public` is the only direct OAuth flow: author-owned public client, local loopback receiver, and PKCE always on. `oauth2-hosted` is the official hosted OAuth contract for confidential or provider-specific OAuth; provider OAuth metadata, client secrets, refresh-token custody, and provider quirks live in the hosted auth service, not the local manifest. See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
+The auth manifest type selects the setup/exchange flow. `oauth2-public` is the only direct OAuth flow: author-owned public client, local loopback receiver, and PKCE always on. `managedProvider` is the official Lamarck-managed provider contract for confidential or provider-specific OAuth; provider OAuth metadata, client secrets, refresh-token custody, provider quirks, and provider API proxying live in Lamarck hosted services, not the local manifest. See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
 
-Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer. All OAuth manifest types normalize to the same runtime handle: `context.auth.type === "oauth2"` plus `getToken()`.
+Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer. `apiKey` returns a local user secret, `oauth2` returns a direct public OAuth provider token, and `managedProvider` returns a Lamarck capability token for Lamarck's provider API.
 
 ```ts
 type ConnectorAuthHandle =
   | { type: "none" }
   | {
-      type: "apiKey" | "oauth2";
+      type: "apiKey" | "oauth2" | "managedProvider";
       getToken(): Promise<string>;
     };
+```
+
+Managed provider connector code calls Lamarck's backend API, not the upstream provider with a provider OAuth token:
+
+```ts
+const token = await context.auth.getToken();
+
+await fetch("https://api.lamarck.ai/providers/oura/v1/daily", {
+  headers: { Authorization: `Bearer ${token}` },
+});
 ```
 
 Prefer capability methods like `auth.getToken()` over injecting `credentials.accessToken`.

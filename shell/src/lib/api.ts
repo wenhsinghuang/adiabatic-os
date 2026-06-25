@@ -229,7 +229,7 @@ export type ConnectorAuthType =
   | "none"
   | "apiKey"
   | "oauth2-public"
-  | "oauth2-hosted";
+  | "managedProvider";
 
 export interface ConnectorRequirementView {
   id: string;
@@ -266,7 +266,6 @@ export interface ConnectorIntegrationView {
   setupStatus: "setup" | "ready";
   packageTrust: ConnectorTrust;
   authType: ConnectorAuthType;
-  authHostedDisabled?: boolean;
   authStatus?: string;
   authAttention?: "refresh_failed" | "redirect_uri_changed";
   authReady: boolean;
@@ -419,7 +418,7 @@ export function connectConnectorIntegration(
 export interface OAuthStartResult {
   authorizationUrl: string;
   attemptId: string;
-  redirectUri: string;
+  redirectUri?: string;
   expiresAt: number;
 }
 
@@ -431,18 +430,18 @@ export interface OAuthAttemptResult {
   error?: string;
 }
 
-export function startConnectorOAuth(integrationId: string): Promise<OAuthStartResult> {
-  return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}/oauth/start`, {
+export function startConnectorAuth(integrationId: string): Promise<OAuthStartResult> {
+  return request(`/api/connectors/integrations/${encodeURIComponent(integrationId)}/auth/start`, {
     method: "POST",
   });
 }
 
-export function getConnectorOAuthAttempt(
+export function getConnectorAuthAttempt(
   integrationId: string,
   attemptId: string,
 ): Promise<OAuthAttemptResult> {
   return request(
-    `/api/connectors/integrations/${encodeURIComponent(integrationId)}/oauth/attempts/${encodeURIComponent(attemptId)}`,
+    `/api/connectors/integrations/${encodeURIComponent(integrationId)}/auth/attempts/${encodeURIComponent(attemptId)}`,
   );
 }
 

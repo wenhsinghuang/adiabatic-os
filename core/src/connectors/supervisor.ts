@@ -28,6 +28,7 @@ import {
 import { validateConnectorSchedule } from "./schedule";
 import {
   isDirectOAuthAuthSpec,
+  isManagedProviderAuthSpec,
   isOAuthAuthSpec,
   runtimeAuthType,
 } from "./types";
@@ -87,7 +88,10 @@ export interface ConnectorSupervisorOptions {
   // child is killed and the operation fails.
   runnerCommandTimeoutMs?: number;
   oauthRedirectUri?: string;
+  managedProviderAuthOrigin?: string;
 }
+
+const DEFAULT_MANAGED_PROVIDER_AUTH_ORIGIN = "https://auth.lamarck.ai";
 
 const MANUAL_TRUST: ConnectorPackageTrust = {
   status: "custom",
@@ -107,6 +111,7 @@ export class ConnectorSupervisor {
   private host: ConnectorHostContext;
   private registry: WorkspaceConnectorRegistry;
   private oauthRedirectUri: string | undefined;
+  private managedProviderAuthOrigin: string;
 
   constructor(opts: ConnectorSupervisorOptions) {
     this.guard = opts.guard;
@@ -117,6 +122,7 @@ export class ConnectorSupervisor {
     this.runnerKillGraceMs = opts.runnerKillGraceMs;
     this.runnerCommandTimeoutMs = opts.runnerCommandTimeoutMs;
     this.oauthRedirectUri = opts.oauthRedirectUri;
+    this.managedProviderAuthOrigin = opts.managedProviderAuthOrigin ?? DEFAULT_MANAGED_PROVIDER_AUTH_ORIGIN;
     this.registry = new WorkspaceConnectorRegistry({
       systemDb: opts.systemDb,
       officialCatalog: opts.officialCatalog ?? [],
@@ -255,8 +261,8 @@ export class ConnectorSupervisor {
     if (auth.type === "none") {
       throw new Error(`Connector ${existing.connectorId} does not require auth`);
     }
-    if (isOAuthAuthSpec(auth)) {
-      throw new Error(`Connector ${existing.connectorId} uses oauth2; use the browser connect flow`);
+    if (isOAuthAuthSpec(auth) || isManagedProviderAuthSpec(auth)) {
+      throw new Error(`Connector ${existing.connectorId} uses browser auth; use the browser connect flow`);
     }
     if (!token || !token.trim()) {
       throw new Error("Connector apiKey connect requires a non-empty token");
@@ -286,6 +292,30 @@ export class ConnectorSupervisor {
       throw new Error(`Connector ${existing.connectorId} is not supported on ${this.platform}`);
     }
     return this.authManager.startOAuth(existing, auth, input);
+  }
+
+  startAuthIntegration(
+    instanceId: string,
+    input: { redirectUri: string },
+  ): OAuthStartResult {
+    const existing = this.store.get(instanceId);
+    if (!existing) {
+      throw new Error(`Connector integration not found: ${instanceId}`);
+    }
+    const registration = this.requireRegistration(existing.connectorId);
+    const auth = registration.manifest.auth ?? { type: "none" };
+    if (!isPlatformSupported(registration.manifest, this.platform)) {
+      throw new Error(`Connector ${existing.connectorId} is not supported on ${this.platform}`);
+    }
+    if (isDirectOAuthAuthSpec(auth)) {
+      return this.authManager.startOAuth(existing, auth, input);
+    }
+    if (isManagedProviderAuthSpec(auth)) {
+      return this.authManager.startManagedProvider(existing, auth, {
+        authOrigin: this.managedProviderAuthOrigin,
+      });
+    }
+    throw new Error(`Connector ${existing.connectorId} does not use browser auth`);
   }
 
   getOAuthAttempt(instanceId: string, attemptId: string): OAuthAttemptView {
@@ -456,7 +486,6 @@ export class ConnectorSupervisor {
     supported: boolean;
     packageTrust: ConnectorPackageTrust["status"];
     authType: string;
-    authHostedDisabled?: boolean;
     authStatus?: string;
     authAttention?: "refresh_failed" | "redirect_uri_changed";
     authReady: boolean;
@@ -475,7 +504,6 @@ export class ConnectorSupervisor {
         : [];
       const authSpec = registration?.manifest.auth ?? { type: "none" };
       const authType = authSpec.type;
-      const authHostedDisabled = authSpec.type === "oauth2-hosted";
       const credential = integration.authRef ? this.authManager.credential(integration.authRef) : undefined;
       const storedRedirectUri = typeof credential?.metadata?.redirect_uri === "string"
         ? credential.metadata.redirect_uri
@@ -512,7 +540,6 @@ export class ConnectorSupervisor {
         supported: registration ? isPlatformSupported(registration.manifest, this.platform) : false,
         packageTrust: registration?.trust.status ?? "missing",
         authType,
-        authHostedDisabled,
         authStatus: credential?.status,
         authAttention,
         authReady,

@@ -26,11 +26,14 @@ const CONNECTOR_PLATFORMS = new Set<ConnectorPlatform>([
 ]);
 const OAUTH_AUTH_TYPES = new Set([
   "oauth2-public",
-  "oauth2-hosted",
 ]);
-const AUTH_TYPES = new Set(["none", "apiKey", ...OAUTH_AUTH_TYPES]);
+const AUTH_TYPES = new Set(["none", "apiKey", "managedProvider", ...OAUTH_AUTH_TYPES]);
 const CONFIG_FIELD_TYPES = new Set<ConnectorConfigFieldType>(["string", "number", "boolean"]);
-const REMOVED_OAUTH_AUTH_TYPES = new Set(["oauth2-byo-public", "oauth2-byo-confidential"]);
+const REMOVED_OAUTH_AUTH_TYPES = new Set([
+  "oauth2-hosted",
+  "oauth2-byo-public",
+  "oauth2-byo-confidential",
+]);
 
 export function validateConnectorId(id: string): void {
   if (!CONNECTOR_ID_PATTERN.test(id)) {
@@ -170,26 +173,22 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
   const rawAuth = auth as ConnectorAuthSpec & Record<string, unknown>;
   if (rawAuth.type === "oauth2") {
     throw new Error(
-      `Connector ${connectorId} uses legacy oauth2 auth; use oauth2-public or oauth2-hosted`,
+      `Connector ${connectorId} uses legacy oauth2 auth; use oauth2-public or managedProvider`,
     );
   }
   if (REMOVED_OAUTH_AUTH_TYPES.has(rawAuth.type as string)) {
     throw new Error(
-      `Connector ${connectorId} uses removed ${rawAuth.type} auth; use oauth2-public or oauth2-hosted`,
+      `Connector ${connectorId} uses removed ${rawAuth.type} auth; use oauth2-public or managedProvider`,
     );
   }
   if (!AUTH_TYPES.has(auth.type)) {
     throw new Error(`Connector ${connectorId} has invalid auth type: ${(auth as { type?: string }).type}`);
   }
-  if (!OAUTH_AUTH_TYPES.has(auth.type)) {
-    return;
-  }
-
-  validateOAuthScope(connectorId, rawAuth);
-
-  if (auth.type === "oauth2-hosted") {
-    validateHttpsAuthField(connectorId, rawAuth, "connectEndpoint", auth.type);
+  if (auth.type === "managedProvider") {
+    validateProviderIdAuthField(connectorId, rawAuth);
     forbidAuthFields(connectorId, rawAuth, auth.type, [
+      "connectEndpoint",
+      "scope",
       "authorizationEndpoint",
       "tokenEndpoint",
       "clientId",
@@ -197,13 +196,29 @@ function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
     ]);
     return;
   }
+  if (!OAUTH_AUTH_TYPES.has(auth.type)) {
+    return;
+  }
+
+  validateOAuthScope(connectorId, rawAuth);
 
   validateHttpsAuthField(connectorId, rawAuth, "authorizationEndpoint", auth.type);
   validateHttpsAuthField(connectorId, rawAuth, "tokenEndpoint", auth.type);
 
   if (auth.type === "oauth2-public") {
     validateRequiredStringAuthField(connectorId, rawAuth, "clientId", auth.type);
-    forbidAuthFields(connectorId, rawAuth, auth.type, ["tokenEndpointAuthMethod", "connectEndpoint"]);
+    forbidAuthFields(connectorId, rawAuth, auth.type, [
+      "tokenEndpointAuthMethod",
+      "connectEndpoint",
+      "providerId",
+    ]);
+  }
+}
+
+function validateProviderIdAuthField(connectorId: string, auth: Record<string, unknown>): void {
+  const value = auth.providerId;
+  if (typeof value !== "string" || !CONNECTOR_ID_PATTERN.test(value)) {
+    throw new Error(`Connector ${connectorId} managedProvider auth requires a valid providerId`);
   }
 }
 

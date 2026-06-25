@@ -21,36 +21,33 @@ export type ConnectorOAuthPublicAuthSpec = {
   scope?: string[];
 };
 
-export type ConnectorOAuthHostedAuthSpec = {
-  type: "oauth2-hosted";
-  connectEndpoint: string;
-  scope?: string[];
+export type ConnectorManagedProviderAuthSpec = {
+  type: "managedProvider";
+  providerId: string;
 };
 
 export type ConnectorOAuthDirectAuthSpec = ConnectorOAuthPublicAuthSpec;
 
-export type ConnectorOAuthAuthSpec =
-  | ConnectorOAuthDirectAuthSpec
-  | ConnectorOAuthHostedAuthSpec;
+export type ConnectorOAuthAuthSpec = ConnectorOAuthDirectAuthSpec;
 
-export type ConnectorRuntimeAuthType = "none" | "apiKey" | "oauth2";
+export type ConnectorRuntimeAuthType = "none" | "apiKey" | "oauth2" | "managedProvider";
 
 export type ConnectorAuthSpec =
   | { type: "none" }
   | { type: "apiKey"; label?: string }
-  | ConnectorOAuthAuthSpec;
+  | ConnectorOAuthAuthSpec
+  | ConnectorManagedProviderAuthSpec;
 
 export function isOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthAuthSpec {
-  return auth.type === "oauth2-public"
-    || auth.type === "oauth2-hosted";
+  return auth.type === "oauth2-public";
 }
 
 export function isDirectOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthDirectAuthSpec {
   return auth.type === "oauth2-public";
 }
 
-export function isHostedOAuthAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorOAuthHostedAuthSpec {
-  return auth.type === "oauth2-hosted";
+export function isManagedProviderAuthSpec(auth: ConnectorAuthSpec): auth is ConnectorManagedProviderAuthSpec {
+  return auth.type === "managedProvider";
 }
 
 export function isDirectOAuthAuthType(type: string): boolean {
@@ -59,6 +56,7 @@ export function isDirectOAuthAuthType(type: string): boolean {
 
 export function runtimeAuthType(auth: ConnectorAuthSpec): ConnectorRuntimeAuthType {
   if (auth.type === "none" || auth.type === "apiKey") return auth.type;
+  if (auth.type === "managedProvider") return "managedProvider";
   return "oauth2";
 }
 
@@ -122,7 +120,7 @@ export interface BoundConnectorGuard {
 export type ConnectorAuthHandle =
   | { type: "none" }
   | {
-      type: "apiKey" | "oauth2";
+      type: "apiKey" | "oauth2" | "managedProvider";
       getToken(): Promise<string>;
     };
 
