@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && npm run build:electron",
-    "build:electron": "node ../scripts/build-electron-main.mjs",
+    "build:electron": "node ../../scripts/build-electron-main.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "electron": "npm run build:electron && electron .",

@@ -83,7 +83,7 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Status: v0.1 local substrate exists — manifest/framework, `connectors/<id>/` install/remove, explicit bundled catalog install, Source Console/Catalog UI, hash trust gate, runner isolation, scheduler, and `app-commits` package.
   - Done: `app-commits` verified end-to-end (install → approve → watch run → `app.commit` in D0). Payload finalized: `{ appId, commitSha, authorName, authorEmail, message }` (full message, no derivable fields).
   - built-in: Terminal connector, after capture/privacy policy is explicit.
-  - Official trust catalog: generate hashes from `template/connectors/`, publish signed/R2 catalog, load/cache at runtime, and auto-classify matching packages as `official`.
+  - Official trust catalog: generate hashes from `desktop/template/connectors/`, publish signed/R2 catalog, load/cache at runtime, and auto-classify matching packages as `official`.
   - Update/reinstall flow: detect newer bundled/official package hashes, preserve runtime state, never overwrite edited packages silently.
   - Auth/secrets: replace temporary API-key token path with unified secret store and OAuth browser flow.
   - Push / webhook runtime mode: a 4th mode beyond watch/poll/import where the provider pushes events to a public receive endpoint (see Hosted relay / edge). Only needed for inbound-webhook-only services (e.g. Stripe). Outbound realtime — long polling, WebSocket, Socket Mode (Telegram getUpdates, Slack Socket Mode) — is already covered by `watch` and needs no endpoint; webhook-capable services fall back to watch/poll until the relay exists.
@@ -93,7 +93,7 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
 ### Production
 
 - [ ] CI/CD and R2 artifact push
-  - GitHub Actions compiles `template/connectors/` packages into the official connector catalog.
+  - GitHub Actions compiles `desktop/template/connectors/` packages into the official connector catalog.
   - Publish official connector catalog/package hashes to R2 for runtime official trust lookup.
   - Placeholder official catalog URL until CI publishes the real R2 artifact:
     `https://r2-placeholder.adiabatic-os.invalid/connectors/official-catalog.json`
@@ -123,4 +123,3 @@ Live backlog. Keep this high-level; expand only when a direction is actively bei
   - Requirements selected from `manifest.platforms[device.platform]`
   - Scheduler runs only integrations assigned to the current device
   - Until then: runtime target is the implicit current host; do not add the table/column early
-

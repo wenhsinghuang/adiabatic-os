@@ -14,10 +14,9 @@ const include = [
   "package.json",
   "bun.lock",
   "package-lock.json",
-  "core",
-  "shell",
-  "template",
+  "desktop",
   "scripts/package-os-patch.mjs",
+  "scripts/build-electron-main.mjs",
 ];
 
 const args = [

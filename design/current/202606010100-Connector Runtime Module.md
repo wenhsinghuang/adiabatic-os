@@ -182,7 +182,7 @@ Installing a connector means adding `connectors/<connector_id>/`. Removing a con
 Built-in connectors are distribution material, not a separate runtime category: bundled catalog entries that can be installed without a download. The console lists them as available; installing one is an explicit user action through the same install flow as any other connector package:
 
 ```text
-template/connectors/app-commits -> workspace/connectors/app-commits   (on explicit install)
+desktop/template/connectors/app-commits -> workspace/connectors/app-commits   (on explicit install)
 ```
 
 Nothing installs implicitly — there is no boot-time auto-materialization, so removal is final by construction and a removed built-in simply returns to the available list for explicit reinstall. Every install is recorded as `connector.installed { connector_id, package_hash }`; D0 keeps the full install/remove history. The copy is staged and renamed into place so a crash cannot leave a half-written package occupying the connector's directory.
@@ -1128,10 +1128,10 @@ The second built-in should be `terminal`, after capture policy is explicit:
 
 ## Current Implementation
 
-The connector system lives in `core/src/connectors/`:
+The connector system lives in `desktop/core/src/connectors/`:
 
 ```text
-core/src/connectors/
+desktop/core/src/connectors/
   manifest.ts       parse and validate connector.yaml / connector.json
   registry.ts       package hashing, official/custom/modified trust classification, custom approval records
   supervisor.ts     register, enable, launch, abort, and list connector runs

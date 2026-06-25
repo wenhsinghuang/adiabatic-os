@@ -4,7 +4,7 @@ Status: current refactor decision
 
 This is a substrate-level refactor, not an auth feature. Auth is one beneficiary; the problem predates it.
 
-**This doc is the single canonical owner of storage layout** — which table lives in which database (`data.db` vs `system.db`). Other docs (the D0/D1 schema doc, Connector Runtime Module) describe table *shapes* and *semantics* but defer the *placement* question here; the literal definitions live in `core/src/db.ts`. When the boundary changes, update this doc, not the restatements.
+**This doc is the single canonical owner of storage layout** — which table lives in which database (`data.db` vs `system.db`). Other docs (the D0/D1 schema doc, Connector Runtime Module) describe table *shapes* and *semantics* but defer the *placement* question here; the literal definitions live in `desktop/core/src/db.ts`. When the boundary changes, update this doc, not the restatements.
 
 ## Context
 

@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = resolve(root, "shell/dist-electron");
+const shellDir = resolve(root, "desktop/shell");
+const outDir = resolve(shellDir, "dist-electron");
 
 await mkdir(outDir, { recursive: true });
 await esbuild.build({
-  entryPoints: [resolve(root, "shell/electron/main.ts")],
+  entryPoints: [resolve(shellDir, "electron/main.ts")],
   outfile: resolve(outDir, "main.cjs"),
   bundle: true,
   platform: "node",
@@ -16,4 +17,4 @@ await esbuild.build({
   target: "node20",
   external: ["electron"],
 });
-await cp(resolve(root, "shell/electron/preload.cjs"), resolve(outDir, "preload.cjs"));
+await cp(resolve(shellDir, "electron/preload.cjs"), resolve(outDir, "preload.cjs"));

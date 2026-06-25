@@ -2,9 +2,9 @@
 FROM oven/bun:1 AS shell-build
 
 WORKDIR /app/shell
-COPY shell/package.json ./
+COPY desktop/shell/package.json ./
 RUN bun install --ignore-scripts
-COPY shell/ ./
+COPY desktop/shell/ ./
 COPY tsconfig.json /app/tsconfig.json
 RUN bunx vite build
 
@@ -14,7 +14,7 @@ FROM node:20-slim AS node-build
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/core
-COPY core/package.json ./
+COPY desktop/core/package.json ./
 RUN npm install
 
 # Install AI CLI tools globally (while npm works natively)
@@ -33,12 +33,12 @@ COPY --from=node-build /usr/local /usr/local
 COPY tsconfig.json ./
 
 # Copy pre-built core node_modules (includes compiled node-pty)
-COPY --from=node-build /app/core/node_modules core/node_modules
-COPY core/ core/
+COPY --from=node-build /app/core/node_modules desktop/core/node_modules
+COPY desktop/ desktop/
 
 # Copy built shell assets
 COPY --from=shell-build /app/shell/dist /app/shell-dist
 
 EXPOSE 3000
 
-ENTRYPOINT ["bun", "run", "core/src/index.ts", "/workspace"]
+ENTRYPOINT ["bun", "run", "desktop/core/src/index.ts", "/workspace"]

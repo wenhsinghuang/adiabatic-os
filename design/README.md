@@ -11,7 +11,7 @@ Read these to understand the system as it is designed today. Every doc carries a
 | [Verb-First Personal Substrate](current/202605080000-Verb-First%20Personal%20Substrate.md) | The project's self-definition: D0-first, user-owned, re-derivable projections, evolvability contract |
 | [Why Now](current/202603050000-Why%20Now%20-%20First%20Principles%20Analysis.md) | Philosophy: No-Abstraction principle, AI economics, Guard rationale, vendor lock-in |
 | [Design Pattern: Native Primitives, Guard Boundaries, KISS](current/202605110000-Design%20Pattern%20-%20Native%20Primitives%2C%20Guard%20Boundaries%2C%20KISS.md) | The recurring design bias and when abstraction is justified |
-| [D0 D1 Schema Final](current/202602140900-D0%20D1%20Schema%20Final.md) | The one-way-door substrate schema (verified against `core/src/db.ts`) |
+| [D0 D1 Schema Final](current/202602140900-D0%20D1%20Schema%20Final.md) | The one-way-door substrate schema (verified against `desktop/core/src/db.ts`) |
 | [D0 Source Boundary](current/202605130000-D0%20Source%20Boundary%20-%20Guard%20and%20Connectors.md) | Guard owns *how* events are written; connectors own *why/when/what* |
 | [Local Capability Auth](current/202606010000-Local%20Capability%20Auth.md) | Localhost is not a security boundary: core/bridge tokens, query-only reads |
 | [Connector Runtime Module](current/202606010100-Connector%20Runtime%20Module.md) | **Active workstream.** Package/integration split, hash trust, capability handles, watch/poll/import |

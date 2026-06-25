@@ -192,7 +192,7 @@ Status: canon, append-only log. Old entries are never rewritten; corrections arr
 | DD3 (chunks/embeddings) | ⏸ deferred | 被 Retrieval Memory Module Requirements 重新定位：retrieval 是 replaceable derived layer，embedding 只是一種實作 |
 | DD4 (app 三層隔離) | ✅ 部分成立 | Data isolation 由 Guard enforce ✓。注意：connector 走相反路線 — hash trust + human approval，不 sandbox（見 Connector Runtime Module） |
 | DD5 (code 在 FS, data 在 DB) | ✅ 成立 | |
-| DD6 (Agent Skills 取代 CLAUDE.md) | ❌ dead | 沒實作也不打算。`core/src/claude-md.ts` 生成 CLAUDE.md 就是現行機制 |
+| DD6 (Agent Skills 取代 CLAUDE.md) | ❌ dead | 沒實作也不打算。`desktop/core/src/claude-md.ts` 生成 CLAUDE.md 就是現行機制 |
 | DD7 (D0/D1/D2 三層) | ✅ 成立 | 核心 invariant，由 Verb-First doc 強化 |
 | DD8 (working tree pattern) | ✅ 成立 | 已實作（`working-tree.ts`） |
 | DD9 (Bun Worker sandbox) | ⚠️ 演化 | App 實際走 WebContainer bridge + capability token（見 Local Capability Auth）；per-app hard isolation 仍是 future work |

@@ -128,12 +128,12 @@ flowchart LR
 
 | Part | What it does | Current implementation |
 |---|---|---|
-| **Core** | Local HTTP runtime, DB access, app loader, connector supervisor | `core/src/index.ts` |
-| **Shell** | Electron + React desktop UI | `shell/` |
-| **Guard** | Single durable write boundary | `core/src/guard.ts` |
+| **Core** | Local HTTP runtime, DB access, app loader, connector supervisor | `desktop/core/src/index.ts` |
+| **Shell** | Electron + React desktop UI | `desktop/shell/` |
+| **Guard** | Single durable write boundary | `desktop/core/src/guard.ts` |
 | **Data DB** | User-visible state: events, docs, derived tables | `.adiabatic/data.db` |
 | **System DB** | Control-plane state: connectors, auth, encrypted secrets | `.adiabatic/system.db` |
-| **Template** | First-launch workspace skeleton | `template/` |
+| **Template** | First-launch workspace skeleton | `desktop/template/` |
 
 ## Data model
 
@@ -286,12 +286,14 @@ Lamarck is the stable layer below those changing interfaces. A generated dashboa
 
 ```text
 lamarck/
-├─ core/       Bun HTTP runtime, Guard, DB, connector runtime, CLI
-├─ shell/      Electron + React desktop shell
-├─ template/   First-launch workspace template, example apps, built-in connectors
-├─ design/     Canonical design docs and archived design history
-├─ reports/    Landing page and architecture report drafts
-└─ e2e/        Playwright specs
+├─ desktop/   Local desktop app source
+│  ├─ core/      Bun HTTP runtime, Guard, DB, connector runtime, CLI
+│  ├─ shell/     Electron + React desktop shell
+│  └─ template/  First-launch workspace template, example apps, built-in connectors
+├─ web/       Reserved for auth.lamarck.ai / api.lamarck.ai services
+├─ design/    Canonical design docs and archived design history
+├─ reports/   Landing page and architecture report drafts
+└─ e2e/       Playwright specs
 ```
 
 Start with [design/README.md](design/README.md) for the current design index.

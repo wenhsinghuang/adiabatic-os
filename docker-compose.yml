@@ -4,7 +4,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./template:/workspace
+      - ./desktop/template:/workspace
       - adiabatic-data:/workspace/.adiabatic
     environment:
       - PORT=3000
