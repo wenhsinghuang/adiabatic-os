@@ -1,0 +1,39 @@
+name: Deploy Cloudflare Dev
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "web/app/**"
+      - "web/landing/**"
+      - ".github/workflows/deploy-cloudflare-dev.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Upload landing preview
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: versions upload --config web/landing/wrangler.toml
+
+      - name: Upload app preview
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: versions upload --config web/app/wrangler.toml --var CLERK_PUBLISHABLE_KEY:${{ vars.CLERK_PUBLISHABLE_KEY }}
