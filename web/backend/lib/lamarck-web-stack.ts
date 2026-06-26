@@ -19,7 +19,7 @@ export class LamarckWebStack extends cdk.Stack {
     super(scope, id, props);
 
     const { stage } = props;
-    const authOrigin = process.env.LAMARCK_AUTH_ORIGIN || "https://auth.lamarck.ai";
+    const appOrigin = process.env.LAMARCK_APP_ORIGIN || "https://app.lamarck.ai";
     const apiOrigin = process.env.LAMARCK_API_ORIGIN || "https://api.lamarck.ai";
     const secretName = `lamarck/${stage}/app`;
 
@@ -46,27 +46,11 @@ export class LamarckWebStack extends cdk.Stack {
     const sharedEnv = {
       APP_ENV: stage,
       SECRET_NAME: secretName,
-      LAMARCK_AUTH_ORIGIN: authOrigin,
+      LAMARCK_APP_ORIGIN: appOrigin,
       LAMARCK_API_ORIGIN: apiOrigin,
       MANAGED_PROVIDER_CONNECTIONS_TABLE: connectionsTable.tableName,
       OAUTH_STATE_TABLE: stateTable.tableName,
     };
-
-    const authHandler = new lambda.Function(this, "AuthHandler", {
-      functionName: `lamarck-${stage}-auth-handler`,
-      runtime: lambda.Runtime.NODEJS_20_X,
-      architecture: lambda.Architecture.ARM_64,
-      handler: "index.handler",
-      code: lambda.Code.fromAsset(path.join(lambdaRoot, "auth")),
-      memorySize: 256,
-      timeout: cdk.Duration.seconds(15),
-      environment: sharedEnv,
-      logGroup: new logs.LogGroup(this, "AuthHandlerLogGroup", {
-        logGroupName: `/aws/lambda/lamarck-${stage}-auth-handler`,
-        retention: logs.RetentionDays.TWO_WEEKS,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      }),
-    });
 
     const apiHandler = new lambda.Function(this, "ApiHandler", {
       functionName: `lamarck-${stage}-api-handler`,
@@ -84,49 +68,38 @@ export class LamarckWebStack extends cdk.Stack {
       }),
     });
 
-    appSecret.grantRead(authHandler);
     appSecret.grantRead(apiHandler);
-    connectionsTable.grantReadWriteData(authHandler);
-    connectionsTable.grantReadData(apiHandler);
-    stateTable.grantReadWriteData(authHandler);
+    connectionsTable.grantReadWriteData(apiHandler);
+    stateTable.grantReadWriteData(apiHandler);
 
-    const authApi = new apigatewayv2.HttpApi(this, "AuthHttpApi", {
-      apiName: `lamarck-${stage}-auth`,
-      description: `Lamarck auth service (${stage})`,
-      corsPreflight: corsFor(stage, [authOrigin, apiOrigin]),
-    });
-
-    const api = new apigatewayv2.HttpApi(this, "ProviderHttpApi", {
+    const api = new apigatewayv2.HttpApi(this, "HttpApi", {
       apiName: `lamarck-${stage}-api`,
-      description: `Lamarck provider API (${stage})`,
-      corsPreflight: corsFor(stage, [authOrigin, apiOrigin]),
+      description: `Lamarck API (${stage})`,
+      corsPreflight: corsFor(stage, [appOrigin]),
     });
 
-    setDefaultThrottle(authApi, 20, 10);
     setDefaultThrottle(api, 50, 25);
 
-    const authIntegration = new integrations.HttpLambdaIntegration("AuthIntegration", authHandler);
     const apiIntegration = new integrations.HttpLambdaIntegration("ApiIntegration", apiHandler);
-
-    authApi.addRoutes({
-      path: "/healthz",
-      methods: [apigatewayv2.HttpMethod.GET],
-      integration: authIntegration,
-    });
-    authApi.addRoutes({
-      path: "/connect/{providerId}",
-      methods: [apigatewayv2.HttpMethod.GET],
-      integration: authIntegration,
-    });
-    authApi.addRoutes({
-      path: "/oauth/{providerId}/callback",
-      methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST],
-      integration: authIntegration,
-    });
 
     api.addRoutes({
       path: "/healthz",
       methods: [apigatewayv2.HttpMethod.GET],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/me",
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/providers/{providerId}/connect/start",
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/providers/{providerId}/oauth/callback",
+      methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST],
       integration: apiIntegration,
     });
     api.addRoutes({
@@ -141,13 +114,9 @@ export class LamarckWebStack extends cdk.Stack {
       integration: apiIntegration,
     });
 
-    new cdk.CfnOutput(this, "AuthApiEndpoint", {
-      value: authApi.apiEndpoint,
-      description: "Auth HTTP API endpoint",
-    });
-    new cdk.CfnOutput(this, "ProviderApiEndpoint", {
+    new cdk.CfnOutput(this, "ApiEndpoint", {
       value: api.apiEndpoint,
-      description: "Provider HTTP API endpoint",
+      description: "Lamarck HTTP API endpoint",
     });
     new cdk.CfnOutput(this, "ManagedProviderConnectionsTableName", {
       value: connectionsTable.tableName,
