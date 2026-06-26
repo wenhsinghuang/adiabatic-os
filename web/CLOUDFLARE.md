@@ -31,23 +31,39 @@ Do not create `auth.lamarck.ai` for now. Auth UI belongs under
 
 ## Deploy Frontends
 
-Deploy the landing page:
+Deploys run through GitHub Actions, not by hand:
+
+- **Push to `dev`** (touching `web/app/**` or `web/landing/**`) →
+  [`deploy-cloudflare-dev.yml`](../.github/workflows/deploy-cloudflare-dev.yml)
+  runs `wrangler versions upload`, producing a preview URL. Production custom
+  domains are untouched.
+- **Publish a GitHub Release** →
+  [`deploy-cloudflare-prod.yml`](../.github/workflows/deploy-cloudflare-prod.yml)
+  runs `wrangler deploy`, updating `lamarck.ai` / `app.lamarck.ai`. The same
+  release also triggers the AWS backend prod deploy (lockstep).
+
+CI auth is a repo secret `CLOUDFLARE_API_TOKEN` + repo variable
+`CLOUDFLARE_ACCOUNT_ID`; wrangler is pinned to `4.105.0`.
+
+Manual deploy is only a fallback (account/DNS debugging, or a hotfix when CI is
+unavailable):
 
 ```sh
 npx wrangler deploy --config web/landing/wrangler.toml
-```
-
-Deploy the product app shell:
-
-```sh
 npx wrangler deploy --config web/app/wrangler.toml
 ```
 
 The Worker configs attach custom domains directly via `custom_domain = true`.
-Cloudflare will create/manage the DNS records and certificates for those Worker
+Cloudflare creates/manages the DNS records and certificates for those Worker
 custom domains.
 
 ## Clerk
+
+The Clerk **publishable** key is public (it ships to every browser), so it is
+not injected at deploy time. It lives in
+[`web/app/public/config.js`](app/public/config.js) and is selected by hostname:
+`pk_live` on `app.lamarck.ai`, `pk_test` on every other origin (workers.dev
+previews, localhost). Rotating the key is a one-line source change.
 
 Clerk can keep using its own custom domain, for example:
 
