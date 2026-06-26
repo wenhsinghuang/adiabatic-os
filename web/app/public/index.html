@@ -383,6 +383,27 @@
         });
       }
 
+      // Clerk's prebuilt UI components (mountSignIn) live only in the browser
+      // build served from the instance's Frontend API (FAPI). The generic ESM
+      // build on public CDNs omits them, which throws "Clerk was not loaded
+      // with UI components". The FAPI host is base64-encoded in the key.
+      function loadClerk(publishableKey) {
+        if (window.Clerk) return Promise.resolve(window.Clerk);
+        const fapi = atob(publishableKey.split("_")[2]).replace(/\$+$/, "");
+        return new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.async = true;
+          script.crossOrigin = "anonymous";
+          script.setAttribute("data-clerk-publishable-key", publishableKey);
+          script.src = `https://${fapi}/npm/@clerk/clerk-js@5/dist/clerk.browser.js`;
+          script.addEventListener("load", () => resolve(window.Clerk));
+          script.addEventListener("error", () =>
+            reject(new Error(`Failed to load Clerk from ${fapi}`)),
+          );
+          document.head.appendChild(script);
+        });
+      }
+
       async function mountClerk() {
         const publishableKey = window.__LAMARCK_CONFIG__?.clerkPublishableKey;
         if (!publishableKey) {
@@ -392,8 +413,7 @@
 
         mount.innerHTML = `<div class="small">Loading identity...</div>`;
         try {
-          const { Clerk } = await import("https://esm.sh/@clerk/clerk-js@latest");
-          const clerk = new Clerk(publishableKey);
+          const clerk = await loadClerk(publishableKey);
           await clerk.load({
             signInUrl: "/auth/sign-in",
             signUpUrl: "/auth/sign-in",
@@ -407,6 +427,7 @@
             return;
           }
 
+          mount.innerHTML = "";
           clerk.mountSignIn(mount, {
             routing: "path",
             path: "/auth/sign-in",
