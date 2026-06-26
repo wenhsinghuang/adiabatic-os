@@ -38,4 +38,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4.105.0"
-          command: versions upload --config web/app/wrangler.toml --var CLERK_PUBLISHABLE_KEY:${{ vars.CLERK_PUBLISHABLE_KEY }}
+          command: versions upload --config web/app/wrangler.toml
