@@ -2,20 +2,21 @@
 
 Deployable skeleton for Lamarck-hosted services:
 
-- `auth.lamarck.ai`: login and managed-provider connect flows
 - `api.lamarck.ai`: Lamarck provider proxy and capability-token APIs
 
 The current handlers are intentional stubs. They establish deployable AWS shape
-without implementing provider OAuth handoff, provider token vaulting, or proxy
-business logic yet.
+without implementing provider OAuth, provider token vaulting, capability-token
+issuance, or proxy business logic yet.
+
+Product login and managed-provider connect UI live in the Cloudflare Worker app
+at `app.lamarck.ai`. This backend exposes one API surface for identity,
+managed-provider connection state, and provider proxying.
 
 ## AWS Shape
 
 - `Lamarck{Dev,Prod}Stack`
-- HTTP API for auth routes
-- HTTP API for provider API routes
-- Lambda handler for auth routes
-- Lambda handler for provider API routes
+- Single HTTP API for identity, managed-provider, and provider API routes
+- Single Lambda handler for API routes
 - DynamoDB table for managed provider connections
 - DynamoDB table for OAuth/connect state
 - Secrets Manager bundle: `lamarck/{stage}/app`
