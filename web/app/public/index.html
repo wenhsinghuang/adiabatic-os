@@ -207,11 +207,13 @@
 
     <script src="/config.js"></script>
     <script type="module">
+      const appConfig = window.__LAMARCK_CONFIG__ || {};
+      const apiBaseUrl = appConfig.apiBaseUrl || "https://api.lamarck.ai";
       const providers = {
         oura: {
           name: "Oura",
           capability: "Health signals",
-          endpoint: "https://api.lamarck.ai/providers/oura",
+          endpoint: `${apiBaseUrl}/providers/oura`,
         },
       };
 
@@ -223,7 +225,7 @@
         ? providers[providerId] || {
             name: providerId.replace(/[-_]/g, " "),
             capability: "Managed provider",
-            endpoint: `https://api.lamarck.ai/providers/${providerId}`,
+            endpoint: `${apiBaseUrl}/providers/${providerId}`,
           }
         : null;
       const continueTo = providerId

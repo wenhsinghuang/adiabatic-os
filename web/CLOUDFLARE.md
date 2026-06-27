@@ -89,8 +89,24 @@ https://clerk.lamarck.ai/v1/oauth_callback
 
 ## API
 
-`api.lamarck.ai` is not served by Cloudflare Workers in this repo. It should
-point to AWS API Gateway after the backend CDK stack has a custom domain target.
+`api.lamarck.ai` is not served by Cloudflare Workers in this repo. It points to
+the production AWS API Gateway custom domain.
 
-Until then, leave `api.lamarck.ai` unset or use the raw API Gateway URL for
-backend smoke tests.
+DNS setup has two records:
+
+1. ACM certificate validation CNAME, copied from AWS Certificate Manager.
+   This proves control of `api.lamarck.ai` and should stay **DNS only**.
+2. Production traffic CNAME:
+
+   ```text
+   Type: CNAME
+   Name: api
+   Target: <ApiCustomDomainTarget from LamarckProdStack output>
+   Proxy status: DNS only
+   ```
+
+The ACM certificate itself is created in AWS `us-west-2` for
+`api.lamarck.ai`. Store its ARN in Doppler prod as
+`LAMARCK_API_CERTIFICATE_ARN`; the prod CDK deploy reads that value and manages
+the API Gateway custom domain plus root API mapping. Dev keeps using the raw
+API Gateway URL.

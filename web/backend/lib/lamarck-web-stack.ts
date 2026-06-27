@@ -1,6 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as apigatewayv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import * as certificatemanager from "aws-cdk-lib/aws-certificatemanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -13,6 +14,7 @@ export interface LamarckWebStackProps extends cdk.StackProps {
 }
 
 const lambdaRoot = path.join(__dirname, "..", "lambda");
+const prodApiDomainName = "api.lamarck.ai";
 
 export class LamarckWebStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: LamarckWebStackProps) {
@@ -21,6 +23,7 @@ export class LamarckWebStack extends cdk.Stack {
     const { stage } = props;
     const appOrigin = process.env.LAMARCK_APP_ORIGIN || "https://app.lamarck.ai";
     const apiOrigin = process.env.LAMARCK_API_ORIGIN || "https://api.lamarck.ai";
+    const apiCertificateArn = process.env.LAMARCK_API_CERTIFICATE_ARN;
     const secretName = `lamarck/${stage}/app`;
 
     const appSecret = secretsmanager.Secret.fromSecretNameV2(this, "AppSecret", secretName);
@@ -113,6 +116,30 @@ export class LamarckWebStack extends cdk.Stack {
       ],
       integration: apiIntegration,
     });
+
+    if (stage === "prod" && apiCertificateArn) {
+      const apiCertificate = certificatemanager.Certificate.fromCertificateArn(
+        this,
+        "ApiCustomDomainCertificate",
+        apiCertificateArn,
+      );
+      const apiDomain = new apigatewayv2.DomainName(this, "ApiCustomDomain", {
+        domainName: prodApiDomainName,
+        certificate: apiCertificate,
+      });
+      new apigatewayv2.ApiMapping(this, "ApiCustomDomainMapping", {
+        api,
+        domainName: apiDomain,
+      });
+      new cdk.CfnOutput(this, "ApiCustomDomainName", {
+        value: prodApiDomainName,
+        description: "Production API custom domain",
+      });
+      new cdk.CfnOutput(this, "ApiCustomDomainTarget", {
+        value: apiDomain.regionalDomainName,
+        description: "Create a Cloudflare CNAME from api.lamarck.ai to this target",
+      });
+    }
 
     new cdk.CfnOutput(this, "ApiEndpoint", {
       value: api.apiEndpoint,

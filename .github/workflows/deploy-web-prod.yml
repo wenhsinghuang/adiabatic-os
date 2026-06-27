@@ -63,6 +63,19 @@ jobs:
       - name: Build backend
         run: npm --workspace @lamarck/web-backend run build
 
+      - name: Export optional CDK configuration
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_PROD }}
+        run: |
+          set -euo pipefail
+          api_certificate_arn="$(doppler secrets get LAMARCK_API_CERTIFICATE_ARN \
+            --plain \
+            --config "$DOPPLER_CONFIG" \
+            --project "$DOPPLER_PROJECT" 2>/dev/null || true)"
+          if [ -n "$api_certificate_arn" ]; then
+            echo "LAMARCK_API_CERTIFICATE_ARN=$api_certificate_arn" >> "$GITHUB_ENV"
+          fi
+
       - name: Deploy CDK stack
         env:
           CDK_DEFAULT_ACCOUNT: ${{ env.AWS_ACCOUNT_ID }}

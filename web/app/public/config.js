@@ -10,4 +10,8 @@ window.__LAMARCK_CONFIG__ = {
     location.hostname === "app.lamarck.ai"
       ? "pk_live_Y2xlcmsubGFtYXJjay5haSQ"
       : "pk_test_cGF0aWVudC1taW5ub3ctODYuY2xlcmsuYWNjb3VudHMuZGV2JA",
+  apiBaseUrl:
+    location.hostname === "app.lamarck.ai"
+      ? "https://api.lamarck.ai"
+      : "https://wqrkirptp9.execute-api.us-west-2.amazonaws.com",
 };
