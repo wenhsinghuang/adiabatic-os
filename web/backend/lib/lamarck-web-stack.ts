@@ -23,7 +23,6 @@ export class LamarckWebStack extends cdk.Stack {
     const { stage } = props;
     const appOrigin = process.env.LAMARCK_APP_ORIGIN || "https://app.lamarck.ai";
     const apiOrigin = process.env.LAMARCK_API_ORIGIN || "https://api.lamarck.ai";
-    const apiCertificateArn = process.env.LAMARCK_API_CERTIFICATE_ARN;
     const secretName = `lamarck/${stage}/app`;
 
     const appSecret = secretsmanager.Secret.fromSecretNameV2(this, "AppSecret", secretName);
@@ -117,11 +116,11 @@ export class LamarckWebStack extends cdk.Stack {
       integration: apiIntegration,
     });
 
-    if (stage === "prod" && apiCertificateArn) {
+    if (stage === "prod") {
       const apiCertificate = certificatemanager.Certificate.fromCertificateArn(
         this,
         "ApiCustomDomainCertificate",
-        apiCertificateArn,
+        appSecret.secretValueFromJson("LAMARCK_API_CERTIFICATE_ARN").unsafeUnwrap(),
       );
       const apiDomain = new apigatewayv2.DomainName(this, "ApiCustomDomain", {
         domainName: prodApiDomainName,
