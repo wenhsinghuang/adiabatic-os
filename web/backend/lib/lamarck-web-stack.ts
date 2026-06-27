@@ -4,6 +4,7 @@ import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as certificatemanager from "aws-cdk-lib/aws-certificatemanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
@@ -13,7 +14,6 @@ export interface LamarckWebStackProps extends cdk.StackProps {
   stage: "dev" | "prod";
 }
 
-const lambdaRoot = path.join(__dirname, "..", "lambda");
 const prodApiDomainName = "api.lamarck.ai";
 
 export class LamarckWebStack extends cdk.Stack {
@@ -26,6 +26,22 @@ export class LamarckWebStack extends cdk.Stack {
     const secretName = `lamarck/${stage}/app`;
 
     const appSecret = secretsmanager.Secret.fromSecretNameV2(this, "AppSecret", secretName);
+
+    const usersTable = new dynamodb.Table(this, "UsersTable", {
+      tableName: `lamarck-${stage}-users`,
+      partitionKey: { name: "userId", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: stage === "prod" },
+      removalPolicy: stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
+    const userIdentitiesTable = new dynamodb.Table(this, "UserIdentitiesTable", {
+      tableName: `lamarck-${stage}-user-identities`,
+      partitionKey: { name: "identityKey", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: stage === "prod" },
+      removalPolicy: stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
 
     const connectionsTable = new dynamodb.Table(this, "ManagedProviderConnectionsTable", {
       tableName: `lamarck-${stage}-managed-provider-connections`,
@@ -45,23 +61,34 @@ export class LamarckWebStack extends cdk.Stack {
       removalPolicy: stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
     });
 
+    const frontendOrigins = frontendOriginsFor(stage, appOrigin);
     const sharedEnv = {
       APP_ENV: stage,
       SECRET_NAME: secretName,
       LAMARCK_APP_ORIGIN: appOrigin,
       LAMARCK_API_ORIGIN: apiOrigin,
+      LAMARCK_ALLOWED_ORIGINS: frontendOrigins.join(","),
+      USERS_TABLE: usersTable.tableName,
+      USER_IDENTITIES_TABLE: userIdentitiesTable.tableName,
       MANAGED_PROVIDER_CONNECTIONS_TABLE: connectionsTable.tableName,
       OAUTH_STATE_TABLE: stateTable.tableName,
     };
 
-    const apiHandler = new lambda.Function(this, "ApiHandler", {
+    const apiHandler = new lambdaNodejs.NodejsFunction(this, "ApiHandler", {
       functionName: `lamarck-${stage}-api-handler`,
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       architecture: lambda.Architecture.ARM_64,
-      handler: "index.handler",
-      code: lambda.Code.fromAsset(path.join(lambdaRoot, "api")),
+      entry: path.join(__dirname, "..", "src", "api", "handler.ts"),
+      handler: "handler",
+      depsLockFilePath: path.join(__dirname, "..", "..", "..", "package-lock.json"),
       memorySize: 256,
       timeout: cdk.Duration.seconds(30),
+      bundling: {
+        format: lambdaNodejs.OutputFormat.CJS,
+        target: "node22",
+        minify: false,
+        sourceMap: false,
+      },
       environment: sharedEnv,
       logGroup: new logs.LogGroup(this, "ApiHandlerLogGroup", {
         logGroupName: `/aws/lambda/lamarck-${stage}-api-handler`,
@@ -71,13 +98,17 @@ export class LamarckWebStack extends cdk.Stack {
     });
 
     appSecret.grantRead(apiHandler);
+    usersTable.grantReadWriteData(apiHandler);
+    usersTable.grant(apiHandler, "dynamodb:TransactWriteItems");
+    userIdentitiesTable.grantReadWriteData(apiHandler);
+    userIdentitiesTable.grant(apiHandler, "dynamodb:TransactWriteItems");
     connectionsTable.grantReadWriteData(apiHandler);
     stateTable.grantReadWriteData(apiHandler);
 
     const api = new apigatewayv2.HttpApi(this, "HttpApi", {
       apiName: `lamarck-${stage}-api`,
       description: `Lamarck API (${stage})`,
-      corsPreflight: corsFor(stage, [appOrigin]),
+      corsPreflight: corsFor(stage, frontendOrigins),
     });
 
     setDefaultThrottle(api, 50, 25);
@@ -148,6 +179,14 @@ export class LamarckWebStack extends cdk.Stack {
       value: connectionsTable.tableName,
       description: "Managed provider connection table",
     });
+    new cdk.CfnOutput(this, "UsersTableName", {
+      value: usersTable.tableName,
+      description: "Lazy Clerk-backed user table",
+    });
+    new cdk.CfnOutput(this, "UserIdentitiesTableName", {
+      value: userIdentitiesTable.tableName,
+      description: "External identity to Lamarck user mapping table",
+    });
     new cdk.CfnOutput(this, "OAuthStateTableName", {
       value: stateTable.tableName,
       description: "OAuth/connect state table",
@@ -160,14 +199,8 @@ export class LamarckWebStack extends cdk.Stack {
 }
 
 function corsFor(stage: "dev" | "prod", origins: string[]): apigatewayv2.CorsPreflightOptions {
-  const localOrigins = [
-    "http://localhost:32100",
-    "http://localhost:32101",
-    "http://localhost:32102",
-    "http://localhost:5173",
-  ];
   return {
-    allowOrigins: stage === "prod" ? origins : [...origins, ...localOrigins],
+    allowOrigins: origins,
     allowMethods: [
       apigatewayv2.CorsHttpMethod.GET,
       apigatewayv2.CorsHttpMethod.POST,
@@ -179,6 +212,23 @@ function corsFor(stage: "dev" | "prod", origins: string[]): apigatewayv2.CorsPre
     allowHeaders: ["Authorization", "Content-Type", "Idempotency-Key"],
     maxAge: cdk.Duration.hours(1),
   };
+}
+
+function frontendOriginsFor(stage: "dev" | "prod", ...origins: string[]): string[] {
+  const localOrigins = [
+    "http://localhost:32100",
+    "http://localhost:32101",
+    "http://localhost:32102",
+    "http://localhost:5173",
+    "http://localhost:8787",
+  ];
+  const workerOrigins = [
+    "https://lamarck-app.adiabatic.workers.dev",
+    "https://dev-lamarck-app.adiabatic.workers.dev",
+  ];
+  return Array.from(
+    new Set(stage === "prod" ? origins : [...origins, ...workerOrigins, ...localOrigins]),
+  );
 }
 
 function setDefaultThrottle(api: apigatewayv2.HttpApi, burstLimit: number, rateLimit: number): void {

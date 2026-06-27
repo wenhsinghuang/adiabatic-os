@@ -157,6 +157,11 @@
         gap: 16px;
       }
 
+      .session-state {
+        display: grid;
+        gap: 4px;
+      }
+
       .provider {
         display: grid;
         gap: 12px;
@@ -255,18 +260,20 @@
 
       function renderSignedIn(clerk) {
         const user = clerk.user;
+        const email = escapeHtml(user?.primaryEmailAddress?.emailAddress || "Signed in");
         mount.innerHTML = `
           <div class="signed-in">
-            <div>
-              <strong>${user?.primaryEmailAddress?.emailAddress || "Signed in"}</strong>
+            <div class="session-state">
+              <strong>${email}</strong>
               <div class="small">Lamarck session active</div>
+              <div class="small" id="backend-session">Syncing account...</div>
             </div>
             ${
               provider
                 ? `<div class="provider">
-                    <b>${provider.name}</b>
-                    <span>${provider.capability}</span>
-                    <span class="small">${provider.endpoint}</span>
+                    <b>${escapeHtml(provider.name)}</b>
+                    <span>${escapeHtml(provider.capability)}</span>
+                    <span class="small">${escapeHtml(provider.endpoint)}</span>
                     <button disabled>Provider OAuth not wired yet</button>
                   </div>`
                 : `<a class="button" href="/providers/oura/connect">Connect Oura</a>`
@@ -276,6 +283,55 @@
         `;
         document.getElementById("sign-out")?.addEventListener("click", () => {
           clerk.signOut({ redirectUrl: "/auth/sign-in" });
+        });
+        syncBackendSession(clerk);
+      }
+
+      async function syncBackendSession(clerk) {
+        const status = document.getElementById("backend-session");
+        if (!status) return;
+
+        try {
+          const token = await clerk.session?.getToken();
+          if (!token) {
+            throw new Error("Missing Clerk session token");
+          }
+
+          const response = await fetch(`${apiBaseUrl}/me`, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            cache: "no-store",
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(body?.message || body?.error || `HTTP ${response.status}`);
+          }
+
+          status.textContent = `Backend user synced: ${body.userId}`;
+        } catch (error) {
+          status.textContent = `Backend sync failed: ${String(error?.message || error)}`;
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => {
+          switch (char) {
+            case "&":
+              return "&amp;";
+            case "<":
+              return "&lt;";
+            case ">":
+              return "&gt;";
+            case '"':
+              return "&quot;";
+            case "'":
+              return "&#39;";
+            default:
+              return char;
+          }
         });
       }
 

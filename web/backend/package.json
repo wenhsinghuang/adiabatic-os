@@ -13,12 +13,18 @@
     "synth:prod": "cdk synth LamarckProdStack"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1075.0",
+    "@aws-sdk/client-secrets-manager": "^3.1075.0",
+    "@aws-sdk/lib-dynamodb": "^3.1075.0",
+    "@clerk/backend": "^3.8.4",
     "aws-cdk-lib": "2.215.0",
     "constructs": "^10.0.0"
   },
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.162",
     "@types/node": "^24.10.1",
     "aws-cdk": "2.1033.0",
+    "esbuild": "^0.28.1",
     "ts-node": "^10.9.2",
     "typescript": "~5.9.3"
   }
