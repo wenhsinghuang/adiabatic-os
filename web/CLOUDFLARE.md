@@ -107,6 +107,7 @@ DNS setup has two records:
 
 The ACM certificate itself is created in AWS `us-west-2` for
 `api.lamarck.ai`. Store its ARN in Doppler prod as
-`LAMARCK_API_CERTIFICATE_ARN`; the prod CDK deploy reads that value and manages
-the API Gateway custom domain plus root API mapping. Dev keeps using the raw
-API Gateway URL.
+`LAMARCK_API_CERTIFICATE_ARN`; the prod CDK deploy reads that value through the
+synced `lamarck/prod/app` Secrets Manager bundle and manages the API Gateway
+custom domain plus root API mapping. Missing this value is a prod deploy error.
+Dev keeps using the raw API Gateway URL.
