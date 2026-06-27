@@ -388,7 +388,7 @@ export class ConnectorAuthManager {
   startManagedProvider(
     integration: ConnectorIntegration,
     auth: ConnectorManagedProviderAuthSpec,
-    input: { authOrigin: string },
+    input: { appOrigin: string },
   ): OAuthStartResult {
     const attemptId = base64url(randomBytes(16));
     const expiresAt = Date.now() + this.attemptTtlMs;
@@ -403,7 +403,7 @@ export class ConnectorAuthManager {
     };
     this.managedAttemptsById.set(attemptId, attempt);
 
-    const url = new URL(`/connect/${encodeURIComponent(auth.providerId)}`, normalizeOrigin(input.authOrigin));
+    const url = new URL(`/providers/${encodeURIComponent(auth.providerId)}/connect`, normalizeOrigin(input.appOrigin));
     url.searchParams.set("attempt", attemptId);
 
     return {

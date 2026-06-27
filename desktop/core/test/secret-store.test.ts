@@ -150,9 +150,9 @@ describe("Secret store and OAuth broker", () => {
       type: "managedProvider",
       providerId: "oura",
     }, {
-      authOrigin: "https://auth.lamarck.ai",
+      appOrigin: "https://app.lamarck.ai",
     });
-    expect(started.authorizationUrl.startsWith("https://auth.lamarck.ai/connect/oura?")).toBe(true);
+    expect(started.authorizationUrl.startsWith("https://app.lamarck.ai/providers/oura/connect?")).toBe(true);
     expect(started.redirectUri).toBeUndefined();
   });
 });

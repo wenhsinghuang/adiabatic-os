@@ -265,7 +265,7 @@ auth:
         auth: {
           type: "managedProvider",
           providerId: "oura",
-          connectEndpoint: "https://auth.lamarck.ai/connect/oura",
+          connectEndpoint: "https://app.lamarck.ai/providers/oura/connect",
         } as any,
       })
     ).toThrow("forbids connectEndpoint");

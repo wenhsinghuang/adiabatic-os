@@ -51,7 +51,7 @@ const authSecrets: AuthSecrets = {
 const corePort = Number(process.env.PORT) || 3000;
 const coreHost = process.env.HOST || "127.0.0.1";
 const oauthRedirectUri = `http://localhost:${corePort}/oauth/callback`;
-const managedProviderAuthOrigin = process.env.LAMARCK_AUTH_ORIGIN ?? "https://auth.lamarck.ai";
+const managedProviderAppOrigin = process.env.LAMARCK_APP_ORIGIN ?? "https://app.lamarck.ai";
 const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
   type JsonValue =
     | null
@@ -99,7 +99,7 @@ const connectorSupervisor = new ConnectorSupervisor({
   host: { workspacePath },
   authManager,
   oauthRedirectUri,
-  managedProviderAuthOrigin,
+  managedProviderAppOrigin,
 });
 // Built-ins are bundled catalog entries; installing one is an explicit user
 // action through the same install flow as any other connector package.

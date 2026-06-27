@@ -290,7 +290,7 @@ lamarck/
 │  ├─ core/      Bun HTTP runtime, Guard, DB, connector runtime, CLI
 │  ├─ shell/     Electron + React desktop shell
 │  └─ template/  First-launch workspace template, example apps, built-in connectors
-├─ web/       Reserved for auth.lamarck.ai / api.lamarck.ai services
+├─ web/       Reserved for lamarck.ai / app.lamarck.ai / api.lamarck.ai services
 ├─ design/    Canonical design docs and archived design history
 ├─ reports/   Landing page and architecture report drafts
 └─ e2e/       Playwright specs
