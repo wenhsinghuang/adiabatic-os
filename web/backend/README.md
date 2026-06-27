@@ -24,6 +24,12 @@ managed-provider connection state, and provider proxying.
 The Lambda runtime reads only the AWS secret name. Doppler remains the source of
 truth; CI syncs the Doppler config into Secrets Manager before each CDK deploy.
 
+Production can attach `api.lamarck.ai` to the HTTP API when Doppler prod exposes
+`LAMARCK_API_CERTIFICATE_ARN`. The certificate is an ACM public certificate in
+`us-west-2`; Cloudflare DNS owns both the ACM validation CNAME and the final
+`api` CNAME to the `ApiCustomDomainTarget` stack output. Dev keeps the raw API
+Gateway endpoint.
+
 ## Useful Commands
 
 ```bash
