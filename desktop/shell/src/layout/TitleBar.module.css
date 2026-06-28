@@ -37,8 +37,7 @@
   flex: 1;
 }
 
-.identityButton,
-.identitySignedIn {
+.identityButton {
   -webkit-app-region: no-drag;
   border: 1px solid var(--color-border);
   background: transparent;
@@ -50,18 +49,39 @@
   cursor: pointer;
 }
 
-.identityButton:hover,
-.identitySignedIn:hover {
+.identityButton:hover {
   color: var(--color-text-primary);
   border-color: var(--color-text-muted);
 }
 
-.identitySignedIn {
-  color: var(--color-accent);
-}
-
-.identityButton:disabled,
-.identitySignedIn:disabled {
+.identityButton:disabled {
   cursor: default;
   opacity: 0.6;
+}
+
+.identityGroup {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.identityStatus {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  padding: 5px 9px;
+}
+
+.identityDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #2fbf71;
+  box-shadow: 0 0 0 2px rgba(47, 191, 113, 0.16);
 }

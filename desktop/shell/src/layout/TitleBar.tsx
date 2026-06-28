@@ -41,15 +41,33 @@ export function TitleBar({
         </div>
       )}
       <div className={styles.spacer} />
-      <button
-        type="button"
-        className={signedIn ? styles.identitySignedIn : styles.identityButton}
-        disabled={identityBusy}
-        onClick={signedIn ? onIdentitySignOut : onIdentitySignIn}
-        title={signedIn ? "Sign out of Lamarck" : "Sign in to Lamarck"}
-      >
-        {identityBusy ? "..." : identityLabel}
-      </button>
+      {signedIn ? (
+        <div className={styles.identityGroup}>
+          <div className={styles.identityStatus} title="Signed in to Lamarck">
+            <span className={styles.identityDot} />
+            <span>{identityLabel}</span>
+          </div>
+          <button
+            type="button"
+            className={styles.identityButton}
+            disabled={identityBusy}
+            onClick={onIdentitySignOut}
+            title="Sign out of Lamarck"
+          >
+            {identityBusy ? "..." : "Sign out"}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={styles.identityButton}
+          disabled={identityBusy}
+          onClick={onIdentitySignIn}
+          title="Sign in to Lamarck"
+        >
+          {identityBusy ? "..." : identityLabel}
+        </button>
+      )}
     </div>
   );
 }
