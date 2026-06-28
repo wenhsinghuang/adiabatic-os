@@ -227,6 +227,7 @@
       const providerMatch = path.match(/^\/providers\/([^/]+)\/connect$/);
       const providerId = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
       const desktopAuthorize = path === "/auth/authorize";
+      const requestedRedirect = safeReturnPath(route.searchParams.get("redirect_url"));
       const provider = providerId
         ? providers[providerId] || {
             name: providerId.replace(/[-_]/g, " "),
@@ -238,7 +239,7 @@
         ? `/providers/${encodeURIComponent(providerId)}/connect${route.search}`
         : desktopAuthorize
           ? `/auth/authorize${route.search}`
-        : "/";
+          : requestedRedirect || "/";
 
       const mount = document.getElementById("clerk-mount");
       const authTitle = document.getElementById("auth-title");
@@ -460,6 +461,20 @@
         });
       }
 
+      function safeReturnPath(value) {
+        if (!value) return null;
+        let url;
+        try {
+          url = new URL(value, window.location.origin);
+        } catch {
+          return null;
+        }
+        if (url.origin !== window.location.origin || !url.pathname.startsWith("/") || url.pathname.startsWith("//")) {
+          return null;
+        }
+        return `${url.pathname}${url.search}${url.hash}`;
+      }
+
       // Clerk's prebuilt UI components (mountSignIn) live only in the browser
       // build served from the instance's Frontend API (FAPI). The generic ESM
       // build on public CDNs omits them, which throws "Clerk was not loaded
@@ -505,6 +520,11 @@
               return;
             }
             renderSignedIn(clerk);
+            return;
+          }
+
+          if (desktopAuthorize || provider) {
+            window.location.replace(`/auth/sign-in?redirect_url=${encodeURIComponent(continueTo)}`);
             return;
           }
 
