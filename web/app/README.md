@@ -28,8 +28,9 @@ The sign-in route is wired for Clerk's browser SDK. After sign-in, the app calls
 lazy-sync the user into DynamoDB.
 
 The desktop authorize route is an intent route for native desktop sign-in. If
-the browser has no Clerk session, it shows Clerk sign-in and returns to the same
-authorize URL after login. Once signed in, it asks the user to authorize the
+the browser has no Clerk session, it redirects to `/auth/sign-in` with a local
+`redirect_url` back to the same authorize URL. Once signed in, it asks the user
+to authorize the
 desktop session, calls `POST /desktop/auth/authorize`, then redirects only a
 one-time code back to the desktop loopback callback.
 
