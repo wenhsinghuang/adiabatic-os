@@ -20,11 +20,25 @@ Routes currently served by the app shell:
 
 - `/`
 - `/auth/sign-in`
+- `/auth/authorize`
 - `/providers/{providerId}/connect`
 
-Clerk and real managed-provider protocol integration are not implemented in this
-frontend skeleton yet. The sign-in route is wired for Clerk's browser SDK and
-needs the Worker variable below before it can mount the Clerk UI:
+The sign-in route is wired for Clerk's browser SDK. After sign-in, the app calls
+`GET /me` on the Lamarck backend with the Clerk session token so the backend can
+lazy-sync the user into DynamoDB.
+
+The desktop authorize route is a browser leg for native desktop sign-in. It
+keeps the Clerk browser session in the browser, calls
+`POST /desktop/auth/authorize`, then redirects only a one-time code back to the
+desktop loopback callback.
+
+The provider connect route uses the same Clerk session token to call
+`POST /providers/{providerId}/connect/start`. The backend currently returns a
+structured not-implemented response for registered providers until the hosted
+OAuth implementation is wired.
+
+If you use Worker-injected config instead of `public/config.js`, the Clerk
+browser SDK needs the publishable key:
 
 ```sh
 npx wrangler secret put CLERK_PUBLISHABLE_KEY --config web/app/wrangler.toml

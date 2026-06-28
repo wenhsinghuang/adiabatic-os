@@ -88,10 +88,10 @@ export interface ConnectorSupervisorOptions {
   // child is killed and the operation fails.
   runnerCommandTimeoutMs?: number;
   oauthRedirectUri?: string;
-  managedProviderAuthOrigin?: string;
+  managedProviderAppOrigin?: string;
 }
 
-const DEFAULT_MANAGED_PROVIDER_AUTH_ORIGIN = "https://auth.lamarck.ai";
+const DEFAULT_MANAGED_PROVIDER_APP_ORIGIN = "https://app.lamarck.ai";
 
 const MANUAL_TRUST: ConnectorPackageTrust = {
   status: "custom",
@@ -111,7 +111,7 @@ export class ConnectorSupervisor {
   private host: ConnectorHostContext;
   private registry: WorkspaceConnectorRegistry;
   private oauthRedirectUri: string | undefined;
-  private managedProviderAuthOrigin: string;
+  private managedProviderAppOrigin: string;
 
   constructor(opts: ConnectorSupervisorOptions) {
     this.guard = opts.guard;
@@ -122,7 +122,7 @@ export class ConnectorSupervisor {
     this.runnerKillGraceMs = opts.runnerKillGraceMs;
     this.runnerCommandTimeoutMs = opts.runnerCommandTimeoutMs;
     this.oauthRedirectUri = opts.oauthRedirectUri;
-    this.managedProviderAuthOrigin = opts.managedProviderAuthOrigin ?? DEFAULT_MANAGED_PROVIDER_AUTH_ORIGIN;
+    this.managedProviderAppOrigin = opts.managedProviderAppOrigin ?? DEFAULT_MANAGED_PROVIDER_APP_ORIGIN;
     this.registry = new WorkspaceConnectorRegistry({
       systemDb: opts.systemDb,
       officialCatalog: opts.officialCatalog ?? [],
@@ -312,7 +312,7 @@ export class ConnectorSupervisor {
     }
     if (isManagedProviderAuthSpec(auth)) {
       return this.authManager.startManagedProvider(existing, auth, {
-        authOrigin: this.managedProviderAuthOrigin,
+        appOrigin: this.managedProviderAppOrigin,
       });
     }
     throw new Error(`Connector ${existing.connectorId} does not use browser auth`);

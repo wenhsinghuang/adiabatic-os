@@ -8,7 +8,6 @@ import { Guard } from "../src/guard";
 import {
   ConnectorScheduler,
   ConnectorSupervisor,
-  MemoryConnectorSecretStore,
   ConnectorAuthManager,
   installConnector,
   listInstalledConnectorDirs,
@@ -26,6 +25,7 @@ import {
   type ConnectorDefinition,
   type ConnectorManifest,
 } from "../src/connectors";
+import { MemorySecretStore } from "../src/credentials";
 
 async function waitWithTestTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -47,7 +47,7 @@ describe("Connector system", () => {
   let systemDb: ReturnType<typeof openDatabases>["systemDb"];
   let close: () => void;
   let supervisor: ConnectorSupervisor;
-  let secrets: MemoryConnectorSecretStore;
+  let secrets: MemorySecretStore;
 
   beforeEach(() => {
     workspace = mkdtempSync(join(tmpdir(), "adiabatic-connector-test-"));
@@ -56,7 +56,7 @@ describe("Connector system", () => {
     dataDb = result.dataDb;
     systemDb = result.systemDb;
     close = result.close;
-    secrets = new MemoryConnectorSecretStore();
+    secrets = new MemorySecretStore();
     supervisor = new ConnectorSupervisor({
       systemDb,
       guard: new Guard({ db: dataDb, source: "system:test" }),
@@ -265,7 +265,7 @@ auth:
         auth: {
           type: "managedProvider",
           providerId: "oura",
-          connectEndpoint: "https://auth.lamarck.ai/connect/oura",
+          connectEndpoint: "https://app.lamarck.ai/providers/oura/connect",
         } as any,
       })
     ).toThrow("forbids connectEndpoint");

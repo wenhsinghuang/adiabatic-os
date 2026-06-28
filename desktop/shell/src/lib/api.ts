@@ -114,6 +114,43 @@ export function getWorkspace(): Promise<WorkspaceInfo> {
   return request("/api/workspace");
 }
 
+// -- Lamarck identity --
+
+export interface LamarckSessionView {
+  status: "signed_out" | "signed_in" | "expired";
+  userId?: string;
+  sessionId?: string;
+  accessTokenExpiresAt?: string;
+  refreshTokenExpiresAt?: string;
+  apiOrigin?: string;
+  appOrigin?: string;
+}
+
+export interface LamarckLoginStart {
+  authorizationUrl: string;
+  attemptId: string;
+  redirectUri: string;
+  expiresAt: number;
+}
+
+export function getLamarckSession(): Promise<LamarckSessionView> {
+  return request("/api/identity/session");
+}
+
+export function startLamarckLogin(): Promise<LamarckLoginStart> {
+  return request("/api/identity/login/start", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function logoutLamarckSession(): Promise<{ ok: true }> {
+  return request("/api/identity/logout", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export interface Doc {
   id: string;
   content: string;

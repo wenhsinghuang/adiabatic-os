@@ -3,16 +3,17 @@ import { mkdtempSync, mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { openDatabases } from "../src/db";
+import { ConnectorAuthManager } from "../src/connectors/auth";
 import {
-  AuthCredentialStore,
-  ConnectorAuthManager,
+  CredentialStore,
+  LamarckSessionManager,
   SqliteEncryptedSecretStore,
   createVaultKey,
   encodeVaultKey,
-} from "../src/connectors/auth";
+} from "../src/credentials";
 import type { ConnectorIntegration } from "../src/connectors";
 
-describe("Secret store and OAuth broker", () => {
+describe("Secret store and connector credential broker", () => {
   let workspace: string;
   let opened: ReturnType<typeof openDatabases>;
 
@@ -49,7 +50,7 @@ describe("Secret store and OAuth broker", () => {
   test("api key connect creates credential metadata without D0 events", async () => {
     const manager = new ConnectorAuthManager(
       new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
-      { credentialStore: new AuthCredentialStore(opened.systemDb) },
+      { credentialStore: new CredentialStore(opened.systemDb) },
     );
 
     await manager.setToken("auth-ref", "secret-token", {
@@ -73,7 +74,7 @@ describe("Secret store and OAuth broker", () => {
     const manager = new ConnectorAuthManager(
       new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
       {
-        credentialStore: new AuthCredentialStore(opened.systemDb),
+        credentialStore: new CredentialStore(opened.systemDb),
         fetchImpl: async (_url, init) => {
           const body = String(init?.body);
           expect(body).toContain("grant_type=authorization_code");
@@ -116,7 +117,7 @@ describe("Secret store and OAuth broker", () => {
     const manager = new ConnectorAuthManager(
       new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
       {
-        credentialStore: new AuthCredentialStore(opened.systemDb),
+        credentialStore: new CredentialStore(opened.systemDb),
         fetchImpl: async (_url, init) => {
           calls++;
           const body = String(init?.body);
@@ -150,10 +151,107 @@ describe("Secret store and OAuth broker", () => {
       type: "managedProvider",
       providerId: "oura",
     }, {
-      authOrigin: "https://auth.lamarck.ai",
+      appOrigin: "https://app.lamarck.ai",
     });
-    expect(started.authorizationUrl.startsWith("https://auth.lamarck.ai/connect/oura?")).toBe(true);
+    expect(started.authorizationUrl.startsWith("https://app.lamarck.ai/providers/oura/connect?")).toBe(true);
     expect(started.redirectUri).toBeUndefined();
+  });
+
+  test("lamarck desktop login stores session credentials", async () => {
+    let tokenCalls = 0;
+    const credentialStore = new CredentialStore(opened.systemDb);
+    const manager = new LamarckSessionManager(
+      new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
+      {
+        credentialStore,
+        apiOrigin: "https://api.lamarck.ai",
+        appOrigin: "https://app.lamarck.ai",
+        redirectUri: "http://localhost:32100/auth/callback",
+        fetchImpl: async (url, init) => {
+          tokenCalls++;
+          expect(String(url)).toBe("https://api.lamarck.ai/desktop/auth/token");
+          const body = JSON.parse(String(init?.body)) as Record<string, string>;
+          expect(body.grantType).toBe("authorization_code");
+          expect(body.redirectUri).toBe("http://localhost:32100/auth/callback");
+          expect(body.codeVerifier).toBeTruthy();
+          return jsonResponse({
+            tokenType: "Bearer",
+            accessToken: "desktop-access",
+            refreshToken: "desktop-refresh",
+            accessTokenExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+            refreshTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+            userId: "usr_123",
+            sessionId: "dsk_123",
+          });
+        },
+      },
+    );
+
+    const started = manager.startLogin();
+    const url = new URL(started.authorizationUrl);
+    expect(url.toString().startsWith("https://app.lamarck.ai/auth/authorize?")).toBe(true);
+    expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:32100/auth/callback");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+
+    const view = await manager.completeCallback(new URLSearchParams({
+      state: url.searchParams.get("state")!,
+      code: "desktop-code",
+    }));
+
+    expect(view).toMatchObject({ status: "signed_in", userId: "usr_123", sessionId: "dsk_123" });
+    expect(await manager.accessToken()).toBe("desktop-access");
+    expect(credentialStore.get("lamarck-session:current")).toMatchObject({
+      kind: "lamarckSession",
+      ownerType: "desktop",
+      ownerId: "identity",
+      status: "active",
+    });
+    expect(tokenCalls).toBe(1);
+  });
+
+  test("lamarck desktop session refreshes expired access tokens", async () => {
+    let calls = 0;
+    const manager = new LamarckSessionManager(
+      new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
+      {
+        credentialStore: new CredentialStore(opened.systemDb),
+        apiOrigin: "https://api.lamarck.ai",
+        appOrigin: "https://app.lamarck.ai",
+        redirectUri: "http://localhost:32100/auth/callback",
+        fetchImpl: async (_url, init) => {
+          calls++;
+          const body = JSON.parse(String(init?.body)) as Record<string, string>;
+          if (body.grantType === "authorization_code") {
+            return jsonResponse({
+              tokenType: "Bearer",
+              accessToken: "old-access",
+              refreshToken: "old-refresh",
+              accessTokenExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+              refreshTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+              userId: "usr_123",
+              sessionId: "dsk_123",
+            });
+          }
+          expect(body).toMatchObject({ grantType: "refresh_token", refreshToken: "old-refresh" });
+          return jsonResponse({
+            tokenType: "Bearer",
+            accessToken: "new-access",
+            refreshToken: "new-refresh",
+            accessTokenExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+            refreshTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+            userId: "usr_123",
+            sessionId: "dsk_123",
+          });
+        },
+      },
+    );
+
+    const started = manager.startLogin();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await manager.completeCallback(new URLSearchParams({ state, code: "desktop-code" }));
+
+    await expect(manager.accessToken()).resolves.toBe("new-access");
+    expect(calls).toBe(2);
   });
 });
 
