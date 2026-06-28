@@ -27,10 +27,11 @@ The sign-in route is wired for Clerk's browser SDK. After sign-in, the app calls
 `GET /me` on the Lamarck backend with the Clerk session token so the backend can
 lazy-sync the user into DynamoDB.
 
-The desktop authorize route is a browser leg for native desktop sign-in. It
-keeps the Clerk browser session in the browser, calls
-`POST /desktop/auth/authorize`, then redirects only a one-time code back to the
-desktop loopback callback.
+The desktop authorize route is an intent route for native desktop sign-in. If
+the browser has no Clerk session, it shows Clerk sign-in and returns to the same
+authorize URL after login. Once signed in, it asks the user to authorize the
+desktop session, calls `POST /desktop/auth/authorize`, then redirects only a
+one-time code back to the desktop loopback callback.
 
 The provider connect route uses the same Clerk session token to call
 `POST /providers/{providerId}/connect/start`. The backend currently returns a
