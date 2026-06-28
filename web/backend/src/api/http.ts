@@ -8,7 +8,7 @@ export class HttpError extends Error {
     public readonly statusCode: number,
     public readonly code: string,
     message: string,
-    public readonly details?: Record<string, unknown>,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = "HttpError";
@@ -17,7 +17,7 @@ export class HttpError extends Error {
 
 export function json(
   statusCode: number,
-  body: Record<string, unknown>,
+  body: unknown,
 ): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode,
@@ -33,7 +33,7 @@ export function problem(
   statusCode: number,
   code: string,
   message: string,
-  details?: Record<string, unknown>,
+  details?: unknown,
 ): APIGatewayProxyStructuredResultV2 {
   return json(statusCode, {
     error: code,

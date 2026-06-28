@@ -226,6 +226,7 @@
       const path = route.pathname.replace(/\/+$/, "") || "/";
       const providerMatch = path.match(/^\/providers\/([^/]+)\/connect$/);
       const providerId = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
+      const desktopAuthorize = path === "/auth/authorize";
       const provider = providerId
         ? providers[providerId] || {
             name: providerId.replace(/[-_]/g, " "),
@@ -235,6 +236,8 @@
         : null;
       const continueTo = providerId
         ? `/providers/${encodeURIComponent(providerId)}/connect${route.search}`
+        : desktopAuthorize
+          ? `/auth/authorize${route.search}`
         : "/";
 
       const mount = document.getElementById("clerk-mount");
@@ -244,6 +247,9 @@
       if (provider) {
         authTitle.textContent = `Connect ${provider.name}`;
         authNote.textContent = `Sign in to continue to ${provider.name}.`;
+      } else if (desktopAuthorize) {
+        authTitle.textContent = "Authorize Lamarck desktop";
+        authNote.textContent = "Sign in to connect this desktop workspace.";
       } else if (path === "/") {
         authTitle.textContent = "Your Lamarck account";
         authNote.textContent = "Manage identity, devices, and provider connections.";
@@ -274,8 +280,16 @@
                     <b>${escapeHtml(provider.name)}</b>
                     <span>${escapeHtml(provider.capability)}</span>
                     <span class="small">${escapeHtml(provider.endpoint)}</span>
-                    <button disabled>Provider OAuth not wired yet</button>
+                    <button id="start-provider-connect" type="button">Connect provider</button>
+                    <span class="small" id="provider-connect-status">Provider connect not started.</span>
                   </div>`
+                : desktopAuthorize
+                  ? `<div class="provider">
+                      <b>Lamarck desktop</b>
+                      <span>Authorize this local workspace.</span>
+                      <button id="authorize-desktop" type="button">Continue to desktop</button>
+                      <span class="small" id="desktop-authorize-status">Waiting for authorization.</span>
+                    </div>`
                 : `<a class="button" href="/providers/oura/connect">Connect Oura</a>`
             }
             <button id="sign-out" type="button">Sign out</button>
@@ -283,6 +297,12 @@
         `;
         document.getElementById("sign-out")?.addEventListener("click", () => {
           clerk.signOut({ redirectUrl: "/auth/sign-in" });
+        });
+        document.getElementById("start-provider-connect")?.addEventListener("click", () => {
+          startProviderConnect(clerk);
+        });
+        document.getElementById("authorize-desktop")?.addEventListener("click", () => {
+          authorizeDesktop(clerk);
         });
         syncBackendSession(clerk);
       }
@@ -313,6 +333,98 @@
           status.textContent = `Backend user synced: ${body.userId}`;
         } catch (error) {
           status.textContent = `Backend sync failed: ${String(error?.message || error)}`;
+        }
+      }
+
+      async function startProviderConnect(clerk) {
+        if (!providerId) return;
+        const status = document.getElementById("provider-connect-status");
+        const button = document.getElementById("start-provider-connect");
+        if (status) status.textContent = "Starting provider connect...";
+        if (button) button.setAttribute("disabled", "");
+
+        try {
+          const token = await clerk.session?.getToken();
+          if (!token) {
+            throw new Error("Missing Clerk session token");
+          }
+
+          const response = await fetch(
+            `${apiBaseUrl}/providers/${encodeURIComponent(providerId)}/connect/start`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ returnTo: window.location.href }),
+              cache: "no-store",
+            },
+          );
+          const body = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            const details = body.details || {};
+            const providerName = details.displayName || provider.name;
+            throw new Error(`${providerName}: ${body.message || body.error || `HTTP ${response.status}`}`);
+          }
+
+          if (body.connectUrl) {
+            window.location.assign(body.connectUrl);
+            return;
+          }
+
+          if (status) status.textContent = body.message || "Provider connect started.";
+        } catch (error) {
+          if (status) status.textContent = String(error?.message || error);
+          if (button) button.removeAttribute("disabled");
+        }
+      }
+
+      async function authorizeDesktop(clerk) {
+        const status = document.getElementById("desktop-authorize-status");
+        const button = document.getElementById("authorize-desktop");
+        if (status) status.textContent = "Authorizing desktop...";
+        if (button) button.setAttribute("disabled", "");
+
+        try {
+          const token = await clerk.session?.getToken();
+          if (!token) {
+            throw new Error("Missing Clerk session token");
+          }
+
+          const redirectUri = route.searchParams.get("redirect_uri");
+          const state = route.searchParams.get("state");
+          const codeChallenge = route.searchParams.get("code_challenge");
+          const codeChallengeMethod = route.searchParams.get("code_challenge_method");
+          const response = await fetch(`${apiBaseUrl}/desktop/auth/authorize`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              redirectUri,
+              state,
+              codeChallenge,
+              codeChallengeMethod,
+              deviceName: "Lamarck desktop",
+            }),
+            cache: "no-store",
+          });
+          const body = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(body.message || body.error || `HTTP ${response.status}`);
+          }
+          if (!body.redirectUrl) {
+            throw new Error("Desktop authorization response did not include a redirect URL");
+          }
+
+          window.location.assign(body.redirectUrl);
+        } catch (error) {
+          if (status) status.textContent = String(error?.message || error);
+          if (button) button.removeAttribute("disabled");
         }
       }
 

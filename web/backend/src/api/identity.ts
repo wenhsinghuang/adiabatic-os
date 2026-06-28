@@ -41,6 +41,30 @@ export async function requireLamarckUser(
   return upsertUser(clerkUser);
 }
 
+export async function getLamarckUserById(userId: string): Promise<LamarckUser> {
+  const result = await ddb.send(
+    new GetCommand({
+      TableName: getConfig().usersTable,
+      Key: { userId },
+      ConsistentRead: true,
+    }),
+  );
+
+  const item = result.Item;
+  if (!item?.userId) {
+    throw new HttpError(404, "user_not_found", "Lamarck user was not found.");
+  }
+
+  return {
+    userId: String(item.userId),
+    email: nullableString(item.email),
+    displayName: nullableString(item.displayName),
+    imageUrl: nullableString(item.imageUrl),
+    createdAt: String(item.createdAt),
+    updatedAt: String(item.updatedAt),
+  };
+}
+
 async function requireClerkUserId(event: APIGatewayProxyEventV2): Promise<string> {
   const token = bearerToken(event);
   if (!token) {

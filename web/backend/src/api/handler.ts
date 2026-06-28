@@ -4,8 +4,16 @@ import type {
 } from "aws-lambda";
 
 import { getConfig } from "./config";
-import { errorResponse, json, problem, routeKey } from "./http";
+import {
+  authorizeDesktop,
+  exchangeDesktopToken,
+  isDesktopAccessToken,
+  requireDesktopUser,
+  revokeDesktopSession,
+} from "./desktop-auth";
+import { bearerToken, errorResponse, json, problem, routeKey } from "./http";
 import { requireLamarckUser } from "./identity";
+import { getManagedProvider, listManagedProviders } from "./providers";
 
 export async function handler(
   event: APIGatewayProxyEventV2,
@@ -31,7 +39,10 @@ async function route(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStru
   }
 
   if (key === "GET /me") {
-    const user = await requireLamarckUser(event);
+    const token = bearerToken(event);
+    const user = isDesktopAccessToken(token)
+      ? await requireDesktopUser(event)
+      : await requireLamarckUser(event);
     return json(200, {
       userId: user.userId,
       email: user.email,
@@ -42,32 +53,52 @@ async function route(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStru
     });
   }
 
+  if (key === "POST /desktop/auth/authorize") {
+    return json(200, await authorizeDesktop(event));
+  }
+
+  if (key === "POST /desktop/auth/token") {
+    return json(200, await exchangeDesktopToken(event));
+  }
+
+  if (key === "POST /desktop/auth/logout") {
+    return json(200, await revokeDesktopSession(event));
+  }
+
+  if (key === "GET /providers") {
+    return json(200, {
+      providers: listManagedProviders().map((provider) => ({
+        providerId: provider.metadata.providerId,
+        displayName: provider.metadata.displayName,
+        capability: provider.metadata.capability,
+        apiBasePath: provider.metadata.apiBasePath,
+        connect: {
+          type: provider.metadata.connect.type,
+          enabled: provider.metadata.connect.enabled,
+          scopes: provider.metadata.connect.scopes,
+        },
+      })),
+    });
+  }
+
   if (key === "POST /providers/{providerId}/connect/start") {
     const user = await requireLamarckUser(event);
-    return problem(501, "managed_provider_connect_not_implemented", "Managed provider connect start is not implemented in this build.", {
-      providerId,
-      userId: user.userId,
-      appOrigin: config.appOrigin,
-      apiOrigin: config.apiOrigin,
-    });
+    const provider = getManagedProvider(providerId);
+    return json(200, await provider.connect.start({ user, event }));
   }
 
   if (
     key === "GET /providers/{providerId}/oauth/callback" ||
     key === "POST /providers/{providerId}/oauth/callback"
   ) {
-    return problem(501, "managed_provider_callback_not_implemented", "Managed provider OAuth callback handling is not implemented in this build.", {
-      providerId,
-    });
+    const provider = getManagedProvider(providerId);
+    return json(200, await provider.connect.callback({ event }));
   }
 
   if (key.includes("/providers/{providerId}/{proxy+}")) {
     const user = await requireLamarckUser(event);
-    return problem(501, "managed_provider_proxy_not_implemented", "Managed provider proxy is not implemented in this build.", {
-      providerId,
-      userId: user.userId,
-      proxy: event.pathParameters?.proxy ?? null,
-    });
+    const provider = getManagedProvider(providerId);
+    return json(200, await provider.proxy({ user, event }));
   }
 
   return problem(404, "not_found", "Route not found.", {

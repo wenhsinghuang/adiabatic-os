@@ -62,6 +62,52 @@ The credential broker is separate from Guard. Guard is the write and provenance 
 
 An app that needs external data models it as a connector (ingest to D0, then read the substrate) or calls a brokered system capability (AI gateway, retrieval). The raw secret never enters app (WebContainer) memory.
 
+## Desktop Identity Sessions
+
+The credential module also stores the Lamarck desktop session, but that session
+is not connector auth. It is product identity: the local desktop's credential for
+calling Lamarck-hosted APIs. The same `CredentialStore` / `SecretStore`
+infrastructure is reused because the storage problem is identical (encrypted
+token custody plus clear non-secret metadata), but the credential is separated by
+kind and owner:
+
+```text
+kind:       lamarckSession
+ownerType:  desktop
+ownerId:    identity
+secret:     { accessToken, refreshToken, userId, sessionId, expiries }
+```
+
+The desktop session is obtained through a native-app style authorization code
+flow, not by copying a browser session token into local storage:
+
+1. desktop core generates `state`, `code_verifier`, and `code_challenge`.
+2. shell opens `app.lamarck.ai/auth/authorize?...` in the browser.
+3. the app signs the user in with Clerk/Google if needed.
+4. the app calls `api.lamarck.ai/desktop/auth/authorize` with the Clerk browser
+   session; the API returns only a short-lived one-time code redirecting to the
+   desktop loopback callback.
+5. desktop core receives `code + state` on `/auth/callback` and exchanges
+   `code + code_verifier` at `api.lamarck.ai/desktop/auth/token`.
+6. the credential module stores the resulting Lamarck desktop session encrypted
+   in `auth_secret_items`.
+
+This keeps browser identity, desktop identity, and connector/provider auth as
+separate security boundaries. Browser JavaScript never receives the long-lived
+desktop refresh token. Desktop access/refresh TTL, device revocation, and
+session audit can evolve independently of Clerk's browser session model.
+
+The desktop loopback callback is separate from connector OAuth:
+
+```text
+http://localhost:32100/auth/callback
+http://localhost:32101/auth/callback
+http://localhost:32102/auth/callback
+```
+
+Only `localhost` is part of the contract. `127.0.0.1` is intentionally not used
+for Lamarck desktop identity callbacks.
+
 ## Secret Storage — E2E Envelope
 
 A random 256-bit `vault_key` is the encryption root. Secret values are encrypted under it; only the ciphertext is persisted. The `vault_key` is never written to the database.
@@ -167,7 +213,7 @@ auth_secret_items    id, ciphertext, nonce, algorithm, created_at, updated_at   
 The schema does not adapt per auth type; the type lives in a discriminator plus an opaque payload, so a new type adds zero columns. Three things live in three places:
 
 - **Flow config (how to run the auth) is *not* in the DB** — it is static connector-manifest data (standard OAuth client metadata: `authorization_endpoint`, `token_endpoint`, `client_id`, `token_endpoint_auth_method`, …), identical for every user of that connector. The DB stores only the per-user *result* and binding.
-- **Secret values (the type-varying sensitive part) live inside the ciphertext.** `auth_secret_items.ciphertext` is an encrypted JSON blob whose internal shape is type-specific (`api_key → {value}`, `oauth2 → {access_token, refresh_token, expires_at}`, `hmac → {key, secret}`); the DB sees only opaque ciphertext and never a per-type column. This is the classic discriminator + common-columns + opaque-payload pattern, with encryption making the varying part naturally opaque — adding a type is a new `kind` value plus a new blob shape, no migration.
+- **Secret values (the type-varying sensitive part) live inside the ciphertext.** `auth_secret_items.ciphertext` is an encrypted JSON blob whose internal shape is type-specific (`apiKey → {value}`, `oauth2 → {accessToken, refreshToken, expiresAt}`, `managedProvider → {providerId, accessToken, expiresAt}`, `lamarckSession → {accessToken, refreshToken, userId, sessionId, expiries}`, future `hmac → {key, secret}`); the DB sees only opaque ciphertext and never a per-type column. This is the classic discriminator + common-columns + opaque-payload pattern, with encryption making the varying part naturally opaque — adding a type is a new `kind` value plus a new blob shape, no migration.
 - **Common, queryable, non-secret metadata are the `auth_credentials` columns:** `kind` (the auth.type discriminator), the owner/account binding, `scopes_json`, `status` (`active | expired | revoked | refresh_failed` — feeds the attention surface), `expires_at` in clear (so refresh can be scheduled and expiry shown without decrypting), and `secret_item_id`.
 
 Storage and access:

@@ -16,10 +16,14 @@ import { TerminalPanel } from "./content/TerminalPanel";
 import { useTabs } from "./hooks/useTabs";
 import {
   approveSchemaRequest,
+  getLamarckSession,
   listApps,
   listSchemaRequests,
+  logoutLamarckSession,
   rejectSchemaRequest,
   saveDoc,
+  startLamarckLogin,
+  type LamarckSessionView,
   type SchemaRequest,
 } from "./lib/api";
 import "./styles/global.css";
@@ -33,6 +37,8 @@ export function App() {
   const [terminalStarted, setTerminalStarted] = useState(false);
   const [activePanel, setActivePanel] = useState<Panel>("pages");
   const [schemaRequest, setSchemaRequest] = useState<SchemaRequest | null>(null);
+  const [lamarckSession, setLamarckSession] = useState<LamarckSessionView>({ status: "signed_out" });
+  const [identityBusy, setIdentityBusy] = useState(false);
 
   const {
     tabs,
@@ -111,6 +117,28 @@ export function App() {
     };
   }, [coreStatus]);
 
+  useEffect(() => {
+    if (coreStatus !== "connected") return;
+    let cancelled = false;
+
+    async function pollIdentity() {
+      try {
+        const session = await getLamarckSession();
+        if (!cancelled) setLamarckSession(session);
+      } catch (err) {
+        console.error("[app] Identity session poll failed:", err);
+        if (!cancelled) setLamarckSession({ status: "signed_out" });
+      }
+    }
+
+    pollIdentity();
+    const id = window.setInterval(pollIdentity, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [coreStatus]);
+
   const handleApproveSchema = useCallback(async (id: string, remember: boolean) => {
     await approveSchemaRequest(id, remember);
     setSchemaRequest(null);
@@ -142,10 +170,42 @@ export function App() {
     openActivityTab();
   }, [openActivityTab]);
 
+  const handleIdentitySignIn = useCallback(async () => {
+    setIdentityBusy(true);
+    try {
+      const started = await startLamarckLogin();
+      if (window.adiabaticHost?.openExternal) {
+        await window.adiabaticHost.openExternal(started.authorizationUrl);
+      } else {
+        window.open(started.authorizationUrl, "_blank", "noopener");
+      }
+    } finally {
+      setIdentityBusy(false);
+    }
+  }, []);
+
+  const handleIdentitySignOut = useCallback(async () => {
+    setIdentityBusy(true);
+    try {
+      await logoutLamarckSession();
+      setLamarckSession({ status: "signed_out" });
+    } finally {
+      setIdentityBusy(false);
+    }
+  }, []);
+
   return (
     <>
       <Shell
-        titleBar={<TitleBar activeDocId={activeTabId} />}
+        titleBar={(
+          <TitleBar
+            activeDocId={activeTabId}
+            lamarckSession={lamarckSession}
+            identityBusy={identityBusy}
+            onIdentitySignIn={handleIdentitySignIn}
+            onIdentitySignOut={handleIdentitySignOut}
+          />
+        )}
         activityBar={
           <ActivityBar
             activePanel={activePanel}

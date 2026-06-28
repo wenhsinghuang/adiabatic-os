@@ -6,6 +6,7 @@ export interface ApiConfig {
   allowedOrigins: string[];
   usersTable: string;
   userIdentitiesTable: string;
+  desktopSessionsTable: string;
   managedProviderConnectionsTable: string;
   oauthStateTable: string;
 }
@@ -30,6 +31,7 @@ export function getConfig(): ApiConfig {
     allowedOrigins: parseCsvEnv("LAMARCK_ALLOWED_ORIGINS"),
     usersTable: requiredEnv("USERS_TABLE"),
     userIdentitiesTable: requiredEnv("USER_IDENTITIES_TABLE"),
+    desktopSessionsTable: requiredEnv("DESKTOP_SESSIONS_TABLE"),
     managedProviderConnectionsTable: requiredEnv("MANAGED_PROVIDER_CONNECTIONS_TABLE"),
     oauthStateTable: requiredEnv("OAUTH_STATE_TABLE"),
   };

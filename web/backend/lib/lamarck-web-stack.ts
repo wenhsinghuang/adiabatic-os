@@ -43,6 +43,15 @@ export class LamarckWebStack extends cdk.Stack {
       removalPolicy: stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
     });
 
+    const desktopSessionsTable = new dynamodb.Table(this, "DesktopSessionsTable", {
+      tableName: `lamarck-${stage}-desktop-sessions`,
+      partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "expiresAt",
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: stage === "prod" },
+      removalPolicy: stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
     const connectionsTable = new dynamodb.Table(this, "ManagedProviderConnectionsTable", {
       tableName: `lamarck-${stage}-managed-provider-connections`,
       partitionKey: { name: "userId", type: dynamodb.AttributeType.STRING },
@@ -70,6 +79,7 @@ export class LamarckWebStack extends cdk.Stack {
       LAMARCK_ALLOWED_ORIGINS: frontendOrigins.join(","),
       USERS_TABLE: usersTable.tableName,
       USER_IDENTITIES_TABLE: userIdentitiesTable.tableName,
+      DESKTOP_SESSIONS_TABLE: desktopSessionsTable.tableName,
       MANAGED_PROVIDER_CONNECTIONS_TABLE: connectionsTable.tableName,
       OAUTH_STATE_TABLE: stateTable.tableName,
     };
@@ -102,6 +112,7 @@ export class LamarckWebStack extends cdk.Stack {
     usersTable.grant(apiHandler, "dynamodb:TransactWriteItems");
     userIdentitiesTable.grantReadWriteData(apiHandler);
     userIdentitiesTable.grant(apiHandler, "dynamodb:TransactWriteItems");
+    desktopSessionsTable.grantReadWriteData(apiHandler);
     connectionsTable.grantReadWriteData(apiHandler);
     stateTable.grantReadWriteData(apiHandler);
 
@@ -122,6 +133,26 @@ export class LamarckWebStack extends cdk.Stack {
     });
     api.addRoutes({
       path: "/me",
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/desktop/auth/authorize",
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/desktop/auth/token",
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/desktop/auth/logout",
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/providers",
       methods: [apigatewayv2.HttpMethod.GET],
       integration: apiIntegration,
     });
@@ -186,6 +217,10 @@ export class LamarckWebStack extends cdk.Stack {
     new cdk.CfnOutput(this, "UserIdentitiesTableName", {
       value: userIdentitiesTable.tableName,
       description: "External identity to Lamarck user mapping table",
+    });
+    new cdk.CfnOutput(this, "DesktopSessionsTableName", {
+      value: desktopSessionsTable.tableName,
+      description: "Desktop session table",
     });
     new cdk.CfnOutput(this, "OAuthStateTableName", {
       value: stateTable.tableName,

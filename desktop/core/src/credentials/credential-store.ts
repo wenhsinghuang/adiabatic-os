@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 export type CredentialStatus = "active" | "expired" | "revoked" | "refresh_failed";
-export type CredentialKind = "apiKey" | "oauth2" | "managedProvider";
+export type CredentialKind = "apiKey" | "oauth2" | "managedProvider" | "lamarckSession";
 
 export interface CredentialRecord {
   id: string;

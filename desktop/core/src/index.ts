@@ -24,6 +24,7 @@ import {
 } from "./connectors/auth";
 import {
   CredentialStore,
+  LamarckSessionManager,
   SqliteEncryptedSecretStore,
   encodeVaultKey,
 } from "./credentials";
@@ -53,7 +54,9 @@ const authSecrets: AuthSecrets = {
 const corePort = Number(process.env.PORT) || 3000;
 const coreHost = process.env.HOST || "127.0.0.1";
 const oauthRedirectUri = `http://localhost:${corePort}/oauth/callback`;
+const identityRedirectUri = `http://localhost:${corePort}/auth/callback`;
 const managedProviderAppOrigin = process.env.LAMARCK_APP_ORIGIN ?? "https://app.lamarck.ai";
+const lamarckApiOrigin = process.env.LAMARCK_API_ORIGIN ?? "https://api.lamarck.ai";
 const ADIABATIC_SYSTEM_DTS = `declare module "@adiabatic/system" {
   type JsonValue =
     | null
@@ -91,10 +94,18 @@ const guard = new Guard({ db: dataDb, source: "system:server" });
 const settings = new SettingsStore(adiabaticDir);
 await settings.update({ workspacePath });
 const vaultKey = process.env.ADIABATIC_VAULT_KEY ?? encodeVaultKey(randomBytes(32));
+const secretStore = new SqliteEncryptedSecretStore(systemDb, vaultKey);
+const credentialStore = new CredentialStore(systemDb);
 const authManager = new ConnectorAuthManager(
-  new SqliteEncryptedSecretStore(systemDb, vaultKey),
-  { credentialStore: new CredentialStore(systemDb) },
+  secretStore,
+  { credentialStore },
 );
+const lamarckSessionManager = new LamarckSessionManager(secretStore, {
+  credentialStore,
+  apiOrigin: lamarckApiOrigin,
+  appOrigin: managedProviderAppOrigin,
+  redirectUri: identityRedirectUri,
+});
 const connectorSupervisor = new ConnectorSupervisor({
   systemDb,
   guard,
@@ -328,8 +339,30 @@ const server = Bun.serve({
       return new Response(null, { status: 204, headers });
     }
 
-    if ((path.startsWith("/api/") || path === "/oauth/callback") && !isAllowedHost(req)) {
+    if ((path.startsWith("/api/") || path === "/oauth/callback" || path === "/auth/callback") && !isAllowedHost(req)) {
       return json({ error: "invalid host" }, 403);
+    }
+
+    if (path === "/auth/callback" && method === "GET") {
+      try {
+        const result = await lamarckSessionManager.completeCallback(url.searchParams);
+        return new Response(
+          `<!doctype html><meta charset="utf-8"><title>Lamarck Desktop</title><body style="font-family: system-ui; padding: 24px;"><h1>Signed in</h1><p>You can return to Lamarck desktop.</p><p style="color: #555;">Session ${escapeHtml(result.sessionId ?? "")}</p></body>`,
+          {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8", ...headers },
+          },
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return new Response(
+          `<!doctype html><meta charset="utf-8"><title>Lamarck Desktop</title><body style="font-family: system-ui; padding: 24px;"><h1>Sign in failed</h1><p>${escapeHtml(message)}</p></body>`,
+          {
+            status: 400,
+            headers: { "Content-Type": "text/html; charset=utf-8", ...headers },
+          },
+        );
+      }
     }
 
     if (path === "/oauth/callback" && method === "GET") {
@@ -385,6 +418,23 @@ const server = Bun.serve({
       // -- Workspace --
       if (path === "/api/workspace" && method === "GET") {
         return json({ path: workspacePath });
+      }
+
+      // -- Lamarck identity --
+      if (path === "/api/identity/session" && method === "GET") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        return json(await lamarckSessionManager.session());
+      }
+
+      if (path === "/api/identity/login/start" && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        return json(lamarckSessionManager.startLogin());
+      }
+
+      if (path === "/api/identity/logout" && method === "POST") {
+        if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
+        await lamarckSessionManager.logout();
+        return json({ ok: true });
       }
 
       // -- Docs --
