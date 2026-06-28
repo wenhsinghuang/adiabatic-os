@@ -248,8 +248,8 @@
         authTitle.textContent = `Connect ${provider.name}`;
         authNote.textContent = `Sign in to continue to ${provider.name}.`;
       } else if (desktopAuthorize) {
-        authTitle.textContent = "Authorize Lamarck desktop";
-        authNote.textContent = "Sign in to connect this desktop workspace.";
+        authTitle.textContent = "Sign in to Lamarck";
+        authNote.textContent = "Continue to the desktop app after signing in.";
       } else if (path === "/") {
         authTitle.textContent = "Your Lamarck account";
         authNote.textContent = "Manage identity, devices, and provider connections.";
@@ -283,13 +283,6 @@
                     <button id="start-provider-connect" type="button">Connect provider</button>
                     <span class="small" id="provider-connect-status">Provider connect not started.</span>
                   </div>`
-                : desktopAuthorize
-                  ? `<div class="provider">
-                      <b>Lamarck desktop</b>
-                      <span>Authorize this local workspace.</span>
-                      <button id="authorize-desktop" type="button">Continue to desktop</button>
-                      <span class="small" id="desktop-authorize-status">Waiting for authorization.</span>
-                    </div>`
                 : `<a class="button" href="/providers/oura/connect">Connect Oura</a>`
             }
             <button id="sign-out" type="button">Sign out</button>
@@ -301,10 +294,30 @@
         document.getElementById("start-provider-connect")?.addEventListener("click", () => {
           startProviderConnect(clerk);
         });
+        syncBackendSession(clerk);
+      }
+
+      function renderDesktopAuthorize(clerk) {
+        const user = clerk.user;
+        const email = user?.primaryEmailAddress?.emailAddress || "your Lamarck account";
+        authTitle.textContent = "Continuing to Lamarck Desktop";
+        authNote.textContent = `Signed in as ${email}.`;
+        mount.innerHTML = `
+          <div class="signed-in">
+            <div class="session-state">
+              <strong>Authorize this desktop session</strong>
+              <div class="small" id="desktop-authorize-status">Lamarck Desktop will be able to access your Lamarck account.</div>
+            </div>
+            <button id="authorize-desktop" type="button">Authorize</button>
+            <button id="sign-out" type="button">Use another account</button>
+          </div>
+        `;
         document.getElementById("authorize-desktop")?.addEventListener("click", () => {
           authorizeDesktop(clerk);
         });
-        syncBackendSession(clerk);
+        document.getElementById("sign-out")?.addEventListener("click", () => {
+          clerk.signOut({ redirectUrl: continueTo });
+        });
       }
 
       async function syncBackendSession(clerk) {
@@ -487,6 +500,10 @@
           });
 
           if (clerk.user) {
+            if (desktopAuthorize) {
+              renderDesktopAuthorize(clerk);
+              return;
+            }
             renderSignedIn(clerk);
             return;
           }
