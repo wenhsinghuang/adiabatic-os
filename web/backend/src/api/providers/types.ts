@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 
+import type { ManagedProviderCapability } from "../managed-provider-auth";
 import type { LamarckUser } from "../identity";
 
 export interface ManagedProviderMetadata {
@@ -21,12 +22,19 @@ export interface ManagedProviderConnectStart {
   status: "not_implemented";
   message: string;
   userId: string;
+  integrationId?: string;
   apiBaseUrl: string;
   scopes: string[];
 }
 
 export interface ManagedProviderContext {
   user: LamarckUser;
+  event: APIGatewayProxyEventV2;
+  integrationId?: string;
+}
+
+export interface ManagedProviderProxyContext {
+  capability: ManagedProviderCapability;
   event: APIGatewayProxyEventV2;
 }
 
@@ -36,5 +44,5 @@ export interface ManagedProviderModule {
     start(ctx: ManagedProviderContext): Promise<ManagedProviderConnectStart>;
     callback(ctx: Omit<ManagedProviderContext, "user">): Promise<unknown>;
   };
-  proxy(ctx: ManagedProviderContext): Promise<unknown>;
+  proxy(ctx: ManagedProviderProxyContext): Promise<unknown>;
 }

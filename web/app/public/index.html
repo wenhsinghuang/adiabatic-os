@@ -226,6 +226,8 @@
       const path = route.pathname.replace(/\/+$/, "") || "/";
       const providerMatch = path.match(/^\/providers\/([^/]+)\/connect$/);
       const providerId = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
+      const providerIntegrationId = route.searchParams.get("integrationId");
+      const providerIntegrationKey = route.searchParams.get("integrationKey");
       const desktopAuthorize = path === "/auth/authorize";
       const requestedRedirect = safeReturnPath(route.searchParams.get("redirect_url"));
       const provider = providerId
@@ -371,7 +373,11 @@
                 Authorization: `Bearer ${token}`,
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({ returnTo: window.location.href }),
+              body: JSON.stringify({
+                returnTo: window.location.href,
+                integrationId: providerIntegrationId,
+                integrationKey: providerIntegrationKey,
+              }),
               cache: "no-store",
             },
           );

@@ -4,6 +4,7 @@ import type {
   ManagedProviderConnectStart,
   ManagedProviderContext,
   ManagedProviderMetadata,
+  ManagedProviderProxyContext,
 } from "./types";
 
 export function notImplementedConnectStart(
@@ -32,7 +33,7 @@ export function notImplementedCallback(metadata: ManagedProviderMetadata): never
 
 export function notImplementedProxy(
   metadata: ManagedProviderMetadata,
-  ctx: ManagedProviderContext,
+  ctx: ManagedProviderProxyContext,
 ): never {
   throw new HttpError(
     501,
@@ -40,7 +41,8 @@ export function notImplementedProxy(
     "Managed provider proxy is not implemented in this build.",
     {
       providerId: metadata.providerId,
-      userId: ctx.user.userId,
+      userId: ctx.capability.userId,
+      integrationId: ctx.capability.integrationId,
       proxy: ctx.event.pathParameters?.proxy ?? null,
     },
   );
@@ -57,6 +59,7 @@ function connectDetails(
     status: "not_implemented",
     message: "Provider OAuth ceremony and token vaulting are pending backend implementation.",
     userId: ctx.user.userId,
+    integrationId: ctx.integrationId,
     apiBaseUrl: `${getConfig().apiOrigin}${metadata.apiBasePath}`,
     scopes: metadata.connect.scopes,
   };

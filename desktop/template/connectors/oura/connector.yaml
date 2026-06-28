@@ -14,20 +14,8 @@ platforms:
   android: {}
   cloud: {}
 auth:
-  type: oauth2-byo-confidential
-  authorizationEndpoint: https://cloud.ouraring.com/oauth/authorize
-  tokenEndpoint: https://api.ouraring.com/oauth/token
-  tokenEndpointAuthMethod: client_secret_post
-  scope:
-    - daily
-    - heartrate
-    - tag
-    - workout
-    - session
-    - spo2
-    - ring_configuration
-    - stress
-    - heart_health
+  type: managedProvider
+  providerId: oura
 config:
   lookback-days:
     type: number

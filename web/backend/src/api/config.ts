@@ -8,6 +8,7 @@ export interface ApiConfig {
   userIdentitiesTable: string;
   desktopSessionsTable: string;
   managedProviderConnectionsTable: string;
+  managedProviderCapabilityTokensTable: string;
   oauthStateTable: string;
 }
 
@@ -33,6 +34,7 @@ export function getConfig(): ApiConfig {
     userIdentitiesTable: requiredEnv("USER_IDENTITIES_TABLE"),
     desktopSessionsTable: requiredEnv("DESKTOP_SESSIONS_TABLE"),
     managedProviderConnectionsTable: requiredEnv("MANAGED_PROVIDER_CONNECTIONS_TABLE"),
+    managedProviderCapabilityTokensTable: requiredEnv("MANAGED_PROVIDER_CAPABILITY_TOKENS_TABLE"),
     oauthStateTable: requiredEnv("OAUTH_STATE_TABLE"),
   };
 

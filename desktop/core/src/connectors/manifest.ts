@@ -29,11 +29,6 @@ const OAUTH_AUTH_TYPES = new Set([
 ]);
 const AUTH_TYPES = new Set(["none", "apiKey", "managedProvider", ...OAUTH_AUTH_TYPES]);
 const CONFIG_FIELD_TYPES = new Set<ConnectorConfigFieldType>(["string", "number", "boolean"]);
-const REMOVED_OAUTH_AUTH_TYPES = new Set([
-  "oauth2-hosted",
-  "oauth2-byo-public",
-  "oauth2-byo-confidential",
-]);
 
 export function validateConnectorId(id: string): void {
   if (!CONNECTOR_ID_PATTERN.test(id)) {
@@ -171,16 +166,6 @@ export async function loadConnectorManifest(connectorDir: string): Promise<Conne
 
 function validateAuthSpec(connectorId: string, auth: ConnectorAuthSpec): void {
   const rawAuth = auth as ConnectorAuthSpec & Record<string, unknown>;
-  if (rawAuth.type === "oauth2") {
-    throw new Error(
-      `Connector ${connectorId} uses legacy oauth2 auth; use oauth2-public or managedProvider`,
-    );
-  }
-  if (REMOVED_OAUTH_AUTH_TYPES.has(rawAuth.type as string)) {
-    throw new Error(
-      `Connector ${connectorId} uses removed ${rawAuth.type} auth; use oauth2-public or managedProvider`,
-    );
-  }
   if (!AUTH_TYPES.has(auth.type)) {
     throw new Error(`Connector ${connectorId} has invalid auth type: ${(auth as { type?: string }).type}`);
   }

@@ -1,7 +1,7 @@
 import { notImplementedProxy } from "../shared";
-import type { ManagedProviderContext } from "../types";
+import type { ManagedProviderProxyContext } from "../types";
 import { metadata } from "./metadata";
 
-export async function handleProxy(ctx: ManagedProviderContext): Promise<never> {
+export async function handleProxy(ctx: ManagedProviderProxyContext): Promise<never> {
   return notImplementedProxy(metadata, ctx);
 }

@@ -53,10 +53,19 @@ export class LamarckWebStack extends cdk.Stack {
     });
 
     const connectionsTable = new dynamodb.Table(this, "ManagedProviderConnectionsTable", {
-      tableName: `lamarck-${stage}-managed-provider-connections`,
+      tableName: `lamarck-${stage}-managed-provider-integration-connections`,
       partitionKey: { name: "userId", type: dynamodb.AttributeType.STRING },
-      sortKey: { name: "providerId", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "integrationId", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: stage === "prod" },
+      removalPolicy: stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
+    const capabilityTokensTable = new dynamodb.Table(this, "ManagedProviderCapabilityTokensTable", {
+      tableName: `lamarck-${stage}-managed-provider-capability-tokens`,
+      partitionKey: { name: "tokenHash", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "expiresAt",
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: stage === "prod" },
       removalPolicy: stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
     });
@@ -81,6 +90,7 @@ export class LamarckWebStack extends cdk.Stack {
       USER_IDENTITIES_TABLE: userIdentitiesTable.tableName,
       DESKTOP_SESSIONS_TABLE: desktopSessionsTable.tableName,
       MANAGED_PROVIDER_CONNECTIONS_TABLE: connectionsTable.tableName,
+      MANAGED_PROVIDER_CAPABILITY_TOKENS_TABLE: capabilityTokensTable.tableName,
       OAUTH_STATE_TABLE: stateTable.tableName,
     };
 
@@ -114,6 +124,7 @@ export class LamarckWebStack extends cdk.Stack {
     userIdentitiesTable.grant(apiHandler, "dynamodb:TransactWriteItems");
     desktopSessionsTable.grantReadWriteData(apiHandler);
     connectionsTable.grantReadWriteData(apiHandler);
+    capabilityTokensTable.grantReadWriteData(apiHandler);
     stateTable.grantReadWriteData(apiHandler);
 
     const api = new apigatewayv2.HttpApi(this, "HttpApi", {
@@ -158,6 +169,11 @@ export class LamarckWebStack extends cdk.Stack {
     });
     api.addRoutes({
       path: "/providers/{providerId}/connect/start",
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
+      path: "/providers/{providerId}/capability-token",
       methods: [apigatewayv2.HttpMethod.POST],
       integration: apiIntegration,
     });
@@ -209,6 +225,10 @@ export class LamarckWebStack extends cdk.Stack {
     new cdk.CfnOutput(this, "ManagedProviderConnectionsTableName", {
       value: connectionsTable.tableName,
       description: "Managed provider connection table",
+    });
+    new cdk.CfnOutput(this, "ManagedProviderCapabilityTokensTableName", {
+      value: capabilityTokensTable.tableName,
+      description: "Managed provider capability token table",
     });
     new cdk.CfnOutput(this, "UsersTableName", {
       value: usersTable.tableName,

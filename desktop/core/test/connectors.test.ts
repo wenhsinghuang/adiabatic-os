@@ -164,7 +164,7 @@ auth:
           clientId: "cid",
         } as any,
       })
-    ).toThrow("legacy oauth2 auth");
+    ).toThrow("invalid auth type");
     expect(() =>
       validateConnectorManifest({
         ...base,
@@ -212,35 +212,6 @@ auth:
         },
       })
     ).toThrow("forbids tokenEndpointAuthMethod");
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: {
-          type: "oauth2-byo-public",
-          authorizationEndpoint: "https://x/auth",
-          tokenEndpoint: "https://x/token",
-        } as any,
-      })
-    ).toThrow("removed oauth2-byo-public auth");
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: {
-          type: "oauth2-byo-confidential",
-          authorizationEndpoint: "https://x/auth",
-          tokenEndpoint: "https://x/token",
-          tokenEndpointAuthMethod: "client_secret_post",
-        } as any,
-      })
-    ).toThrow("removed oauth2-byo-confidential auth");
-    expect(() =>
-      validateConnectorManifest({
-        ...base,
-        auth: {
-          type: "oauth2-hosted",
-        } as any,
-      })
-    ).toThrow("removed oauth2-hosted auth");
     expect(
       validateConnectorManifest({
         ...base,
@@ -2388,14 +2359,33 @@ auth:
       host: { workspacePath: workspace },
       platform: "darwin",
       authManager: new ConnectorAuthManager(secrets, {
-        fetchImpl: async () => new Response(JSON.stringify({
-          access_token: "access-token",
-          refresh_token: "refresh-token",
-          expires_in: 3600,
-        }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        managedProviderApiOrigin: "https://api.lamarck.ai",
+        lamarckSession: {
+          accessToken: async () => "desktop-session-token",
+        },
+        fetchImpl: async (url, init) => {
+          if (String(url).includes("/capability-token")) {
+            const body = JSON.parse(String(init?.body ?? "{}")) as { integrationId?: string };
+            return new Response(JSON.stringify({
+              tokenType: "Bearer",
+              accessToken: "lamarck-capability-token",
+              expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+              providerId: "oura",
+              integrationId: body.integrationId,
+            }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            expires_in: 3600,
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
       }),
     });
     supervisor.register(
@@ -2440,14 +2430,33 @@ auth:
       host: { workspacePath: workspace },
       platform: "darwin",
       authManager: new ConnectorAuthManager(secrets, {
-        fetchImpl: async () => new Response(JSON.stringify({
-          access_token: "access-token",
-          refresh_token: "refresh-token",
-          expires_in: 3600,
-        }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        managedProviderApiOrigin: "https://api.lamarck.ai",
+        lamarckSession: {
+          accessToken: async () => "desktop-session-token",
+        },
+        fetchImpl: async (url, init) => {
+          if (String(url).includes("/capability-token")) {
+            const body = JSON.parse(String(init?.body ?? "{}")) as { integrationId?: string };
+            return new Response(JSON.stringify({
+              tokenType: "Bearer",
+              accessToken: "lamarck-capability-token",
+              expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+              providerId: "oura",
+              integrationId: body.integrationId,
+            }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            expires_in: 3600,
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
       }),
     });
 
@@ -2494,8 +2503,7 @@ auth:
           await secrets.set(authRef, JSON.stringify({
             kind: "managedProvider",
             providerId: "oura",
-            accessToken: "lamarck-capability-token",
-            expiresAt: Date.now() + 3600_000,
+            integrationId,
           }));
           await supervisor.connectIntegration(integrationId, { authRef });
         },

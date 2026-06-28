@@ -318,7 +318,7 @@ export class ConnectorSupervisor {
     throw new Error(`Connector ${existing.connectorId} does not use browser auth`);
   }
 
-  getOAuthAttempt(instanceId: string, attemptId: string): OAuthAttemptView {
+  getOAuthAttempt(instanceId: string, attemptId: string): Promise<OAuthAttemptView> {
     return this.authManager.getOAuthAttempt(instanceId, attemptId);
   }
 

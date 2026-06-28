@@ -5,8 +5,9 @@ Deployable backend for Lamarck-hosted services:
 - `api.lamarck.ai`: Lamarck provider proxy and capability-token APIs
 
 Identity is implemented as lazy `/me` sync from Clerk into Lamarck-owned user
-state. Provider OAuth, provider token vaulting, capability-token issuance, and
-proxy business logic are still intentional stubs.
+state. Shared managed-provider connection state and capability-token issuance
+are implemented; provider-specific OAuth, provider token vaulting, and proxy
+business logic are still intentional stubs.
 
 Product login and managed-provider connect UI live in the Cloudflare Worker app
 at `app.lamarck.ai`. This backend exposes one API surface for identity,
@@ -21,6 +22,7 @@ managed-provider connection state, and provider proxying.
 - DynamoDB table for external identity mappings (`clerk:{subject}` -> Lamarck `userId`)
 - DynamoDB table for desktop sessions
 - DynamoDB table for managed provider connections
+- DynamoDB table for managed provider capability tokens
 - DynamoDB table for OAuth/connect state
 - Secrets Manager bundle: `lamarck/{stage}/app`
 - Static managed provider module registry under `src/api/providers/`
@@ -116,13 +118,24 @@ Current flow shape:
 
 - `GET /providers` lists registered providers.
 - `POST /providers/{providerId}/connect/start` verifies the Clerk session,
-  resolves the internal `usr_*`, checks the provider registry, and returns a
-  structured not-implemented response until that provider's hosted OAuth flow is
-  wired.
+  resolves the internal `usr_*`, requires the connector `integrationId`, checks
+  the provider registry, and returns a structured not-implemented response until
+  that provider's hosted OAuth flow is wired.
+- `POST /providers/{providerId}/capability-token` verifies a Lamarck desktop
+  session token, checks the `userId + integrationId` managed-provider connection,
+  and issues a 24-hour opaque capability token scoped to
+  `/providers/{providerId}/v1/*`.
 - `GET|POST /providers/{providerId}/oauth/callback` and
-  `/providers/{providerId}/{proxy+}` dispatch to the provider module. Oura
-  currently returns structured stubs from `providers/oura/connect.ts` and
-  `providers/oura/proxy.ts`.
+  `/providers/{providerId}/v1/{proxy+}` dispatch to the provider module. Provider
+  data proxy routes require a scoped Lamarck capability token, not a Clerk token
+  and not a desktop session token. Oura currently returns structured stubs from
+  `providers/oura/connect.ts` and `providers/oura/proxy.ts`.
+
+Managed-provider server state is intentionally small and auxiliary to the
+local-first workspace: provider token vault rows are keyed by `userId +
+integrationId`, while local connector credentials store only `{ kind:
+"managedProvider", providerId, integrationId }`. Connector runtime code receives
+only the scoped capability token returned by `context.auth.getToken()`.
 
 Production attaches `api.lamarck.ai` to the HTTP API and requires Doppler prod
 to expose `LAMARCK_API_CERTIFICATE_ARN`. The certificate is an ACM public certificate in

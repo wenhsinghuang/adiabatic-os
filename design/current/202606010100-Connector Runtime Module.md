@@ -782,7 +782,7 @@ auth:
 
 The auth manifest type selects the setup/exchange flow. `oauth2-public` is the only direct OAuth flow: author-owned public client, local loopback receiver, and PKCE always on. `managedProvider` is the official Lamarck-managed provider contract for confidential or provider-specific OAuth; provider OAuth metadata, client secrets, refresh-token custody, provider quirks, and provider API proxying live in Lamarck hosted services, not the local manifest. See [External Credential Broker and Secret Store](202606150000-External%20Credential%20Broker%20and%20Secret%20Store.md).
 
-Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the external credential broker / secret store. `apiKey` returns a local user secret, `oauth2` returns a direct public OAuth provider token, and `managedProvider` returns a Lamarck capability token for Lamarck's provider API.
+Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the external credential broker / secret store. `apiKey` returns a local user secret, `oauth2` returns a direct public OAuth provider token, and `managedProvider` returns a short-lived Lamarck capability token for Lamarck's provider API. Managed-provider capability tokens are scoped to the current `integrationId`, `providerId`, and `/providers/{providerId}/v1/*`; they are not desktop session tokens and they are not provider OAuth tokens.
 
 ```ts
 type ConnectorAuthHandle =

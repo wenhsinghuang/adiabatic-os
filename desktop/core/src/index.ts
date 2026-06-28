@@ -96,16 +96,20 @@ await settings.update({ workspacePath });
 const vaultKey = process.env.ADIABATIC_VAULT_KEY ?? encodeVaultKey(randomBytes(32));
 const secretStore = new SqliteEncryptedSecretStore(systemDb, vaultKey);
 const credentialStore = new CredentialStore(systemDb);
-const authManager = new ConnectorAuthManager(
-  secretStore,
-  { credentialStore },
-);
 const lamarckSessionManager = new LamarckSessionManager(secretStore, {
   credentialStore,
   apiOrigin: lamarckApiOrigin,
   appOrigin: managedProviderAppOrigin,
   redirectUri: identityRedirectUri,
 });
+const authManager = new ConnectorAuthManager(
+  secretStore,
+  {
+    credentialStore,
+    managedProviderApiOrigin: lamarckApiOrigin,
+    lamarckSession: lamarckSessionManager,
+  },
+);
 const connectorSupervisor = new ConnectorSupervisor({
   systemDb,
   guard,
@@ -656,7 +660,7 @@ const server = Bun.serve({
       );
       if (authAttemptMatch && method === "GET") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
-        const result = connectorSupervisor.getOAuthAttempt(
+        const result = await connectorSupervisor.getOAuthAttempt(
           decodeURIComponent(authAttemptMatch[1]),
           decodeURIComponent(authAttemptMatch[2]),
         );

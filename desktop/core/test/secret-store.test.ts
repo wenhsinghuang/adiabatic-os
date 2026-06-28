@@ -104,7 +104,7 @@ describe("Secret store and connector credential broker", () => {
     }));
 
     expect(result).toMatchObject({ status: "connected", credentialId: "oauth-ref", authRef: "oauth-ref" });
-    expect(manager.getOAuthAttempt("integration-1", started.attemptId)).toMatchObject({
+    expect(await manager.getOAuthAttempt("integration-1", started.attemptId)).toMatchObject({
       status: "connected",
       credentialId: "oauth-ref",
     });

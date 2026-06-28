@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import {
   CredentialStore,
   MemorySecretStore,
+  type LamarckSessionManager,
   type CredentialRecord,
   type SecretStore,
 } from "../credentials";
@@ -45,8 +46,7 @@ type SecretPayload =
   | {
       kind: "managedProvider";
       providerId: string;
-      accessToken: string;
-      expiresAt?: number;
+      integrationId: string;
     };
 
 interface OAuthAttempt {
@@ -87,11 +87,28 @@ interface TokenResponse {
   error_description?: string;
 }
 
+interface ManagedProviderCapabilityToken {
+  tokenType: "Bearer";
+  accessToken: string;
+  expiresAt: string;
+  providerId: string;
+  integrationId: string;
+}
+
+class ManagedProviderNotConnectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ManagedProviderNotConnectedError";
+  }
+}
+
 interface ConnectorAuthManagerOptions {
   credentialStore?: CredentialStore;
   fetchImpl?: typeof fetch;
   refreshSkewMs?: number;
   attemptTtlMs?: number;
+  managedProviderApiOrigin?: string;
+  lamarckSession?: Pick<LamarckSessionManager, "accessToken">;
 }
 
 export class ConnectorAuthManager {
@@ -99,6 +116,8 @@ export class ConnectorAuthManager {
   private fetchImpl: typeof fetch;
   private refreshSkewMs: number;
   private attemptTtlMs: number;
+  private managedProviderApiOrigin: string | undefined;
+  private lamarckSession: Pick<LamarckSessionManager, "accessToken"> | undefined;
   private attemptsById = new Map<string, OAuthAttempt>();
   private attemptsByState = new Map<string, OAuthAttempt>();
   private managedAttemptsById = new Map<string, ManagedProviderAttempt>();
@@ -112,6 +131,8 @@ export class ConnectorAuthManager {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.refreshSkewMs = opts.refreshSkewMs ?? 60_000;
     this.attemptTtlMs = opts.attemptTtlMs ?? 10 * 60_000;
+    this.managedProviderApiOrigin = opts.managedProviderApiOrigin;
+    this.lamarckSession = opts.lamarckSession;
   }
 
   async setToken(
@@ -217,7 +238,10 @@ export class ConnectorAuthManager {
     this.managedAttemptsById.set(attemptId, attempt);
 
     const url = new URL(`/providers/${encodeURIComponent(auth.providerId)}/connect`, normalizeOrigin(input.appOrigin));
-    url.searchParams.set("attempt", attemptId);
+    url.searchParams.set("integrationId", integration.id);
+    if (integration.integrationKey) {
+      url.searchParams.set("integrationKey", integration.integrationKey);
+    }
 
     return {
       authorizationUrl: url.toString(),
@@ -226,7 +250,7 @@ export class ConnectorAuthManager {
     };
   }
 
-  getOAuthAttempt(integrationId: string, attemptId: string): OAuthAttemptView {
+  async getOAuthAttempt(integrationId: string, attemptId: string): Promise<OAuthAttemptView> {
     const attempt = this.attemptsById.get(attemptId);
     if (!attempt) {
       return this.getManagedProviderAttempt(integrationId, attemptId);
@@ -248,7 +272,7 @@ export class ConnectorAuthManager {
     };
   }
 
-  private getManagedProviderAttempt(integrationId: string, attemptId: string): OAuthAttemptView {
+  private async getManagedProviderAttempt(integrationId: string, attemptId: string): Promise<OAuthAttemptView> {
     const attempt = this.managedAttemptsById.get(attemptId);
     if (!attempt || attempt.integrationId !== integrationId) {
       return { status: "failed", error: "Auth attempt not found" };
@@ -256,6 +280,23 @@ export class ConnectorAuthManager {
     if (attempt.status === "pending" && Date.now() > attempt.expiresAt) {
       attempt.status = "expired";
       attempt.error = "Managed provider auth attempt expired";
+    }
+    if (attempt.status === "pending") {
+      try {
+        await this.fetchManagedProviderCapability(attempt.providerId, attempt.integrationId);
+        await this.persistManagedProviderBinding(attempt.authRef, {
+          providerId: attempt.providerId,
+          integrationId: attempt.integrationId,
+          ownerId: attempt.integrationId,
+        });
+        attempt.status = "connected";
+        attempt.credentialId = attempt.authRef;
+      } catch (err) {
+        if (!(err instanceof ManagedProviderNotConnectedError)) {
+          attempt.status = "failed";
+          attempt.error = err instanceof Error ? err.message : String(err);
+        }
+      }
     }
     return {
       status: attempt.status,
@@ -356,7 +397,7 @@ export class ConnectorAuthManager {
           if (payload.kind !== "managedProvider") {
             throw new Error(`Connector integration ${integration.id} credential kind mismatch`);
           }
-          return this.managedProviderAccessToken(authRef, auth, payload);
+          return this.managedProviderAccessToken(authRef, auth, integration.id, payload);
         }
         if (!isOAuthAuthSpec(auth) || payload.kind !== "oauth2") {
           throw new Error(`Connector integration ${integration.id} credential kind mismatch`);
@@ -385,18 +426,107 @@ export class ConnectorAuthManager {
   private async managedProviderAccessToken(
     authRef: string,
     auth: ConnectorManagedProviderAuthSpec,
+    integrationId: string,
     payload: Extract<SecretPayload, { kind: "managedProvider" }>,
   ): Promise<string> {
     if (payload.providerId !== auth.providerId) {
       throw new Error(`Managed provider credential is for ${payload.providerId}, not ${auth.providerId}`);
     }
-    if (!payload.expiresAt || payload.expiresAt - Date.now() > this.refreshSkewMs) {
-      return payload.accessToken;
+    if (payload.integrationId !== integrationId) {
+      throw new Error(`Managed provider credential is for integration ${payload.integrationId}, not ${integrationId}`);
     }
-    this.credentialStore?.setStatus(authRef, "refresh_failed", {
-      refresh_error: "managed provider token refresh is not implemented in this build",
+    const existing = this.refreshFlights.get(authRef);
+    if (existing) return existing;
+    const flight = this.issueManagedProviderToken(authRef, auth, integrationId)
+      .finally(() => this.refreshFlights.delete(authRef));
+    this.refreshFlights.set(authRef, flight);
+    return flight;
+  }
+
+  private async issueManagedProviderToken(
+    authRef: string,
+    auth: ConnectorManagedProviderAuthSpec,
+    integrationId: string,
+  ): Promise<string> {
+    try {
+      const token = await this.fetchManagedProviderCapability(auth.providerId, integrationId);
+      return token.accessToken;
+    } catch (err) {
+      this.credentialStore?.setStatus(authRef, "refresh_failed", {
+        refresh_error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  private async fetchManagedProviderCapability(
+    providerId: string,
+    integrationId: string,
+  ): Promise<ManagedProviderCapabilityToken> {
+    if (!this.managedProviderApiOrigin || !this.lamarckSession) {
+      throw managedProviderUnavailable();
+    }
+    const sessionToken = await this.lamarckSession.accessToken();
+    const url = new URL(
+      `/providers/${encodeURIComponent(providerId)}/capability-token`,
+      normalizeOrigin(this.managedProviderApiOrigin),
+    );
+    const res = await this.fetchImpl(url.toString(), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${sessionToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ integrationId }),
     });
-    throw managedProviderUnavailable();
+    const text = await res.text();
+    const data = text ? JSON.parse(text) as Partial<ManagedProviderCapabilityToken> & { error?: string; message?: string } : {};
+    if (!res.ok) {
+      const message = data.message ?? data.error ?? `Managed provider capability endpoint returned ${res.status}`;
+      if (res.status === 409 || data.error === "managed_provider_not_connected") {
+        throw new ManagedProviderNotConnectedError(message);
+      }
+      throw new Error(message);
+    }
+    if (
+      data.tokenType !== "Bearer" ||
+      !data.accessToken ||
+      !data.expiresAt ||
+      data.providerId !== providerId ||
+      data.integrationId !== integrationId
+    ) {
+      throw new Error("Managed provider capability endpoint returned an invalid token response");
+    }
+    return data as ManagedProviderCapabilityToken;
+  }
+
+  private async persistManagedProviderBinding(
+    authRef: string,
+    input: {
+      providerId: string;
+      integrationId: string;
+      ownerId: string;
+    },
+  ): Promise<void> {
+    const payload: Extract<SecretPayload, { kind: "managedProvider" }> = {
+      kind: "managedProvider",
+      providerId: input.providerId,
+      integrationId: input.integrationId,
+    };
+    await this.writePayload(authRef, payload);
+    this.credentialStore?.upsert({
+      id: authRef,
+      kind: "managedProvider",
+      ownerType: "connector",
+      ownerId: input.ownerId,
+      status: "active",
+      secretItemId: authRef,
+      metadata: {
+        provider_id: input.providerId,
+        integration_id: input.integrationId,
+      },
+    });
   }
 
   private async refreshOAuthToken(

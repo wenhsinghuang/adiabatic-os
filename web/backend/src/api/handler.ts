@@ -13,6 +13,11 @@ import {
 } from "./desktop-auth";
 import { bearerToken, errorResponse, json, problem, routeKey } from "./http";
 import { requireLamarckUser } from "./identity";
+import {
+  issueManagedProviderCapabilityToken,
+  requireIntegrationId,
+  requireManagedProviderCapability,
+} from "./managed-provider-auth";
 import { getManagedProvider, listManagedProviders } from "./providers";
 
 export async function handler(
@@ -84,7 +89,14 @@ async function route(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStru
   if (key === "POST /providers/{providerId}/connect/start") {
     const user = await requireLamarckUser(event);
     const provider = getManagedProvider(providerId);
-    return json(200, await provider.connect.start({ user, event }));
+    const body = readJsonBody<{ integrationId?: string }>(event);
+    const integrationId = requireIntegrationId(body.integrationId);
+    return json(200, await provider.connect.start({ user, event, integrationId }));
+  }
+
+  if (key === "POST /providers/{providerId}/capability-token") {
+    const provider = getManagedProvider(providerId);
+    return json(200, await issueManagedProviderCapabilityToken(event, provider.metadata));
   }
 
   if (
@@ -96,12 +108,20 @@ async function route(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStru
   }
 
   if (key.includes("/providers/{providerId}/{proxy+}")) {
-    const user = await requireLamarckUser(event);
     const provider = getManagedProvider(providerId);
-    return json(200, await provider.proxy({ user, event }));
+    const capability = await requireManagedProviderCapability(event, provider.metadata);
+    return json(200, await provider.proxy({ capability, event }));
   }
 
   return problem(404, "not_found", "Route not found.", {
     routeKey: key,
   });
+}
+
+function readJsonBody<T>(event: APIGatewayProxyEventV2): T {
+  if (!event.body) return {} as T;
+  const text = event.isBase64Encoded
+    ? Buffer.from(event.body, "base64").toString("utf8")
+    : event.body;
+  return JSON.parse(text) as T;
 }
