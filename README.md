@@ -115,6 +115,35 @@ Electron shell
       -> .adiabatic/system.db
 ```
 
+### Module Overview
+
+```mermaid
+flowchart TB
+  Shell["Desktop shell<br/>Electron + React"]
+  Core["Core server<br/>local HTTP runtime"]
+  Guard["Guard<br/>durable write boundary"]
+  Credentials["External credential broker<br/>SecretStore + CredentialStore"]
+  Connectors["Connector supervisor<br/>install, setup, schedule, run"]
+  Runner["Connector runner<br/>trusted egress runtime"]
+  Apps["Workspace apps<br/>sandboxed UI/runtime"]
+  DataDb[("data.db<br/>events, docs, D2 tables")]
+  SystemDb[("system.db<br/>connectors, credentials, secrets")]
+  Web["Lamarck web/backend<br/>identity + managed provider APIs"]
+
+  Shell --> Core
+  Core --> Guard
+  Core --> Connectors
+  Core --> Credentials
+  Connectors --> Runner
+  Runner --> Guard
+  Runner --> Credentials
+  Apps --> Guard
+  Guard --> DataDb
+  Credentials --> SystemDb
+  Connectors --> SystemDb
+  Core -. "managedProvider / identity" .-> Web
+```
+
 ```mermaid
 flowchart LR
   C["Connectors"] --> G["Guard"]
@@ -131,6 +160,8 @@ flowchart LR
 | **Core** | Local HTTP runtime, DB access, app loader, connector supervisor | `desktop/core/src/index.ts` |
 | **Shell** | Electron + React desktop UI | `desktop/shell/` |
 | **Guard** | Single durable write boundary | `desktop/core/src/guard.ts` |
+| **External credential broker** | Encrypted external credential custody and metadata | `desktop/core/src/credentials/` |
+| **Connector auth adapter** | Connector setup flows and runtime `context.auth` handles | `desktop/core/src/connectors/auth.ts` |
 | **Data DB** | User-visible state: events, docs, derived tables | `.adiabatic/data.db` |
 | **System DB** | Control-plane state: connectors, auth, encrypted secrets | `.adiabatic/system.db` |
 | **Template** | First-launch workspace skeleton | `desktop/template/` |

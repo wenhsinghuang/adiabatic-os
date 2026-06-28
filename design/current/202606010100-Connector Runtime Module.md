@@ -35,7 +35,7 @@ System / core
   Capability broker    host-side proxy for guard, state, warnings, auth, and source authority
   Trigger runtime      decides when poll/manual runs happen
   Shell                integration UI and auth UX
-  Secret store         credentials, via unified auth/secrets module
+  Secret store         credentials, via external credential broker / secret store
   Official catalog     signed/hash source for official connector packages
   Integration registry installed runtime instances in .adiabatic DB
   Integration state    config, status, checkpoint, schedule in .adiabatic DB
@@ -459,7 +459,7 @@ When in doubt, start as a code constant. Promoting it to config later — declar
 The shell renders setup as two distinct components, because they map to two different things:
 
 - **Config component** — a form generated from the connector's config schema. Plain settings: values are shown, freely editable, and resettable to the declared default. Stored as integration-config overrides.
-- **Auth component** — rendered by `auth.type` (an API-key field, or an OAuth connect flow). Credentials are secrets: handled by the auth module, stored encrypted, never displayed back. The UI signals sensitivity (masked input, "stored encrypted", connect/revoke) so the user knows they are handing over a key, not setting an option.
+- **Credential component** — rendered by `auth.type` (an API-key field, or an OAuth connect flow). Credentials are secrets: handled by the credential broker / secret store, stored encrypted, never displayed back. The UI signals sensitivity (masked input, "stored encrypted", connect/revoke) so the user knows they are handing over a key, not setting an option.
 
 Keeping them separate is also a boundary guard: secrets always flow through the auth component into the encrypted store, never into the config schema. A connector declaring neither shows neither — the surface is driven entirely by the manifest.
 
@@ -620,7 +620,7 @@ connector code
   auth.getToken()
     -> IPC
     -> host capability broker
-    -> unified auth/secrets module
+    -> external credential broker / secret store
 ```
 
 `host.workspacePath` is host-owned runtime context. It must be supplied uniformly by the connector host, not patched into integration config and not special-cased by connector id.
@@ -749,7 +749,7 @@ oauth2-public
 managedProvider
 ```
 
-Secret material belongs to the unified auth/secrets module, not to `connectors/<connector_id>/` and not to connector-owned files.
+Secret material belongs to the external credential broker / secret store, not to `connectors/<connector_id>/` and not to connector-owned files.
 
 Manifest examples:
 
@@ -780,9 +780,9 @@ auth:
   providerId: oura
 ```
 
-The auth manifest type selects the setup/exchange flow. `oauth2-public` is the only direct OAuth flow: author-owned public client, local loopback receiver, and PKCE always on. `managedProvider` is the official Lamarck-managed provider contract for confidential or provider-specific OAuth; provider OAuth metadata, client secrets, refresh-token custody, provider quirks, and provider API proxying live in Lamarck hosted services, not the local manifest. See [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md).
+The auth manifest type selects the setup/exchange flow. `oauth2-public` is the only direct OAuth flow: author-owned public client, local loopback receiver, and PKCE always on. `managedProvider` is the official Lamarck-managed provider contract for confidential or provider-specific OAuth; provider OAuth metadata, client secrets, refresh-token custody, provider quirks, and provider API proxying live in Lamarck hosted services, not the local manifest. See [External Credential Broker and Secret Store](202606150000-External%20Credential%20Broker%20and%20Secret%20Store.md).
 
-Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the unified auth/secrets layer. `apiKey` returns a local user secret, `oauth2` returns a direct public OAuth provider token, and `managedProvider` returns a Lamarck capability token for Lamarck's provider API.
+Connector code receives an auth capability handle, not raw credential state. Each connector integration may store an `auth_ref`, but that is only a pointer into the external credential broker / secret store. `apiKey` returns a local user secret, `oauth2` returns a direct public OAuth provider token, and `managedProvider` returns a Lamarck capability token for Lamarck's provider API.
 
 ```ts
 type ConnectorAuthHandle =
@@ -995,7 +995,7 @@ connectors/<connector_id>/connector.yaml
 connectors/<connector_id>/ removal
   removes the installed connector package
 
-unified auth/secrets module
+external credential broker / secret store
   tokens and API keys
 
 D0 events
@@ -1176,5 +1176,5 @@ The shell ships a connector management surface (Source Console): per-integration
 Still pending outside the core connector system:
 
 - cached official catalog download/verification from the official registry / R2 (until then nothing classifies as official)
-- unified auth/secrets module adapter beyond the current injectable secret-store interface
+- external credential broker / secret store adapter beyond the current injectable secret-store interface
 - high-throughput queue and transactional batch writer

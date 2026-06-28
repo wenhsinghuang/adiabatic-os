@@ -3,16 +3,16 @@ import { mkdtempSync, mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { openDatabases } from "../src/db";
+import { ConnectorAuthManager } from "../src/connectors/auth";
 import {
-  AuthCredentialStore,
-  ConnectorAuthManager,
+  CredentialStore,
   SqliteEncryptedSecretStore,
   createVaultKey,
   encodeVaultKey,
-} from "../src/connectors/auth";
+} from "../src/credentials";
 import type { ConnectorIntegration } from "../src/connectors";
 
-describe("Secret store and OAuth broker", () => {
+describe("Secret store and connector credential broker", () => {
   let workspace: string;
   let opened: ReturnType<typeof openDatabases>;
 
@@ -49,7 +49,7 @@ describe("Secret store and OAuth broker", () => {
   test("api key connect creates credential metadata without D0 events", async () => {
     const manager = new ConnectorAuthManager(
       new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
-      { credentialStore: new AuthCredentialStore(opened.systemDb) },
+      { credentialStore: new CredentialStore(opened.systemDb) },
     );
 
     await manager.setToken("auth-ref", "secret-token", {
@@ -73,7 +73,7 @@ describe("Secret store and OAuth broker", () => {
     const manager = new ConnectorAuthManager(
       new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
       {
-        credentialStore: new AuthCredentialStore(opened.systemDb),
+        credentialStore: new CredentialStore(opened.systemDb),
         fetchImpl: async (_url, init) => {
           const body = String(init?.body);
           expect(body).toContain("grant_type=authorization_code");
@@ -116,7 +116,7 @@ describe("Secret store and OAuth broker", () => {
     const manager = new ConnectorAuthManager(
       new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey()),
       {
-        credentialStore: new AuthCredentialStore(opened.systemDb),
+        credentialStore: new CredentialStore(opened.systemDb),
         fetchImpl: async (_url, init) => {
           calls++;
           const body = String(init?.body);

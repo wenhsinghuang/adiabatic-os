@@ -1,8 +1,8 @@
-# Auth and Secret Store
+# External Credential Broker and Secret Store
 
 Status: current module definition
 
-This document defines how Adiabatic stores external credentials (API keys, OAuth tokens) and hands them to connectors and system components. Apps are deliberately excluded — they consume the substrate and call brokered system capabilities, never raw external credentials (see Caller Contract). It is distinct from [Local Capability Auth](202606010000-Local%20Capability%20Auth.md): that decision governs *who may call core* (process-local capability tokens); this one governs *external credential custody*. The two share the word "auth" and nothing else.
+This document defines how Adiabatic stores external credentials (API keys, OAuth tokens) and hands them to connectors and system components. Apps are deliberately excluded — they consume the substrate and call brokered system capabilities, never raw external credentials (see Caller Contract). It is distinct from [Local Capability Auth](202606010000-Local%20Capability%20Auth.md): that decision governs *who may call core* (process-local capability tokens); this one governs *external credential custody*. The connector manifest still uses the field name `auth.type`, but this module is a credential broker / secret store, not the product identity system or the local capability gate.
 
 ## Decision
 
@@ -49,7 +49,7 @@ The runtime connector handle remains smaller than the manifest contract. `oauth2
 
 ### Who receives credentials
 
-The broker is separate from Guard. Guard is the write and provenance boundary for D0/D1/D2; Auth brokers external credentials. Auth calls never route through Guard — the runtime decides which capability handle each caller receives by caller type.
+The credential broker is separate from Guard. Guard is the write and provenance boundary for D0/D1/D2; the credential broker brokers external credentials. Credential-broker calls never route through Guard — the runtime decides which capability handle each caller receives by caller type.
 
 **External egress is brokered; apps never hold raw external credentials.** An app that could call `auth.getToken()` would become an unaccounted external integration runtime: UI/browser code would see provider tokens, app manifests would grow OAuth scopes and reconnect UX, and — most corrosive for Adiabatic — D0 provenance would blur (was this fact ingested by a connector or fetched app-side?). So the boundary is not only a security rule, it preserves D0 source provenance.
 
@@ -142,7 +142,7 @@ auth:
 
 Provider access tokens issued to Lamarck-managed OAuth clients must not be handed to local connector code. Local connectors may be user-authored or modified by the end user. Once a provider access token enters local runtime, Lamarck can no longer enforce provider policy, endpoint allowlists, rate limits, data-use restrictions, or abuse controls, while provider enforcement may still be applied to Lamarck's official OAuth application. Managed providers therefore expose a Lamarck-controlled provider API/capability, not raw provider OAuth tokens.
 
-The local auth module still brokers runtime access. For `managedProvider`, `ConnectorAuthManager` stores the managed credential binding and may cache a short-lived Lamarck capability token encrypted in `SecretStore`. The hosted service remains the durable owner of provider refresh tokens and performs provider refresh server-side. `getToken()` returns a valid Lamarck capability token from the local cache when possible; when the cache is missing or expired, the auth module will call Lamarck's hosted app/service endpoint to obtain a fresh capability token and update the encrypted cache. The actual managed provider credential/token API is deferred until the hosted service is implemented.
+The local credential broker / secret store still brokers runtime access. For `managedProvider`, `ConnectorAuthManager` stores the managed credential binding and may cache a short-lived Lamarck capability token encrypted in `SecretStore`. The hosted service remains the durable owner of provider refresh tokens and performs provider refresh server-side. `getToken()` returns a valid Lamarck capability token from the local cache when possible; when the cache is missing or expired, the credential broker will call Lamarck's hosted app/service endpoint to obtain a fresh capability token and update the encrypted cache. The actual managed provider credential/token API is deferred until the hosted service is implemented.
 
 Adiabatic's own "Sign in with Google" (used by the future `google_account` keyslot) is the app's own public/installed OAuth client (PKCE + loopback); it is unrelated to connector provider access.
 
@@ -180,16 +180,16 @@ Storage and access:
 
 ### Auth tables are not app-readable
 
-The auth tables live in the **system DB**, not the user-substrate DB, so app code cannot read ciphertext or credential metadata even though it can query `D0`/`D1`/`D2`. This is enforced structurally: the app query path opens only the data DB. That separation is a substrate-level refactor auth depends on but does not own — see [System Database Separation](202606150100-System%20Database%20Separation.md). Standing up the system DB is a prerequisite for adding any auth table.
+The credential tables live in the **system DB**, not the user-substrate DB, so app code cannot read ciphertext or credential metadata even though it can query `D0`/`D1`/`D2`. This is enforced structurally: the app query path opens only the data DB. That separation is a substrate-level refactor the credential broker depends on but does not own — see [System Database Separation](202606150100-System%20Database%20Separation.md). Standing up the system DB is a prerequisite for adding any credential table.
 
-### Process boundary: keychain in Electron, auth tables in core
+### Process boundary: keychain in Electron, credential tables in core
 
 **Context.** `safeStorage` (the OS keychain) is only available in the Electron main process, but `core` is a separate Bun child it launches; and core, not Electron, owns the workspace and its databases.
 
 **Decision.** Split along the natural ownership line:
 
 - **Electron main owns the `vault_key`** (device-specific, the keychain's domain). At boot it reads/unlocks the `vault_key` from the OS keychain and hands it to core once over the existing secure channel (the same mechanism as `ADIABATIC_CORE_TOKEN`). No per-secret IPC.
-- **core owns the auth tables and the crypto** (the workspace/DB is core's domain). With the `vault_key` in hand it encrypts/decrypts locally and reads/writes the system DB. The auth broker is a **core module parallel to Guard, not part of Guard** (Guard is the D0/D1/D2 write path; auth is its own broker).
+- **core owns the credential tables and the crypto** (the workspace/DB is core's domain). With the `vault_key` in hand it encrypts/decrypts locally and reads/writes the system DB. The credential broker is a **core module parallel to Guard, not part of Guard** (Guard is the D0/D1/D2 write path; external credential custody is its own broker).
 
 The `vault_key` residing in core memory is acceptable under the existing threat model (Local Capability Auth already excludes process-memory inspection). Standalone core with no Electron host (dev/tests) takes the `vault_key` from an env var or an ephemeral key — deliberately minimal, no elaborate encrypted-file fallback.
 
@@ -197,9 +197,9 @@ Auth lifecycle does **not** produce D0 events. Credential connect, rotate, revok
 
 ## What to Build, and What Is Externally Blocked
 
-There is no artificial build-effort phasing: the whole local auth module is built together. What is deferred is deferred only because it depends on something that does not exist yet, not because the code is large.
+There is no artificial build-effort phasing: the whole local credential broker / secret store is built together. What is deferred is deferred only because it depends on something that does not exist yet, not because the code is large.
 
-**Build now — the complete local auth module:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + direct **OAuth2 public-client PKCE** (`oauth2-public`) + loopback callback. This is one coherent thing, built together.
+**Build now — the complete local credential broker / secret store:** the `SecretStore` interface (`set`/`get`/`delete`/`has`, swappable backend) + the `vault_key` envelope + OS-keychain unlock + recovery code + the two databases (data / system) + the data model + **apiKey** (resolves the present pain: API keys evaporating on restart) + direct **OAuth2 public-client PKCE** (`oauth2-public`) + loopback callback. This is one coherent thing, built together.
 
 **Deferred only by an external dependency** (not by build effort, and not by verification):
 

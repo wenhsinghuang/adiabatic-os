@@ -20,11 +20,13 @@ import {
   removeInstalledConnector,
 } from "./connectors";
 import {
-  AuthCredentialStore,
   ConnectorAuthManager,
+} from "./connectors/auth";
+import {
+  CredentialStore,
   SqliteEncryptedSecretStore,
   encodeVaultKey,
-} from "./connectors/auth";
+} from "./credentials";
 import { ulid } from "./utils/ulid";
 import { SettingsStore } from "./settings";
 import {
@@ -91,7 +93,7 @@ await settings.update({ workspacePath });
 const vaultKey = process.env.ADIABATIC_VAULT_KEY ?? encodeVaultKey(randomBytes(32));
 const authManager = new ConnectorAuthManager(
   new SqliteEncryptedSecretStore(systemDb, vaultKey),
-  { credentialStore: new AuthCredentialStore(systemDb) },
+  { credentialStore: new CredentialStore(systemDb) },
 );
 const connectorSupervisor = new ConnectorSupervisor({
   systemDb,

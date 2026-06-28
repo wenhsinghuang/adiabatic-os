@@ -8,14 +8,14 @@ This is a substrate-level refactor, not an auth feature. Auth is one beneficiary
 
 ## Context
 
-Adiabatic keeps everything in one SQLite database in `.adiabatic/`: the user substrate (`D0` / `D1` / `D2`) and the system's own control-plane tables (`connector_integrations`, `connector_custom_approvals`, …). The app read path (`/api/query`) calls a table-agnostic, read-only `Guard.query` for every authenticated caller — there is **no app-aware read filter**. So any table in the shared file is reachable by app code today: an app can already `SELECT * FROM connector_integrations`. This exposes system control-plane state to app code, and it would expose auth ciphertext/metadata the moment auth tables are added to the same file.
+Adiabatic keeps everything in one SQLite database in `.adiabatic/`: the user substrate (`D0` / `D1` / `D2`) and the system's own control-plane tables (`connector_integrations`, `connector_custom_approvals`, …). The app read path (`/api/query`) calls a table-agnostic, read-only `Guard.query` for every authenticated caller — there is **no app-aware read filter**. So any table in the shared file is reachable by app code today: an app can already `SELECT * FROM connector_integrations`. This exposes system control-plane state to app code, and it would expose credential ciphertext/metadata the moment credential tables are added to the same file.
 
 ## Decision
 
 Split storage into two databases by **access**, not by sync:
 
 - **data DB** — `D0` / `D1` / `D2`. The user substrate. Written through **Guard**, read by apps via `/api/query`.
-- **system DB** — the control plane: connector tables (`connector_integrations`, `connector_custom_approvals`, …), auth tables (`auth_*`), and any future system-internal state. Written by **core modules** (the supervisor, the auth broker), never app-readable.
+- **system DB** — the control plane: connector tables (`connector_integrations`, `connector_custom_approvals`, …), credential tables (`auth_*`), and any future system-internal state. Written by **core modules** (the supervisor, the credential broker), never app-readable.
 
 The app read/write paths open **only the data DB**. The system DB is therefore unreachable by app code **by construction** — structural isolation, not a denylist that must be maintained as new system tables appear. New control-plane tables land in the system DB and are automatically out of app reach.
 
@@ -29,5 +29,5 @@ This closes the pre-existing connector-table exposure and removes the need for a
 
 ## Consumers
 
-- [Auth and Secret Store](202606150000-Auth%20and%20Secret%20Store.md) — auth tables live in the system DB and are app-unreadable by virtue of this split. Standing up the system DB is a prerequisite for adding any auth table.
+- [External Credential Broker and Secret Store](202606150000-External%20Credential%20Broker%20and%20Secret%20Store.md) — credential tables live in the system DB and are app-unreadable by virtue of this split. Standing up the system DB is a prerequisite for adding any credential table.
 - Connector runtime — the connector control-plane tables move to the system DB, closing their current exposure.
