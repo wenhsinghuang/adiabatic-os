@@ -145,16 +145,71 @@ describe("Secret store and connector credential broker", () => {
     expect(calls).toBe(2);
   });
 
-  test("managed provider start builds the Lamarck connect URL", () => {
+  test("managed provider start builds the Lamarck connect URL", async () => {
     const manager = new ConnectorAuthManager();
-    const started = manager.startManagedProvider(integration("managed-ref"), {
+    const started = await manager.startManagedProvider(integration("managed-ref"), {
       type: "managedProvider",
       providerId: "oura",
     }, {
       appOrigin: "https://app.lamarck.ai",
     });
     expect(started.authorizationUrl.startsWith("https://app.lamarck.ai/providers/oura/connect?")).toBe(true);
+    expect(new URL(started.authorizationUrl).searchParams.get("start")).toBe("1");
     expect(started.redirectUri).toBeUndefined();
+  });
+
+  test("managed provider start sends signed-out desktops through identity authorize first", async () => {
+    const secretStore = new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey());
+    const sessionManager = new LamarckSessionManager(secretStore, {
+      apiOrigin: "https://api.lamarck.ai",
+      appOrigin: "https://app.lamarck.ai",
+      redirectUri: "http://localhost:32100/auth/callback",
+      fetchImpl: async () => jsonResponse({
+        tokenType: "Bearer",
+        accessToken: "desktop-access",
+        refreshToken: "desktop-refresh",
+        accessTokenExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+        refreshTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        userId: "usr_123",
+        sessionId: "dsk_123",
+      }),
+    });
+    const manager = new ConnectorAuthManager(secretStore, {
+      managedProviderApiOrigin: "https://api.lamarck.ai",
+      lamarckSession: sessionManager,
+      fetchImpl: async () => jsonResponse({
+        tokenType: "Bearer",
+        accessToken: "lamarck-capability-token",
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        providerId: "oura",
+        integrationId: "integration-1",
+      }),
+    });
+
+    const started = await manager.startManagedProvider(integration("managed-ref"), {
+      type: "managedProvider",
+      providerId: "oura",
+    }, {
+      appOrigin: "https://app.lamarck.ai",
+    });
+    const loginUrl = new URL(started.authorizationUrl);
+    expect(loginUrl.pathname).toBe("/auth/authorize");
+    await expect(manager.getOAuthAttempt("integration-1", started.attemptId)).resolves.toMatchObject({
+      status: "pending",
+    });
+
+    const result = await sessionManager.completeCallback(new URLSearchParams({
+      state: loginUrl.searchParams.get("state")!,
+      code: "desktop-code",
+    }));
+    const nextUrl = new URL(result.nextUrl!);
+    expect(nextUrl.toString().startsWith("https://app.lamarck.ai/providers/oura/connect?")).toBe(true);
+    expect(nextUrl.searchParams.get("integrationId")).toBe("integration-1");
+    expect(nextUrl.searchParams.get("start")).toBe("1");
+    await expect(manager.getOAuthAttempt("integration-1", started.attemptId)).resolves.toMatchObject({
+      status: "connected",
+      credentialId: "managed-ref",
+    });
   });
 
   test("managed provider invalid desktop session clears local Lamarck session", async () => {
@@ -199,7 +254,7 @@ describe("Secret store and connector credential broker", () => {
       },
     );
 
-    const started = manager.startManagedProvider(integration("managed-ref"), {
+    const started = await manager.startManagedProvider(integration("managed-ref"), {
       type: "managedProvider",
       providerId: "oura",
     }, {

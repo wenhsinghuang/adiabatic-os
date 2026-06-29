@@ -350,8 +350,14 @@ const server = Bun.serve({
     if (path === "/auth/callback" && method === "GET") {
       try {
         const result = await lamarckSessionManager.completeCallback(url.searchParams);
+        const nextScript = result.nextUrl
+          ? `<script>window.location.replace(${JSON.stringify(result.nextUrl)});</script>`
+          : "";
+        const nextText = result.nextUrl
+          ? "Continuing to provider connection..."
+          : "You can return to Lamarck desktop.";
         return new Response(
-          `<!doctype html><meta charset="utf-8"><title>Lamarck Desktop</title><body style="font-family: system-ui; padding: 24px;"><h1>Signed in</h1><p>You can return to Lamarck desktop.</p><p style="color: #555;">Session ${escapeHtml(result.sessionId ?? "")}</p></body>`,
+          `<!doctype html><meta charset="utf-8"><title>Lamarck Desktop</title>${nextScript}<body style="font-family: system-ui; padding: 24px;"><h1>Signed in</h1><p>${escapeHtml(nextText)}</p><p style="color: #555;">Session ${escapeHtml(result.sessionId ?? "")}</p></body>`,
           {
             status: 200,
             headers: { "Content-Type": "text/html; charset=utf-8", ...headers },
@@ -644,7 +650,7 @@ const server = Bun.serve({
         ?? path.match(/^\/api\/connectors\/integrations\/([^/]+)\/oauth\/start$/);
       if (authStartMatch && method === "POST") {
         if (auth!.kind !== "host") return json({ error: "host auth required" }, 403);
-        const result = connectorSupervisor.startAuthIntegration(
+        const result = await connectorSupervisor.startAuthIntegration(
           decodeURIComponent(authStartMatch[1]),
           {
             redirectUri: oauthRedirectUri,

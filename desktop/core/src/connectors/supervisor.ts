@@ -294,10 +294,10 @@ export class ConnectorSupervisor {
     return this.authManager.startOAuth(existing, auth, input);
   }
 
-  startAuthIntegration(
+  async startAuthIntegration(
     instanceId: string,
     input: { redirectUri: string },
-  ): OAuthStartResult {
+  ): Promise<OAuthStartResult> {
     const existing = this.store.get(instanceId);
     if (!existing) {
       throw new Error(`Connector integration not found: ${instanceId}`);

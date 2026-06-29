@@ -301,6 +301,7 @@
       const providerId = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
       const providerIntegrationId = route.searchParams.get("integrationId");
       const providerIntegrationKey = route.searchParams.get("integrationKey");
+      const providerAutoStart = route.searchParams.get("start") === "1";
       const providerConnected = route.searchParams.get("connected") === "1";
       const providerError = route.searchParams.get("error");
       const providerMessage = route.searchParams.get("message");
@@ -323,6 +324,7 @@
       const authTitle = document.getElementById("auth-title");
       const authNote = document.getElementById("auth-note");
       let providerConnection = null;
+      let providerAutoStartUsed = false;
 
       if (provider) {
         authTitle.textContent = `Connect ${provider.name}`;
@@ -395,7 +397,9 @@
         });
         void syncBackendSession(clerk);
         if (provider) {
-          void loadProviderConnection(clerk);
+          void loadProviderConnection(clerk).then(() => {
+            maybeAutoStartProviderConnect(clerk);
+          });
         }
       }
 
@@ -448,6 +452,13 @@
             button.setAttribute("disabled", "");
           }
         }
+      }
+
+      function maybeAutoStartProviderConnect(clerk) {
+        if (!providerAutoStart || providerAutoStartUsed || !provider || !providerIntegrationId) return;
+        if (providerConnected || providerError || providerConnection?.status === "connected") return;
+        providerAutoStartUsed = true;
+        void startProviderConnect(clerk);
       }
 
       function renderDesktopAuthorize(clerk) {

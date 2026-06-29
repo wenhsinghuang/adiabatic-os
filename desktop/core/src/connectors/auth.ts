@@ -95,6 +95,10 @@ interface ManagedProviderCapabilityToken {
   integrationId: string;
 }
 
+type LamarckSessionCapability =
+  Pick<LamarckSessionManager, "accessToken" | "clearLocalSession">
+  & Partial<Pick<LamarckSessionManager, "session" | "startLogin">>;
+
 class ManagedProviderNotConnectedError extends Error {
   constructor(message: string) {
     super(message);
@@ -108,7 +112,7 @@ interface ConnectorAuthManagerOptions {
   refreshSkewMs?: number;
   attemptTtlMs?: number;
   managedProviderApiOrigin?: string;
-  lamarckSession?: Pick<LamarckSessionManager, "accessToken" | "clearLocalSession">;
+  lamarckSession?: LamarckSessionCapability;
 }
 
 export class ConnectorAuthManager {
@@ -117,7 +121,7 @@ export class ConnectorAuthManager {
   private refreshSkewMs: number;
   private attemptTtlMs: number;
   private managedProviderApiOrigin: string | undefined;
-  private lamarckSession: Pick<LamarckSessionManager, "accessToken" | "clearLocalSession"> | undefined;
+  private lamarckSession: LamarckSessionCapability | undefined;
   private attemptsById = new Map<string, OAuthAttempt>();
   private attemptsByState = new Map<string, OAuthAttempt>();
   private managedAttemptsById = new Map<string, ManagedProviderAttempt>();
@@ -219,11 +223,11 @@ export class ConnectorAuthManager {
     };
   }
 
-  startManagedProvider(
+  async startManagedProvider(
     integration: ConnectorIntegration,
     auth: ConnectorManagedProviderAuthSpec,
     input: { appOrigin: string },
-  ): OAuthStartResult {
+  ): Promise<OAuthStartResult> {
     const attemptId = base64url(randomBytes(16));
     const expiresAt = Date.now() + this.attemptTtlMs;
     const authRef = integration.authRef ?? `connector-integration:${integration.id}:auth`;
@@ -239,12 +243,20 @@ export class ConnectorAuthManager {
 
     const url = new URL(`/providers/${encodeURIComponent(auth.providerId)}/connect`, normalizeOrigin(input.appOrigin));
     url.searchParams.set("integrationId", integration.id);
+    url.searchParams.set("start", "1");
     if (integration.integrationKey) {
       url.searchParams.set("integrationKey", integration.integrationKey);
     }
+    let authorizationUrl = url.toString();
+    if (this.lamarckSession?.session && this.lamarckSession.startLogin) {
+      const session = await this.lamarckSession.session().catch(() => ({ status: "signed_out" as const }));
+      if (session.status !== "signed_in") {
+        authorizationUrl = this.lamarckSession.startLogin({ nextUrl: authorizationUrl }).authorizationUrl;
+      }
+    }
 
     return {
-      authorizationUrl: url.toString(),
+      authorizationUrl,
       attemptId,
       expiresAt,
     };
@@ -292,7 +304,7 @@ export class ConnectorAuthManager {
         attempt.status = "connected";
         attempt.credentialId = attempt.authRef;
       } catch (err) {
-        if (!(err instanceof ManagedProviderNotConnectedError)) {
+        if (!(err instanceof ManagedProviderNotConnectedError) && !isLamarckSessionNotSignedInError(err)) {
           attempt.status = "failed";
           attempt.error = err instanceof Error ? err.message : String(err);
         }
@@ -673,6 +685,10 @@ function isLamarckSessionInvalid(status: number, error: string | undefined): boo
     error === "session_expired" ||
     error === "session_revoked"
   );
+}
+
+function isLamarckSessionNotSignedInError(err: unknown): boolean {
+  return err instanceof Error && err.message === "Lamarck desktop session is not signed in";
 }
 
 function normalizeOrigin(origin: string): string {

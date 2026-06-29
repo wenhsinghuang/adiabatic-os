@@ -15,6 +15,7 @@ export interface LamarckSessionView {
   refreshTokenExpiresAt?: string;
   apiOrigin?: string;
   appOrigin?: string;
+  nextUrl?: string;
 }
 
 export interface LamarckLoginStart {
@@ -42,6 +43,7 @@ interface LoginAttempt {
   state: string;
   codeVerifier: string;
   redirectUri: string;
+  nextUrl?: string;
   expiresAt: number;
 }
 
@@ -82,7 +84,7 @@ export class LamarckSessionManager {
     this.refreshSkewMs = opts.refreshSkewMs ?? 60_000;
   }
 
-  startLogin(): LamarckLoginStart {
+  startLogin(input: { nextUrl?: string } = {}): LamarckLoginStart {
     const attemptId = base64url(randomBytes(16));
     const state = base64url(randomBytes(32));
     const codeVerifier = base64url(randomBytes(32));
@@ -92,6 +94,7 @@ export class LamarckSessionManager {
       state,
       codeVerifier,
       redirectUri: this.opts.redirectUri,
+      nextUrl: input.nextUrl,
       expiresAt,
     };
     this.attemptsByState.set(state, attempt);
@@ -136,7 +139,10 @@ export class LamarckSessionManager {
       codeVerifier: attempt.codeVerifier,
     });
     await this.persistToken(token);
-    return payloadToView(await this.readPayloadOrThrow());
+    return {
+      ...payloadToView(await this.readPayloadOrThrow()),
+      nextUrl: attempt.nextUrl,
+    };
   }
 
   async session(): Promise<LamarckSessionView> {
