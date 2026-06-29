@@ -1687,6 +1687,64 @@ auth:
     expect(requests[6].searchParams.get("end_date")).toBe("2026-01-03");
   });
 
+  test("oura datetime backfill uses provider-safe 30 day chunks", async () => {
+    const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(ouraUrl) as {
+      syncOnce(context: unknown, deps?: unknown): Promise<void>;
+    };
+
+    let syncState: unknown;
+    const requests: URL[] = [];
+    const context = {
+      auth: {
+        type: "managedProvider",
+        async getToken() {
+          return "oura-token";
+        },
+      },
+      guard: {
+        async writeEvents() {
+          return { ids: [] };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      config: {
+        lookbackDays: 1,
+        backfillYears: 1,
+        streams: ["ring_battery_level"],
+      },
+      signal: new AbortController().signal,
+    };
+
+    const fetchImpl = async (url: string) => {
+      requests.push(new URL(url));
+      return new Response(JSON.stringify({
+        data: [],
+        next_token: null,
+      }), { status: 200 });
+    };
+
+    const now = Date.UTC(2026, 0, 3, 12);
+    await syncOnce(context, { fetchImpl, now });
+
+    expect(requests[0].searchParams.get("start_datetime")).toBe("2026-01-02T12:00:00.000Z");
+    expect(requests[0].searchParams.get("end_datetime")).toBe("2026-01-03T12:00:00.000Z");
+    expect(requests[1].searchParams.get("start_datetime")).toBe("2025-01-03T00:00:00.000Z");
+    expect(requests[1].searchParams.get("end_datetime")).toBe("2025-02-02T00:00:00.000Z");
+    for (const request of requests.slice(1)) {
+      const start = Date.parse(request.searchParams.get("start_datetime") ?? "");
+      const end = Date.parse(request.searchParams.get("end_datetime") ?? "");
+      expect(end - start).toBeLessThanOrEqual(30 * 24 * 60 * 60 * 1000);
+    }
+  });
+
   test("oura backfill records errors and resumes from the failed chunk", async () => {
     const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
     const { syncOnce } = await import(ouraUrl) as {

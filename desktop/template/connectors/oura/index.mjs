@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 
 const DEFAULT_LAMARCK_API_ORIGIN = "https://api.lamarck.ai";
 const DEFAULT_LOOKBACK_DAYS = 3;
-const DEFAULT_BACKFILL_YEARS = 3;
-const BACKFILL_CHUNK_DAYS = 90;
+const DEFAULT_BACKFILL_YEARS = 1;
+const DATE_BACKFILL_CHUNK_DAYS = 90;
+const DATETIME_BACKFILL_CHUNK_DAYS = 30;
 const EVENT_BATCH_SIZE = 100;
 const HEARTRATE_BUCKET_MS = 15 * 60 * 1000;
 const RING_CONFIGURATION_SYNC_INTERVAL_DAYS = 30;
@@ -509,7 +510,7 @@ async function syncBackfill({ context, next, config, streams, token, nowMs, fetc
       }
 
       const chunkEndDate = minIsoDate(
-        isoDate(addDays(Date.parse(`${nextDate}T00:00:00.000Z`), BACKFILL_CHUNK_DAYS)),
+        isoDate(addDays(Date.parse(`${nextDate}T00:00:00.000Z`), backfillChunkDaysForStream(stream))),
         backfill.untilDate,
       );
 
@@ -584,6 +585,10 @@ function buildBackfillRange(stream, startDate, endDate) {
     query: { start_date: startDate, end_date: endDate },
     statePatch: {},
   };
+}
+
+function backfillChunkDaysForStream(stream) {
+  return stream.range === "datetime" ? DATETIME_BACKFILL_CHUNK_DAYS : DATE_BACKFILL_CHUNK_DAYS;
 }
 
 function normalizeConfig(config) {

@@ -24,7 +24,7 @@ config:
   backfill-years:
     type: number
     label: Backfill years
-    default: 3
+    default: 1
   include-heartrate:
     type: boolean
     label: Include heart rate
