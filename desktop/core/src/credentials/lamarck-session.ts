@@ -3,6 +3,7 @@ import type { CredentialStore } from "./credential-store";
 import type { SecretStore } from "./secret-store";
 
 const SESSION_REF = "lamarck-session:current";
+const SESSION_EXPIRED_MESSAGE = "Lamarck desktop session expired. Sign in again.";
 
 export type LamarckSessionStatus = "signed_out" | "signed_in" | "expired";
 
@@ -183,6 +184,10 @@ export class LamarckSessionManager {
         },
       }).catch(() => undefined);
     }
+    await this.clearLocalSession();
+  }
+
+  async clearLocalSession(): Promise<void> {
     this.credentialStore?.delete(SESSION_REF);
     if (!this.credentialStore) {
       await this.secrets.delete(SESSION_REF);
@@ -191,10 +196,19 @@ export class LamarckSessionManager {
 
   private async refresh(): Promise<void> {
     const payload = await this.readPayloadOrThrow();
-    const token = await this.fetchToken({
-      grantType: "refresh_token",
-      refreshToken: payload.refreshToken,
-    });
+    let token: LamarckTokenResponse;
+    try {
+      token = await this.fetchToken({
+        grantType: "refresh_token",
+        refreshToken: payload.refreshToken,
+      });
+    } catch (err) {
+      if (err instanceof LamarckSessionInvalidError) {
+        await this.clearLocalSession();
+        throw new Error(SESSION_EXPIRED_MESSAGE);
+      }
+      throw err;
+    }
     await this.persistToken(token);
   }
 
@@ -210,6 +224,9 @@ export class LamarckSessionManager {
     const text = await res.text();
     const data = text ? JSON.parse(text) as Partial<LamarckTokenResponse> & { error?: string; message?: string } : {};
     if (!res.ok) {
+      if (isLamarckSessionInvalid(res.status, data.error)) {
+        throw new LamarckSessionInvalidError(data.message ?? data.error ?? SESSION_EXPIRED_MESSAGE);
+      }
       throw new Error(data.message ?? data.error ?? `Desktop token endpoint returned ${res.status}`);
     }
     if (
@@ -301,6 +318,21 @@ function normalizeOrigin(origin: string): string {
 
 function pkceChallenge(verifier: string): string {
   return base64url(createHash("sha256").update(verifier).digest());
+}
+
+class LamarckSessionInvalidError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LamarckSessionInvalidError";
+  }
+}
+
+function isLamarckSessionInvalid(status: number, error: string | undefined): boolean {
+  return status === 401 && (
+    error === "invalid_session" ||
+    error === "session_expired" ||
+    error === "session_revoked"
+  );
 }
 
 function base64url(bytes: Uint8Array): string {

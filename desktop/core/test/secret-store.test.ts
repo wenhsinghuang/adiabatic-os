@@ -157,6 +157,63 @@ describe("Secret store and connector credential broker", () => {
     expect(started.redirectUri).toBeUndefined();
   });
 
+  test("managed provider invalid desktop session clears local Lamarck session", async () => {
+    const secretStore = new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey());
+    const credentialStore = new CredentialStore(opened.systemDb);
+    const sessionManager = new LamarckSessionManager(secretStore, {
+      credentialStore,
+      apiOrigin: "https://api.lamarck.ai",
+      appOrigin: "https://app.lamarck.ai",
+      redirectUri: "http://localhost:32100/auth/callback",
+      fetchImpl: async () => jsonResponse({
+        tokenType: "Bearer",
+        accessToken: "desktop-access",
+        refreshToken: "desktop-refresh",
+        accessTokenExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+        refreshTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        userId: "usr_123",
+        sessionId: "dsk_123",
+      }),
+    });
+
+    const login = sessionManager.startLogin();
+    await sessionManager.completeCallback(new URLSearchParams({
+      state: new URL(login.authorizationUrl).searchParams.get("state")!,
+      code: "desktop-code",
+    }));
+    expect(credentialStore.get("lamarck-session:current")).toBeTruthy();
+    expect(await secretStore.get("lamarck-session:current")).toBeTruthy();
+
+    const manager = new ConnectorAuthManager(
+      secretStore,
+      {
+        managedProviderApiOrigin: "https://api.lamarck.ai",
+        lamarckSession: sessionManager,
+        fetchImpl: async () => new Response(JSON.stringify({
+          error: "invalid_session",
+          message: "Desktop session was not found.",
+        }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }),
+      },
+    );
+
+    const started = manager.startManagedProvider(integration("managed-ref"), {
+      type: "managedProvider",
+      providerId: "oura",
+    }, {
+      appOrigin: "https://app.lamarck.ai",
+    });
+
+    await expect(manager.getOAuthAttempt("integration-1", started.attemptId)).resolves.toMatchObject({
+      status: "failed",
+      error: "Lamarck desktop session expired. Sign in again.",
+    });
+    expect(credentialStore.get("lamarck-session:current")).toBeUndefined();
+    expect(await secretStore.get("lamarck-session:current")).toBeUndefined();
+  });
+
   test("lamarck desktop login stores session credentials", async () => {
     let tokenCalls = 0;
     const credentialStore = new CredentialStore(opened.systemDb);
@@ -252,6 +309,55 @@ describe("Secret store and connector credential broker", () => {
 
     await expect(manager.accessToken()).resolves.toBe("new-access");
     expect(calls).toBe(2);
+  });
+
+  test("lamarck desktop session clears local credentials when refresh is invalid", async () => {
+    let calls = 0;
+    const secretStore = new SqliteEncryptedSecretStore(opened.systemDb, createVaultKey());
+    const credentialStore = new CredentialStore(opened.systemDb);
+    const manager = new LamarckSessionManager(
+      secretStore,
+      {
+        credentialStore,
+        apiOrigin: "https://api.lamarck.ai",
+        appOrigin: "https://app.lamarck.ai",
+        redirectUri: "http://localhost:32100/auth/callback",
+        fetchImpl: async (_url, init) => {
+          calls++;
+          const body = JSON.parse(String(init?.body)) as Record<string, string>;
+          if (body.grantType === "authorization_code") {
+            return jsonResponse({
+              tokenType: "Bearer",
+              accessToken: "old-access",
+              refreshToken: "old-refresh",
+              accessTokenExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+              refreshTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+              userId: "usr_123",
+              sessionId: "dsk_123",
+            });
+          }
+          expect(body).toMatchObject({ grantType: "refresh_token", refreshToken: "old-refresh" });
+          return new Response(JSON.stringify({
+            error: "session_revoked",
+            message: "Desktop session was revoked.",
+          }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      },
+    );
+
+    const started = manager.startLogin();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await manager.completeCallback(new URLSearchParams({ state, code: "desktop-code" }));
+    expect(credentialStore.get("lamarck-session:current")).toBeTruthy();
+    expect(await secretStore.get("lamarck-session:current")).toBeTruthy();
+
+    await expect(manager.accessToken()).rejects.toThrow("Lamarck desktop session expired. Sign in again.");
+    expect(calls).toBe(2);
+    expect(credentialStore.get("lamarck-session:current")).toBeUndefined();
+    expect(await secretStore.get("lamarck-session:current")).toBeUndefined();
   });
 });
 

@@ -108,7 +108,7 @@ interface ConnectorAuthManagerOptions {
   refreshSkewMs?: number;
   attemptTtlMs?: number;
   managedProviderApiOrigin?: string;
-  lamarckSession?: Pick<LamarckSessionManager, "accessToken">;
+  lamarckSession?: Pick<LamarckSessionManager, "accessToken" | "clearLocalSession">;
 }
 
 export class ConnectorAuthManager {
@@ -117,7 +117,7 @@ export class ConnectorAuthManager {
   private refreshSkewMs: number;
   private attemptTtlMs: number;
   private managedProviderApiOrigin: string | undefined;
-  private lamarckSession: Pick<LamarckSessionManager, "accessToken"> | undefined;
+  private lamarckSession: Pick<LamarckSessionManager, "accessToken" | "clearLocalSession"> | undefined;
   private attemptsById = new Map<string, OAuthAttempt>();
   private attemptsByState = new Map<string, OAuthAttempt>();
   private managedAttemptsById = new Map<string, ManagedProviderAttempt>();
@@ -484,6 +484,10 @@ export class ConnectorAuthManager {
     const data = text ? JSON.parse(text) as Partial<ManagedProviderCapabilityToken> & { error?: string; message?: string } : {};
     if (!res.ok) {
       const message = data.message ?? data.error ?? `Managed provider capability endpoint returned ${res.status}`;
+      if (isLamarckSessionInvalid(res.status, data.error)) {
+        await this.lamarckSession.clearLocalSession();
+        throw new Error("Lamarck desktop session expired. Sign in again.");
+      }
       if (res.status === 409 || data.error === "managed_provider_not_connected") {
         throw new ManagedProviderNotConnectedError(message);
       }
@@ -660,6 +664,14 @@ function managedProviderUnavailable(connectorId?: string): Error {
     connectorId
       ? `Connector ${connectorId} managed provider auth is not available in this build`
       : "Managed provider auth is not available in this build",
+  );
+}
+
+function isLamarckSessionInvalid(status: number, error: string | undefined): boolean {
+  return status === 401 && (
+    error === "invalid_session" ||
+    error === "session_expired" ||
+    error === "session_revoked"
   );
 }
 
