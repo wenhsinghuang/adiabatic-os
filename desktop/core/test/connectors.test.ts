@@ -1498,7 +1498,7 @@ auth:
     const requests: URL[] = [];
     const context = {
       auth: {
-        type: "oauth2",
+        type: "managedProvider",
         async getToken() {
           return "oura-token";
         },
@@ -1597,7 +1597,7 @@ auth:
     const requests: URL[] = [];
     const context = {
       auth: {
-        type: "oauth2",
+        type: "managedProvider",
         async getToken() {
           return "oura-token";
         },
@@ -1694,7 +1694,7 @@ auth:
     let failSecondBackfillChunk = true;
     const context = {
       auth: {
-        type: "oauth2",
+        type: "managedProvider",
         async getToken() {
           return "oura-token";
         },
@@ -1814,7 +1814,7 @@ auth:
     const requests: URL[] = [];
     const context = {
       auth: {
-        type: "oauth2",
+        type: "managedProvider",
         async getToken() {
           return "oura-token";
         },
@@ -1902,6 +1902,128 @@ auth:
     });
   });
 
+  test("oura ring battery sync emits threshold transition events", async () => {
+    const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
+    const { syncOnce } = await import(ouraUrl) as {
+      syncOnce(context: unknown, deps?: unknown): Promise<void>;
+    };
+
+    let syncState: unknown;
+    const events: any[] = [];
+    const requests: URL[] = [];
+    const context = {
+      auth: {
+        type: "managedProvider",
+        async getToken() {
+          return "oura-token";
+        },
+      },
+      guard: {
+        async writeEvents(batch: any[]) {
+          const start = events.length;
+          events.push(...batch);
+          return { ids: batch.map((_, index) => `event-${start + index}`) };
+        },
+      },
+      state: {
+        async get() {
+          return syncState;
+        },
+        async set(next: unknown) {
+          syncState = next;
+        },
+      },
+      config: {
+        lookbackDays: 1,
+        backfillYears: 0,
+        streams: ["ring_battery_level"],
+      },
+      signal: new AbortController().signal,
+    };
+
+    const batteryRows = [
+      { timestamp: "2026-01-03T00:00:00Z", level: 12, charging: false, in_charger: false },
+      { timestamp: "2026-01-03T01:00:00Z", level: 9, charging: false, in_charger: false },
+      { timestamp: "2026-01-03T02:00:00Z", level: 4, charging: false, in_charger: false },
+      { timestamp: "2026-01-03T03:00:00Z", level: 3, charging: false, in_charger: false },
+      { timestamp: "2026-01-03T04:00:00Z", level: 4, charging: true, in_charger: true },
+      { timestamp: "2026-01-03T05:00:00Z", level: 21, charging: false, in_charger: false },
+    ];
+
+    const fetchImpl = async (url: string) => {
+      requests.push(new URL(url));
+      return new Response(JSON.stringify({
+        data: batteryRows,
+        next_token: null,
+      }), { status: 200 });
+    };
+
+    const now = Date.UTC(2026, 0, 3, 12);
+    await syncOnce(context, { fetchImpl, now });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].searchParams.get("start_datetime")).toBe("2026-01-02T12:00:00.000Z");
+    expect(requests[0].searchParams.get("end_datetime")).toBe("2026-01-03T12:00:00.000Z");
+    expect(events.map((event) => event.type)).toEqual([
+      "oura.ring_battery.low",
+      "oura.ring_battery.critical",
+      "oura.ring_battery.recovered",
+    ]);
+    expect(events[0]).toMatchObject({
+      externalId: "ring_battery:low:2026-01-03T01:00:00.000Z",
+      startedAt: Date.UTC(2026, 0, 3, 1),
+      payload: {
+        level: 9,
+        threshold: 10,
+        lowLevel: 10,
+        criticalLevel: 5,
+        recoveredLevel: 20,
+        charging: false,
+        inCharger: false,
+      },
+    });
+    expect(events[1]).toMatchObject({
+      externalId: "ring_battery:critical:2026-01-03T02:00:00.000Z",
+      payload: {
+        level: 4,
+        threshold: 5,
+        lowStartedAt: "2026-01-03T01:00:00.000Z",
+      },
+    });
+    expect(events[2]).toMatchObject({
+      externalId: "ring_battery:recovered:2026-01-03T04:00:00.000Z",
+      payload: {
+        level: 4,
+        previousLowStartedAt: "2026-01-03T01:00:00.000Z",
+        previousCriticalStartedAt: "2026-01-03T02:00:00.000Z",
+        charging: true,
+        inCharger: true,
+      },
+    });
+    expect(syncState).toMatchObject({
+      version: 2,
+      incremental: {
+        streams: {
+          ring_battery_level: {
+            lastSyncedDateTime: "2026-01-03T12:00:00.000Z",
+            lastSyncedAt: now,
+            ringBattery: {
+              lowActive: false,
+              criticalActive: false,
+              lastTimestamp: "2026-01-03T05:00:00.000Z",
+              lastLevel: 21,
+            },
+          },
+        },
+      },
+      backfill: undefined,
+    });
+
+    await syncOnce(context, { fetchImpl, now });
+    expect(requests).toHaveLength(2);
+    expect(events).toHaveLength(3);
+  });
+
   test("oura ring configuration sync is throttled by state", async () => {
     const ouraUrl = new URL("../../template/connectors/oura/index.mjs", import.meta.url).href;
     const { syncOnce } = await import(ouraUrl) as {
@@ -1913,7 +2035,7 @@ auth:
     const requests: URL[] = [];
     const context = {
       auth: {
-        type: "oauth2",
+        type: "managedProvider",
         async getToken() {
           return "oura-token";
         },

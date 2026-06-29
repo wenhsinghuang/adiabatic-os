@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 
-const API_BASE_URL = "https://api.ouraring.com";
+const API_BASE_URL = "https://api.lamarck.ai/providers/oura";
 const DEFAULT_LOOKBACK_DAYS = 3;
 const DEFAULT_BACKFILL_YEARS = 3;
 const BACKFILL_CHUNK_DAYS = 90;
 const EVENT_BATCH_SIZE = 100;
 const HEARTRATE_BUCKET_MS = 15 * 60 * 1000;
 const RING_CONFIGURATION_SYNC_INTERVAL_DAYS = 30;
+const RING_BATTERY_LOW_LEVEL = 10;
+const RING_BATTERY_CRITICAL_LEVEL = 5;
+const RING_BATTERY_RECOVERED_LEVEL = 20;
 
 const DEFAULT_STREAM_IDS = [
   "daily_activity",
@@ -25,76 +28,77 @@ const DEFAULT_STREAM_IDS = [
   "daily_cardiovascular_age",
   "vo2_max",
   "ring_configuration",
+  "ring_battery_level",
 ];
 
 const STREAMS = [
-  dateStream("daily_activity", "/v2/usercollection/daily_activity"),
-  dateStream("daily_sleep", "/v2/usercollection/daily_sleep"),
-  dateStream("daily_readiness", "/v2/usercollection/daily_readiness"),
-  dateStream("daily_spo2", "/v2/usercollection/daily_spo2"),
-  dateStream("daily_stress", "/v2/usercollection/daily_stress"),
-  dateStream("daily_resilience", "/v2/usercollection/daily_resilience"),
-  dateStream("daily_cardiovascular_age", "/v2/usercollection/daily_cardiovascular_age"),
-  dateStream("sleep_time", "/v2/usercollection/sleep_time"),
-  dateStream("vo2_max", "/v2/usercollection/vO2_max"),
+  dateStream("daily_activity", "/v1/streams/daily_activity"),
+  dateStream("daily_sleep", "/v1/streams/daily_sleep"),
+  dateStream("daily_readiness", "/v1/streams/daily_readiness"),
+  dateStream("daily_spo2", "/v1/streams/daily_spo2"),
+  dateStream("daily_stress", "/v1/streams/daily_stress"),
+  dateStream("daily_resilience", "/v1/streams/daily_resilience"),
+  dateStream("daily_cardiovascular_age", "/v1/streams/daily_cardiovascular_age"),
+  dateStream("sleep_time", "/v1/streams/sleep_time"),
+  dateStream("vo2_max", "/v1/streams/vo2_max"),
   {
     id: "sleep",
-    path: "/v2/usercollection/sleep",
+    path: "/v1/streams/sleep",
     range: "date",
     startedAt: (record) => timestampFromAny(record.bedtime_start, record.day),
     endedAt: (record) => timestampFromAny(record.bedtime_end),
   },
   {
     id: "workout",
-    path: "/v2/usercollection/workout",
+    path: "/v1/streams/workout",
     range: "date",
     startedAt: (record) => timestampFromAny(record.start_datetime, record.day),
     endedAt: (record) => timestampFromAny(record.end_datetime),
   },
   {
     id: "session",
-    path: "/v2/usercollection/session",
+    path: "/v1/streams/session",
     range: "date",
     startedAt: (record) => timestampFromAny(record.start_datetime, record.day),
     endedAt: (record) => timestampFromAny(record.end_datetime),
   },
   {
     id: "tag",
-    path: "/v2/usercollection/tag",
+    path: "/v1/streams/tag",
     range: "date",
     startedAt: (record) => timestampFromAny(record.timestamp, record.day),
   },
   {
     id: "enhanced_tag",
-    path: "/v2/usercollection/enhanced_tag",
+    path: "/v1/streams/enhanced_tag",
     range: "date",
     startedAt: (record) => timestampFromAny(record.start_time, record.start_day),
     endedAt: (record) => timestampFromAny(record.end_time, record.end_day),
   },
   {
     id: "rest_mode_period",
-    path: "/v2/usercollection/rest_mode_period",
+    path: "/v1/streams/rest_mode_period",
     range: "date",
     startedAt: (record) => timestampFromAny(record.start_time, record.start_day),
     endedAt: (record) => timestampFromAny(record.end_time, record.end_day),
   },
   {
     id: "ring_configuration",
-    path: "/v2/usercollection/ring_configuration",
+    path: "/v1/streams/ring_configuration",
     range: "none",
     syncIntervalDays: RING_CONFIGURATION_SYNC_INTERVAL_DAYS,
     startedAt: (record) => timestampFromAny(record.set_up_at) ?? 0,
   },
   {
     id: "heartrate",
-    path: "/v2/usercollection/heartrate",
+    path: "/v1/streams/heartrate",
     range: "datetime",
     startedAt: (record) => timestampFromAny(record.timestamp_unix, record.timestamp),
     sourceId: (record) => ["ts", record.timestamp_unix ?? record.timestamp, record.source ?? "unknown"].join(":"),
   },
   {
     id: "ring_battery_level",
-    path: "/v2/usercollection/ring_battery_level",
+    path: "/v1/streams/ring_battery_level",
     range: "datetime",
     startedAt: (record) => timestampFromAny(record.timestamp_unix, record.timestamp),
     sourceId: (record) => ["ts", record.timestamp_unix ?? record.timestamp].join(":"),
@@ -110,8 +114,8 @@ export default {
 };
 
 export async function syncOnce(context, deps = {}) {
-  if (!context.auth || context.auth.type !== "oauth2") {
-    throw new Error("Oura connector requires OAuth2 credentials");
+  if (!context.auth || context.auth.type !== "managedProvider") {
+    throw new Error("Oura connector requires Lamarck managed provider credentials");
   }
 
   const config = normalizeConfig(context.config);
@@ -140,9 +144,10 @@ export async function syncOnce(context, deps = {}) {
       : {};
     const range = buildIncrementalRange(stream, streamState, config, nowMs);
     if (!range) continue;
-    await syncStream({
+    const syncStatePatch = await syncStream({
       stream,
       range,
+      streamState,
       guard: context.guard,
       token,
       signal: context.signal,
@@ -154,6 +159,7 @@ export async function syncOnce(context, deps = {}) {
     next.incremental.streams[stream.id] = {
       ...streamState,
       ...range.statePatch,
+      ...syncStatePatch,
       lastSyncedAt: nowMs,
     };
     await context.state.set(next);
@@ -199,10 +205,13 @@ export function eventFromRecord(streamId, record) {
   return event;
 }
 
-async function syncStream({ stream, range, guard, token, signal, fetchImpl, baseUrl }) {
+async function syncStream({ stream, range, streamState, guard, token, signal, fetchImpl, baseUrl }) {
   if (stream.id === "heartrate") {
     await syncHeartrateStream({ stream, range, guard, token, signal, fetchImpl, baseUrl });
-    return;
+    return {};
+  }
+  if (stream.id === "ring_battery_level") {
+    return syncRingBatteryStream({ stream, range, streamState, guard, token, signal, fetchImpl, baseUrl });
   }
 
   let nextToken;
@@ -223,6 +232,7 @@ async function syncStream({ stream, range, guard, token, signal, fetchImpl, base
   if (batch.length) {
     await writeBatch(guard, batch);
   }
+  return {};
 }
 
 async function syncHeartrateStream({ stream, range, guard, token, signal, fetchImpl, baseUrl }) {
@@ -251,6 +261,113 @@ async function syncHeartrateStream({ stream, range, guard, token, signal, fetchI
     if (isAborted(signal)) return;
     await writeBatch(guard, events.slice(i, i + EVENT_BATCH_SIZE));
   }
+}
+
+async function syncRingBatteryStream({ stream, range, streamState, guard, token, signal, fetchImpl, baseUrl }) {
+  let nextToken;
+  const records = [];
+
+  do {
+    if (isAborted(signal)) return {};
+    const page = await fetchPage({ stream, range, token, nextToken, signal, fetchImpl, baseUrl });
+    records.push(...page.data);
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  const previousBattery = normalizeRingBatteryState(streamState.ringBattery);
+  const battery = { ...previousBattery };
+  const events = [];
+  const sorted = records
+    .map((record) => ({ record, timestamp: stream.startedAt(record) }))
+    .filter((entry) => Number.isFinite(entry.timestamp))
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  const lastProcessedAt = timestampMs(previousBattery.lastTimestamp);
+  for (const { record, timestamp } of sorted) {
+    if (Number.isFinite(lastProcessedAt) && timestamp <= lastProcessedAt) {
+      continue;
+    }
+    const nextEvents = ringBatteryEventsForRecord(record, timestamp, battery);
+    events.push(...nextEvents);
+    battery.lastTimestamp = new Date(timestamp).toISOString();
+    battery.lastLevel = Number.isFinite(Number(record.level)) ? Number(record.level) : undefined;
+    battery.lastCharging = record.charging === true;
+    battery.lastInCharger = record.in_charger === true;
+  }
+
+  for (let i = 0; i < events.length; i += EVENT_BATCH_SIZE) {
+    if (isAborted(signal)) return { ringBattery: battery };
+    await writeBatch(guard, events.slice(i, i + EVENT_BATCH_SIZE));
+  }
+
+  return { ringBattery: battery };
+}
+
+function ringBatteryEventsForRecord(record, timestamp, battery) {
+  const level = Number(record.level);
+  if (!Number.isFinite(level)) {
+    return [];
+  }
+
+  const events = [];
+  const charging = record.charging === true;
+  const inCharger = record.in_charger === true;
+  const timestampIso = new Date(timestamp).toISOString();
+
+  if (battery.lowActive && (charging || inCharger || level >= RING_BATTERY_RECOVERED_LEVEL)) {
+    events.push(ringBatteryEvent("recovered", timestamp, record, {
+      level,
+      previousLowStartedAt: battery.lowStartedAt,
+      previousCriticalStartedAt: battery.criticalStartedAt,
+      recoveredLevel: RING_BATTERY_RECOVERED_LEVEL,
+    }));
+    battery.lowActive = false;
+    battery.criticalActive = false;
+    delete battery.lowStartedAt;
+    delete battery.criticalStartedAt;
+  }
+
+  if (!charging && !inCharger && !battery.lowActive && level < RING_BATTERY_LOW_LEVEL) {
+    battery.lowActive = true;
+    battery.lowStartedAt = timestampIso;
+    events.push(ringBatteryEvent("low", timestamp, record, {
+      level,
+      threshold: RING_BATTERY_LOW_LEVEL,
+    }));
+  }
+
+  if (!charging && !inCharger && !battery.criticalActive && level < RING_BATTERY_CRITICAL_LEVEL) {
+    battery.criticalActive = true;
+    battery.criticalStartedAt = timestampIso;
+    events.push(ringBatteryEvent("critical", timestamp, record, {
+      level,
+      threshold: RING_BATTERY_CRITICAL_LEVEL,
+      lowStartedAt: battery.lowStartedAt,
+    }));
+  }
+
+  return events;
+}
+
+function ringBatteryEvent(kind, timestamp, record, details) {
+  const timestampIso = new Date(timestamp).toISOString();
+  return {
+    type: `oura.ring_battery.${kind}`,
+    externalId: `ring_battery:${kind}:${timestampIso}`,
+    startedAt: timestamp,
+    payload: {
+      provider: "oura",
+      stream: "ring_battery_level",
+      kind,
+      lowLevel: RING_BATTERY_LOW_LEVEL,
+      criticalLevel: RING_BATTERY_CRITICAL_LEVEL,
+      recoveredLevel: RING_BATTERY_RECOVERED_LEVEL,
+      charging: record.charging === true,
+      inCharger: record.in_charger === true,
+      ...details,
+      record,
+    },
+  };
 }
 
 async function fetchPage({ stream, range, token, nextToken, signal, fetchImpl, baseUrl }) {
@@ -284,7 +401,11 @@ async function fetchPage({ stream, range, token, nextToken, signal, fetchImpl, b
 
   return {
     data: Array.isArray(body.data) ? body.data : [],
-    nextToken: typeof body.next_token === "string" && body.next_token ? body.next_token : undefined,
+    nextToken: typeof body.nextToken === "string" && body.nextToken
+      ? body.nextToken
+      : typeof body.next_token === "string" && body.next_token
+        ? body.next_token
+        : undefined,
   };
 }
 
@@ -337,7 +458,9 @@ function buildIncrementalRange(stream, streamState, config, nowMs) {
 async function syncBackfill({ context, next, config, streams, token, nowMs, fetchImpl, baseUrl }) {
   if (config.backfillYears <= 0) return;
 
-  const backfillStreams = streams.filter((stream) => stream.range === "date" || stream.range === "datetime");
+  const backfillStreams = streams.filter(
+    (stream) => stream.backfill !== false && (stream.range === "date" || stream.range === "datetime"),
+  );
   if (backfillStreams.length === 0) return;
 
   const backfill = normalizeBackfill(next.backfill, config, nowMs);
@@ -367,10 +490,12 @@ async function syncBackfill({ context, next, config, streams, token, nowMs, fetc
         backfill.untilDate,
       );
 
+      let syncStatePatch;
       try {
-        await syncStream({
+        syncStatePatch = await syncStream({
           stream,
           range: buildBackfillRange(stream, nextDate, chunkEndDate),
+          streamState: normalizeBackfillStreamState(backfill.streams[stream.id]),
           guard: context.guard,
           token,
           signal: context.signal,
@@ -402,6 +527,8 @@ async function syncBackfill({ context, next, config, streams, token, nowMs, fetc
       if (isAborted(context.signal)) return;
       delete backfill.lastError;
       backfill.streams[stream.id] = {
+        ...streamState,
+        ...syncStatePatch,
         nextDate: chunkEndDate,
         done: chunkEndDate >= backfill.untilDate,
         lastSyncedAt: nowMs,
@@ -502,10 +629,30 @@ function normalizeBackfill(value, config, nowMs) {
 
 function normalizeBackfillStreamState(value) {
   if (!isObject(value)) return {};
-  return {
+  const state = {
     nextDate: validDate(value.nextDate) ? value.nextDate : undefined,
     done: value.done === true,
     lastSyncedAt: Number.isFinite(value.lastSyncedAt) ? value.lastSyncedAt : undefined,
+  };
+  if (isObject(value.ringBattery)) {
+    state.ringBattery = normalizeRingBatteryState(value.ringBattery);
+  }
+  return state;
+}
+
+function normalizeRingBatteryState(value) {
+  if (!isObject(value)) {
+    return {};
+  }
+  return {
+    lowActive: value.lowActive === true,
+    criticalActive: value.criticalActive === true,
+    lowStartedAt: typeof value.lowStartedAt === "string" ? value.lowStartedAt : undefined,
+    criticalStartedAt: typeof value.criticalStartedAt === "string" ? value.criticalStartedAt : undefined,
+    lastTimestamp: typeof value.lastTimestamp === "string" ? value.lastTimestamp : undefined,
+    lastLevel: Number.isFinite(value.lastLevel) ? value.lastLevel : undefined,
+    lastCharging: value.lastCharging === true,
+    lastInCharger: value.lastInCharger === true,
   };
 }
 

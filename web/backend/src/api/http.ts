@@ -29,6 +29,20 @@ export function json(
   };
 }
 
+export function redirect(
+  statusCode: 302 | 303 | 307 | 308,
+  location: string,
+): APIGatewayProxyStructuredResultV2 {
+  return {
+    statusCode,
+    headers: {
+      location,
+      "cache-control": "no-store",
+    },
+    body: "",
+  };
+}
+
 export function problem(
   statusCode: number,
   code: string,

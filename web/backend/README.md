@@ -70,6 +70,9 @@ Required Doppler/Secrets Manager keys:
 
 ```text
 CLERK_SECRET_KEY
+TOKEN_ENCRYPTION_KEY_V1
+OURA_CLIENT_ID
+OURA_CLIENT_SECRET
 ```
 
 ## Managed Provider Registry
@@ -108,7 +111,7 @@ export const metadata = {
   apiBasePath: "/providers/oura",
   connect: {
     type: "oauth2",
-    enabled: false,
+    enabled: true,
     scopes: ["daily", "heartrate"],
   },
 };
@@ -119,8 +122,7 @@ Current flow shape:
 - `GET /providers` lists registered providers.
 - `POST /providers/{providerId}/connect/start` verifies the Clerk session,
   resolves the internal `usr_*`, requires the connector `integrationId`, checks
-  the provider registry, and returns a structured not-implemented response until
-  that provider's hosted OAuth flow is wired.
+  the provider registry, and returns a provider OAuth redirect URL.
 - `POST /providers/{providerId}/capability-token` verifies a Lamarck desktop
   session token, checks the `userId + integrationId` managed-provider connection,
   and issues a 24-hour opaque capability token scoped to
@@ -128,8 +130,31 @@ Current flow shape:
 - `GET|POST /providers/{providerId}/oauth/callback` and
   `/providers/{providerId}/v1/{proxy+}` dispatch to the provider module. Provider
   data proxy routes require a scoped Lamarck capability token, not a Clerk token
-  and not a desktop session token. Oura currently returns structured stubs from
-  `providers/oura/connect.ts` and `providers/oura/proxy.ts`.
+  and not a desktop session token.
+
+Oura is the first reference provider:
+
+- `providers/oura/connect.ts` starts the Oura authorization-code flow and stores
+  provider refresh/access tokens server-side.
+- `providers/oura/proxy.ts` exposes
+  `GET /providers/oura/v1/streams/{streamId}` for allowlisted Oura streams,
+  mapping Lamarck stream IDs to Oura V2 `/v2/usercollection/*` endpoints.
+- The Oura developer application must allow
+  `${LAMARCK_API_ORIGIN}/providers/oura/oauth/callback` as its redirect URI.
+
+Oura emits structured CloudWatch log events for operational inspection:
+
+- `oura.connect.start`
+- `oura.oauth.connected`
+- `oura.oauth.callback.provider_error`
+- `managed_provider.capability.issued`
+- `oura.proxy.request`
+- `oura.proxy.refresh_after_unauthorized`
+- `oura.proxy.failed`
+
+Proxy logs include `userId`, `integrationId`, `streamId`, request ranges,
+item count, duration, and Oura rate-limit headers. They deliberately do not log
+provider tokens, OAuth codes, OAuth state values, or capability tokens.
 
 Managed-provider server state is intentionally small and auxiliary to the
 local-first workspace: provider token vault rows are keyed by `userId +

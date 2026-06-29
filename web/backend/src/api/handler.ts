@@ -104,7 +104,7 @@ async function route(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStru
     key === "POST /providers/{providerId}/oauth/callback"
   ) {
     const provider = getManagedProvider(providerId);
-    return json(200, await provider.connect.callback({ event }));
+    return provider.connect.callback({ event });
   }
 
   if (key.includes("/providers/{providerId}/{proxy+}")) {

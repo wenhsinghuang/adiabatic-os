@@ -798,7 +798,7 @@ Managed provider connector code calls Lamarck's backend API, not the upstream pr
 ```ts
 const token = await context.auth.getToken();
 
-await fetch("https://api.lamarck.ai/providers/oura/v1/daily", {
+await fetch("https://api.lamarck.ai/providers/oura/v1/streams/daily_activity", {
   headers: { Authorization: `Bearer ${token}` },
 });
 ```

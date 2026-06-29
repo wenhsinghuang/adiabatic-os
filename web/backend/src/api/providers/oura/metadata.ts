@@ -7,7 +7,7 @@ export const metadata = {
   apiBasePath: "/providers/oura",
   connect: {
     type: "oauth2",
-    enabled: false,
+    enabled: true,
     scopes: [
       "daily",
       "heartrate",

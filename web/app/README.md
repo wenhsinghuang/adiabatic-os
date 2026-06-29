@@ -35,9 +35,9 @@ desktop session, calls `POST /desktop/auth/authorize`, then redirects only a
 one-time code back to the desktop loopback callback.
 
 The provider connect route uses the same Clerk session token to call
-`POST /providers/{providerId}/connect/start`. The backend currently returns a
-structured not-implemented response for registered providers until the hosted
-OAuth implementation is wired.
+`POST /providers/{providerId}/connect/start`. Registered provider modules may
+return a provider authorization URL; the app follows that URL and displays the
+completion/error state when the provider redirects back.
 
 If you use Worker-injected config instead of `public/config.js`, the Clerk
 browser SDK needs the publishable key:

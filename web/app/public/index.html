@@ -228,6 +228,9 @@
       const providerId = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
       const providerIntegrationId = route.searchParams.get("integrationId");
       const providerIntegrationKey = route.searchParams.get("integrationKey");
+      const providerConnected = route.searchParams.get("connected") === "1";
+      const providerError = route.searchParams.get("error");
+      const providerMessage = route.searchParams.get("message");
       const desktopAuthorize = path === "/auth/authorize";
       const requestedRedirect = safeReturnPath(route.searchParams.get("redirect_url"));
       const provider = providerId
@@ -284,7 +287,7 @@
                     <span>${escapeHtml(provider.capability)}</span>
                     <span class="small">${escapeHtml(provider.endpoint)}</span>
                     <button id="start-provider-connect" type="button">Connect provider</button>
-                    <span class="small" id="provider-connect-status">Provider connect not started.</span>
+                    <span class="small" id="provider-connect-status">${providerConnectStatusText()}</span>
                   </div>`
                 : `<a class="button" href="/providers/oura/connect">Connect Oura</a>`
             }
@@ -298,6 +301,12 @@
           startProviderConnect(clerk);
         });
         syncBackendSession(clerk);
+      }
+
+      function providerConnectStatusText() {
+        if (providerConnected) return "Provider connected. You can return to Lamarck Desktop.";
+        if (providerError) return providerMessage || providerError;
+        return "Provider connect not started.";
       }
 
       function renderDesktopAuthorize(clerk) {

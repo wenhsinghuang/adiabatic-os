@@ -11,6 +11,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { getConfig } from "./config";
 import { requireDesktopUser } from "./desktop-auth";
 import { bearerToken, HttpError } from "./http";
+import { logInfo } from "./log";
 import type { ManagedProviderMetadata } from "./providers/types";
 
 const CAPABILITY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -113,6 +114,14 @@ export async function issueManagedProviderCapabilityToken(
       ConditionExpression: "attribute_not_exists(tokenHash)",
     }),
   );
+
+  logInfo("managed_provider.capability.issued", {
+    providerId: metadata.providerId,
+    userId: user.userId,
+    integrationId,
+    allowedPrefix: item.allowedPrefix,
+    expiresAt,
+  });
 
   return {
     tokenType: "Bearer",
@@ -227,6 +236,59 @@ export async function putManagedProviderConnection(input: {
     }),
   );
   return item;
+}
+
+export async function updateManagedProviderConnectionTokens(input: {
+  userId: string;
+  integrationId: string;
+  providerId: string;
+  encryptedTokenEnvelope: string;
+  grantedScopes?: string[];
+  lastRefreshAt?: string;
+  lastError?: string;
+  status?: ManagedProviderConnectionStatus;
+}): Promise<void> {
+  const names: Record<string, string> = {
+    "#status": "status",
+  };
+  const values: Record<string, unknown> = {
+    ":providerId": input.providerId,
+    ":status": input.status ?? "connected",
+    ":encryptedTokenEnvelope": input.encryptedTokenEnvelope,
+    ":updatedAt": new Date().toISOString(),
+  };
+  const sets = [
+    "#status = :status",
+    "encryptedTokenEnvelope = :encryptedTokenEnvelope",
+    "updatedAt = :updatedAt",
+  ];
+
+  if (input.grantedScopes) {
+    sets.push("grantedScopes = :grantedScopes");
+    values[":grantedScopes"] = input.grantedScopes;
+  }
+  if (input.lastRefreshAt) {
+    sets.push("lastRefreshAt = :lastRefreshAt");
+    values[":lastRefreshAt"] = input.lastRefreshAt;
+  }
+  if (input.lastError) {
+    sets.push("lastError = :lastError");
+    values[":lastError"] = input.lastError;
+  }
+
+  await ddb.send(
+    new UpdateCommand({
+      TableName: getConfig().managedProviderConnectionsTable,
+      Key: {
+        userId: input.userId,
+        integrationId: requireIntegrationId(input.integrationId),
+      },
+      UpdateExpression: `SET ${sets.join(", ")}`,
+      ConditionExpression: "attribute_exists(userId) AND providerId = :providerId",
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+    }),
+  );
 }
 
 export function requireIntegrationId(value: unknown): string {
