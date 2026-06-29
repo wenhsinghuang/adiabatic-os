@@ -60,7 +60,7 @@ describe("Connector system", () => {
     supervisor = new ConnectorSupervisor({
       systemDb,
       guard: new Guard({ db: dataDb, source: "system:test" }),
-      host: { workspacePath: workspace },
+      host: { workspacePath: workspace, lamarckApiOrigin: "https://dev-api.example.test" },
       platform: "darwin",
       authManager: new ConnectorAuthManager(secrets),
     });
@@ -316,6 +316,7 @@ auth:
         expect(await state.get()).toBeUndefined();
         expect(config).toEqual({ label: "override", extra: true });
         expect(host.workspacePath).toBe(workspace);
+        expect(host.lamarckApiOrigin).toBe("https://dev-api.example.test");
         await guard.writeEvent({
           type: "app.commit",
           externalId: "abc123",
@@ -1523,6 +1524,9 @@ auth:
         backfillYears: 0,
         streams: ["daily_sleep"],
       },
+      host: {
+        lamarckApiOrigin: "https://dev-api.example.test",
+      },
       signal: new AbortController().signal,
     };
 
@@ -1573,6 +1577,8 @@ auth:
       },
       backfill: undefined,
     });
+    expect(requests[0].origin).toBe("https://dev-api.example.test");
+    expect(requests[0].pathname).toBe("/providers/oura/v1/streams/daily_sleep");
     expect(requests[0].searchParams.get("start_date")).toBe("2026-01-02");
     expect(requests[0].searchParams.get("end_date")).toBe("2026-01-03");
 
@@ -2121,14 +2127,14 @@ auth:
     writeFileSync(
       join(sourceDir, "index.mjs"),
       `export default {
-  async run({ guard, state }) {
+  async run({ guard, state, host }) {
     await guard.writeEvent({
       type: "calendar.install-test",
       externalId: "installed",
       startedAt: 4500,
       payload: { installed: true },
     });
-    await state.set({ installed: true });
+    await state.set({ installed: true, lamarckApiOrigin: host.lamarckApiOrigin });
   },
 };
 `,
@@ -2155,7 +2161,10 @@ auth:
       type: "calendar.install-test",
       external_id: "installed",
     });
-    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({ installed: true });
+    expect(supervisor.getIntegration(integration.id)?.syncState).toEqual({
+      installed: true,
+      lamarckApiOrigin: "https://dev-api.example.test",
+    });
     expect(supervisor.getIntegration(integration.id)?.trustStatus).toBe("custom");
 
     expect(await removeInstalledConnector(workspace, "calendar")).toBe(true);

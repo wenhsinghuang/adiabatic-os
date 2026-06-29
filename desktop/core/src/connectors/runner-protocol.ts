@@ -5,7 +5,12 @@
 // verified by the host before any spawn, and all writes come back through the
 // host-side capability broker where Guard injects source provenance.
 
-import type { ConnectorRequirementContext, ConnectorRequirementStatus, ConnectorRuntimeAuthType } from "./types";
+import type {
+  ConnectorHostContext,
+  ConnectorRequirementContext,
+  ConnectorRequirementStatus,
+  ConnectorRuntimeAuthType,
+} from "./types";
 
 export type HostToRunnerMessage =
   | { type: "load"; entryPath: string; contentHash: string }
@@ -17,7 +22,7 @@ export type HostToRunnerMessage =
     // JSON cannot carry undefined; configSet=false means "config was absent"
     // so the child can preserve undefined semantics identical to in-process.
     configSet: boolean;
-    host: { workspacePath: string };
+    host: ConnectorHostContext;
     authType: ConnectorRuntimeAuthType;
   }
   | { type: "abort" }

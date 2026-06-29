@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-const API_BASE_URL = "https://api.lamarck.ai/providers/oura";
+const DEFAULT_LAMARCK_API_ORIGIN = "https://api.lamarck.ai";
 const DEFAULT_LOOKBACK_DAYS = 3;
 const DEFAULT_BACKFILL_YEARS = 3;
 const BACKFILL_CHUNK_DAYS = 90;
@@ -133,7 +133,7 @@ export async function syncOnce(context, deps = {}) {
   if (typeof fetchImpl !== "function") {
     throw new Error("Oura connector requires fetch");
   }
-  const baseUrl = deps.baseUrl ?? API_BASE_URL;
+  const baseUrl = managedProviderBaseUrl(context, deps);
   const streams = selectStreams(config);
 
   for (const stream of streams) {
@@ -371,7 +371,7 @@ function ringBatteryEvent(kind, timestamp, record, details) {
 }
 
 async function fetchPage({ stream, range, token, nextToken, signal, fetchImpl, baseUrl }) {
-  const url = new URL(stream.path, baseUrl);
+  const url = providerUrl(baseUrl, stream.path);
   for (const [key, value] of Object.entries(range.query)) {
     if (value !== undefined) url.searchParams.set(key, value);
   }
@@ -407,6 +407,29 @@ async function fetchPage({ stream, range, token, nextToken, signal, fetchImpl, b
         ? body.next_token
         : undefined,
   };
+}
+
+function managedProviderBaseUrl(context, deps) {
+  if (typeof deps.baseUrl === "string" && deps.baseUrl.trim()) {
+    return normalizeBaseUrl(deps.baseUrl);
+  }
+  const apiOrigin = typeof context.host?.lamarckApiOrigin === "string" && context.host.lamarckApiOrigin.trim()
+    ? context.host.lamarckApiOrigin
+    : DEFAULT_LAMARCK_API_ORIGIN;
+  return new URL("/providers/oura/", normalizeBaseUrl(apiOrigin)).toString();
+}
+
+function providerUrl(baseUrl, path) {
+  const relativePath = String(path).replace(/^\/+/, "");
+  return new URL(relativePath, normalizeBaseUrl(baseUrl));
+}
+
+function normalizeBaseUrl(value) {
+  const url = new URL(value);
+  url.search = "";
+  url.hash = "";
+  if (!url.pathname.endsWith("/")) url.pathname += "/";
+  return url.toString();
 }
 
 async function writeBatch(guard, events) {

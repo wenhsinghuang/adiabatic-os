@@ -147,6 +147,7 @@ export interface ConnectorWarningsHandle {
 
 export interface ConnectorHostContext {
   workspacePath: string;
+  lamarckApiOrigin?: string;
 }
 
 export interface ConnectorRunContext<TConfig = unknown, TState = unknown> {

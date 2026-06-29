@@ -623,7 +623,7 @@ connector code
     -> external credential broker / secret store
 ```
 
-`host.workspacePath` is host-owned runtime context. It must be supplied uniformly by the connector host, not patched into integration config and not special-cased by connector id.
+`host.workspacePath` and `host.lamarckApiOrigin` are host-owned runtime context. They must be supplied uniformly by the connector host, not patched into integration config and not special-cased by connector id. `lamarckApiOrigin` is optional because non-Lamarck connectors and older hosts do not need it; official managed-provider connectors use it to target the current dev/prod Lamarck backend instead of hard-coding `api.lamarck.ai`.
 
 The broker owns:
 
@@ -674,6 +674,7 @@ type ConnectorRunContext<TConfig, TState> = {
 
 type ConnectorHostContext = {
   workspacePath: string;
+  lamarckApiOrigin?: string;
 };
 ```
 
@@ -797,8 +798,9 @@ Managed provider connector code calls Lamarck's backend API, not the upstream pr
 
 ```ts
 const token = await context.auth.getToken();
+const apiOrigin = context.host.lamarckApiOrigin ?? "https://api.lamarck.ai";
 
-await fetch("https://api.lamarck.ai/providers/oura/v1/streams/daily_activity", {
+await fetch(`${apiOrigin}/providers/oura/v1/streams/daily_activity`, {
   headers: { Authorization: `Bearer ${token}` },
 });
 ```

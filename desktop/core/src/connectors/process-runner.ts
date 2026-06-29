@@ -252,7 +252,7 @@ export class ProcessRunnerSession implements RunnerSession {
           type: "run",
           config: hasConfig ? opts.config : null,
           configSet: hasConfig,
-          host: { workspacePath: opts.host.workspacePath },
+          host: opts.host,
           authType: opts.capabilities.authType,
         },
         ["done", "run-error"],
