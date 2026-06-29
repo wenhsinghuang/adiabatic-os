@@ -71,6 +71,19 @@ export interface ManagedProviderCapabilityTokenResponse {
   integrationId: string;
 }
 
+export interface ManagedProviderConnectionView {
+  providerId: string;
+  integrationId: string;
+  status: "not_connected" | ManagedProviderConnectionStatus;
+  providerSubject?: string;
+  providerEmail?: string;
+  grantedScopes?: string[];
+  lastRefreshAt?: string;
+  lastError?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export async function issueManagedProviderCapabilityToken(
   event: APIGatewayProxyEventV2,
   metadata: ManagedProviderMetadata,
@@ -200,6 +213,34 @@ export async function getManagedProviderConnection(
     }),
   );
   return result.Item as ManagedProviderConnectionItem | undefined;
+}
+
+export async function getManagedProviderConnectionView(input: {
+  userId: string;
+  providerId: string;
+  integrationId: string;
+}): Promise<ManagedProviderConnectionView> {
+  const integrationId = requireIntegrationId(input.integrationId);
+  const connection = await getManagedProviderConnection(input.userId, integrationId);
+  if (!connection || connection.providerId !== input.providerId) {
+    return {
+      providerId: input.providerId,
+      integrationId,
+      status: "not_connected",
+    };
+  }
+  return {
+    providerId: connection.providerId,
+    integrationId: connection.integrationId,
+    status: connection.status,
+    providerSubject: connection.providerSubject,
+    providerEmail: connection.providerEmail,
+    grantedScopes: connection.grantedScopes,
+    lastRefreshAt: connection.lastRefreshAt,
+    lastError: connection.lastError,
+    createdAt: connection.createdAt,
+    updatedAt: connection.updatedAt,
+  };
 }
 
 export async function putManagedProviderConnection(input: {

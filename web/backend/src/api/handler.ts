@@ -14,6 +14,7 @@ import {
 import { bearerToken, errorResponse, json, problem, routeKey } from "./http";
 import { requireLamarckUser } from "./identity";
 import {
+  getManagedProviderConnectionView,
   issueManagedProviderCapabilityToken,
   requireIntegrationId,
   requireManagedProviderCapability,
@@ -92,6 +93,17 @@ async function route(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStru
     const body = readJsonBody<{ integrationId?: string }>(event);
     const integrationId = requireIntegrationId(body.integrationId);
     return json(200, await provider.connect.start({ user, event, integrationId }));
+  }
+
+  if (key === "GET /providers/{providerId}/connection") {
+    const user = await requireLamarckUser(event);
+    const provider = getManagedProvider(providerId);
+    const integrationId = requireIntegrationId(event.queryStringParameters?.integrationId);
+    return json(200, await getManagedProviderConnectionView({
+      userId: user.userId,
+      providerId: provider.metadata.providerId,
+      integrationId,
+    }));
   }
 
   if (key === "POST /providers/{providerId}/capability-token") {

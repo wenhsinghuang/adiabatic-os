@@ -175,6 +175,11 @@ export class LamarckWebStack extends cdk.Stack {
       integration: apiIntegration,
     });
     api.addRoutes({
+      path: "/providers/{providerId}/connection",
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: apiIntegration,
+    });
+    api.addRoutes({
       path: "/providers/{providerId}/capability-token",
       methods: [apigatewayv2.HttpMethod.POST],
       integration: apiIntegration,

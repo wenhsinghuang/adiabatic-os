@@ -114,14 +114,15 @@
 
       .main {
         display: grid;
-        place-items: center;
+        align-items: start;
+        justify-items: center;
         padding: 32px 20px 64px;
       }
 
       .auth {
         display: grid;
         gap: 16px;
-        width: min(420px, 100%);
+        width: min(560px, 100%);
       }
 
       .auth-title {
@@ -154,24 +155,96 @@
 
       .signed-in {
         display: grid;
-        gap: 16px;
+        gap: 14px;
       }
 
-      .session-state {
+      .panel {
         display: grid;
-        gap: 4px;
+        gap: 14px;
+        padding: 18px;
+        background: rgba(255, 250, 240, 0.64);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: 0 18px 50px rgba(21, 19, 18, 0.08);
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .stack {
+        display: grid;
+        min-width: 0;
+        gap: 3px;
+      }
+
+      .eyebrow {
+        color: var(--muted);
+        font-family: "Berkeley Mono", "SFMono-Regular", ui-monospace, monospace;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        min-height: 26px;
+        align-items: center;
+        gap: 7px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        background: rgba(244, 241, 233, 0.76);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .status-pill::before {
+        width: 7px;
+        height: 7px;
+        content: "";
+        background: var(--amber);
+        border-radius: 50%;
+      }
+
+      .status-pill.connected {
+        color: #205b36;
+        border-color: rgba(32, 91, 54, 0.26);
+        background: rgba(82, 151, 94, 0.12);
+      }
+
+      .status-pill.connected::before {
+        background: #2f9e44;
+      }
+
+      .status-pill.error {
+        color: #8f2a1a;
+        border-color: rgba(143, 42, 26, 0.25);
+        background: rgba(255, 75, 36, 0.1);
+      }
+
+      .status-pill.error::before {
+        background: var(--rust);
       }
 
       .provider {
         display: grid;
-        gap: 12px;
-        padding: 16px;
-        border: 1px solid var(--line);
-        border-radius: var(--radius);
+        gap: 14px;
       }
 
       .provider b {
         text-transform: capitalize;
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
       }
 
       .small {
@@ -249,6 +322,7 @@
       const mount = document.getElementById("clerk-mount");
       const authTitle = document.getElementById("auth-title");
       const authNote = document.getElementById("auth-note");
+      let providerConnection = null;
 
       if (provider) {
         authTitle.textContent = `Connect ${provider.name}`;
@@ -275,21 +349,40 @@
         const email = escapeHtml(user?.primaryEmailAddress?.emailAddress || "Signed in");
         mount.innerHTML = `
           <div class="signed-in">
-            <div class="session-state">
-              <strong>${email}</strong>
-              <div class="small">Lamarck session active</div>
-              <div class="small" id="backend-session">Syncing account...</div>
+            <div class="panel">
+              <div class="row">
+                <div class="stack">
+                  <span class="eyebrow">Account</span>
+                  <strong>${email}</strong>
+                  <span class="small" id="backend-session">Syncing backend user...</span>
+                </div>
+                <span class="status-pill connected">Signed in</span>
+              </div>
             </div>
             ${
               provider
-                ? `<div class="provider">
-                    <b>${escapeHtml(provider.name)}</b>
-                    <span>${escapeHtml(provider.capability)}</span>
+                ? `<div class="panel provider">
+                    <div class="row">
+                      <div class="stack">
+                        <span class="eyebrow">Managed provider</span>
+                        <strong>${escapeHtml(provider.name)}</strong>
+                        <span>${escapeHtml(provider.capability)}</span>
+                      </div>
+                      <span class="status-pill" id="provider-status-pill">${providerStatusLabel()}</span>
+                    </div>
                     <span class="small">${escapeHtml(provider.endpoint)}</span>
-                    <button id="start-provider-connect" type="button">Connect provider</button>
+                    <div class="button-row">
+                      <button id="start-provider-connect" type="button">${providerActionLabel()}</button>
+                    </div>
                     <span class="small" id="provider-connect-status">${providerConnectStatusText()}</span>
                   </div>`
-                : `<a class="button" href="/providers/oura/connect">Connect Oura</a>`
+                : `<div class="panel">
+                    <div class="stack">
+                      <span class="eyebrow">Providers</span>
+                      <strong>Managed from Lamarck Desktop</strong>
+                      <span class="small">Provider connections are bound to a desktop integration.</span>
+                    </div>
+                  </div>`
             }
             <button id="sign-out" type="button">Sign out</button>
           </div>
@@ -300,13 +393,61 @@
         document.getElementById("start-provider-connect")?.addEventListener("click", () => {
           startProviderConnect(clerk);
         });
-        syncBackendSession(clerk);
+        void syncBackendSession(clerk);
+        if (provider) {
+          void loadProviderConnection(clerk);
+        }
       }
 
       function providerConnectStatusText() {
+        if (!providerIntegrationId) return "Open this page from Lamarck Desktop to bind a provider connection.";
+        if (providerConnection?.status === "connected") {
+          const label = providerConnection.providerEmail || providerConnection.providerSubject || "Provider account connected";
+          return `${label}. You can return to Lamarck Desktop.`;
+        }
+        if (providerConnection?.lastError) return providerConnection.lastError;
+        if (providerConnection?.status === "needs_reconnect") return "Provider needs reconnect.";
+        if (providerConnection?.status === "revoked") return "Provider connection was revoked.";
+        if (providerConnection?.status === "not_connected") return "Provider is not connected for this desktop integration.";
         if (providerConnected) return "Provider connected. You can return to Lamarck Desktop.";
         if (providerError) return providerMessage || providerError;
-        return "Provider connect not started.";
+        return "Checking provider connection...";
+      }
+
+      function providerStatusLabel() {
+        if (providerConnection?.status === "connected" || providerConnected) return "Connected";
+        if (providerConnection?.status === "needs_reconnect") return "Reconnect";
+        if (providerConnection?.status === "revoked" || providerError) return "Attention";
+        return "Not connected";
+      }
+
+      function providerActionLabel() {
+        if (providerConnection?.status === "connected" || providerConnected) return `Reconnect ${provider?.name || "provider"}`;
+        return `Connect ${provider?.name || "provider"}`;
+      }
+
+      function updateProviderPanel() {
+        const status = document.getElementById("provider-connect-status");
+        const pill = document.getElementById("provider-status-pill");
+        const button = document.getElementById("start-provider-connect");
+        if (status) status.textContent = providerConnectStatusText();
+        if (pill) {
+          pill.textContent = providerStatusLabel();
+          pill.className = "status-pill";
+          if (providerConnection?.status === "connected" || providerConnected) {
+            pill.classList.add("connected");
+          } else if (providerConnection?.status === "needs_reconnect" || providerConnection?.status === "revoked" || providerError) {
+            pill.classList.add("error");
+          }
+        }
+        if (button) {
+          button.textContent = providerActionLabel();
+          if (providerIntegrationId) {
+            button.removeAttribute("disabled");
+          } else {
+            button.setAttribute("disabled", "");
+          }
+        }
       }
 
       function renderDesktopAuthorize(clerk) {
@@ -356,8 +497,46 @@
           }
 
           status.textContent = `Backend user synced: ${body.userId}`;
+          return body;
         } catch (error) {
           status.textContent = `Backend sync failed: ${String(error?.message || error)}`;
+          return null;
+        }
+      }
+
+      async function loadProviderConnection(clerk) {
+        if (!providerId || !providerIntegrationId) {
+          updateProviderPanel();
+          return;
+        }
+        try {
+          const token = await clerk.session?.getToken();
+          if (!token) {
+            throw new Error("Missing Clerk session token");
+          }
+          const url = new URL(`${apiBaseUrl}/providers/${encodeURIComponent(providerId)}/connection`);
+          url.searchParams.set("integrationId", providerIntegrationId);
+          const response = await fetch(url.toString(), {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            cache: "no-store",
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(body.message || body.error || `HTTP ${response.status}`);
+          }
+          providerConnection = body;
+        } catch (error) {
+          providerConnection = {
+            status: "needs_reconnect",
+            lastError: String(error?.message || error),
+          };
+          const status = document.getElementById("provider-connect-status");
+          if (status) status.textContent = `Provider status failed: ${providerConnection.lastError}`;
+        } finally {
+          updateProviderPanel();
         }
       }
 
@@ -365,6 +544,10 @@
         if (!providerId) return;
         const status = document.getElementById("provider-connect-status");
         const button = document.getElementById("start-provider-connect");
+        if (!providerIntegrationId) {
+          if (status) status.textContent = "Open this page from Lamarck Desktop to bind a provider connection.";
+          return;
+        }
         if (status) status.textContent = "Starting provider connect...";
         if (button) button.setAttribute("disabled", "");
 
