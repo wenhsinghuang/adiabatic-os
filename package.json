@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "desktop:dev:lamarck-dev": "npm --workspace @adiabatic/shell run electron:dev:lamarck-dev",
     "package:patch": "node scripts/package-os-patch.mjs"
   },
   "workspaces": [

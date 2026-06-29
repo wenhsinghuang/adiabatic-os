@@ -89,11 +89,20 @@ npm --workspace @adiabatic/shell run electron:dev
 
 On first launch, the Electron shell starts the Bun core runtime and creates a local workspace at `~/Adiabatic` if one does not already exist.
 
+`desktop:dev:lamarck-dev` points the desktop identity and managed-provider
+flows at the Lamarck dev app/API (`dev-lamarck-app.adiabatic.workers.dev` and
+the dev API Gateway endpoint). Use a separate temporary workspace when switching
+between dev and prod credentials; the local credential store is workspace-local,
+not environment-namespaced.
+
 Useful commands:
 
 ```bash
 # Run the desktop shell
 npm --workspace @adiabatic/shell run electron:dev
+
+# Run the desktop shell against Lamarck dev app/API
+npm run desktop:dev:lamarck-dev
 
 # Run core tests
 npm --workspace @adiabatic/core run test

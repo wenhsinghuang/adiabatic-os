@@ -15,14 +15,15 @@ export interface LamarckWebStackProps extends cdk.StackProps {
 }
 
 const prodApiDomainName = "api.lamarck.ai";
+const prodAppOrigin = "https://app.lamarck.ai";
+const devAppOrigin = "https://dev-lamarck-app.adiabatic.workers.dev";
 
 export class LamarckWebStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: LamarckWebStackProps) {
     super(scope, id, props);
 
     const { stage } = props;
-    const appOrigin = process.env.LAMARCK_APP_ORIGIN || "https://app.lamarck.ai";
-    const apiOrigin = process.env.LAMARCK_API_ORIGIN || "https://api.lamarck.ai";
+    const appOrigin = process.env.LAMARCK_APP_ORIGIN || (stage === "prod" ? prodAppOrigin : devAppOrigin);
     const secretName = `lamarck/${stage}/app`;
 
     const appSecret = secretsmanager.Secret.fromSecretNameV2(this, "AppSecret", secretName);
@@ -80,6 +81,15 @@ export class LamarckWebStack extends cdk.Stack {
     });
 
     const frontendOrigins = frontendOriginsFor(stage, appOrigin);
+    const api = new apigatewayv2.HttpApi(this, "HttpApi", {
+      apiName: `lamarck-${stage}-api`,
+      description: `Lamarck API (${stage})`,
+      corsPreflight: corsFor(stage, frontendOrigins),
+    });
+    setDefaultThrottle(api, 50, 25);
+
+    const apiOrigin =
+      process.env.LAMARCK_API_ORIGIN || (stage === "prod" ? `https://${prodApiDomainName}` : api.apiEndpoint);
     const sharedEnv = {
       APP_ENV: stage,
       SECRET_NAME: secretName,
@@ -126,14 +136,6 @@ export class LamarckWebStack extends cdk.Stack {
     connectionsTable.grantReadWriteData(apiHandler);
     capabilityTokensTable.grantReadWriteData(apiHandler);
     stateTable.grantReadWriteData(apiHandler);
-
-    const api = new apigatewayv2.HttpApi(this, "HttpApi", {
-      apiName: `lamarck-${stage}-api`,
-      description: `Lamarck API (${stage})`,
-      corsPreflight: corsFor(stage, frontendOrigins),
-    });
-
-    setDefaultThrottle(api, 50, 25);
 
     const apiIntegration = new integrations.HttpLambdaIntegration("ApiIntegration", apiHandler);
 

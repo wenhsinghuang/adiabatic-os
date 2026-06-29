@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "electron": "npm run build:electron && electron .",
-    "electron:dev": "npm run build:electron && NODE_ENV=development electron ."
+    "electron:dev": "npm run build:electron && NODE_ENV=development electron .",
+    "electron:dev:lamarck-dev": "LAMARCK_APP_ORIGIN=https://dev-lamarck-app.adiabatic.workers.dev LAMARCK_API_ORIGIN=https://wqrkirptp9.execute-api.us-west-2.amazonaws.com npm run electron:dev"
   },
   "dependencies": {
     "@mdxeditor/editor": "^4.0.0",
